@@ -70,47 +70,7 @@
       return url;
     }
 
-    function kinobaseMirror() {
-      var url = Lampa.Storage.get('online_mod_kinobase_mirror', '') + '';
-      if (!url) return 'https://kinobase.org';
-      if (url.indexOf('://') == -1) url = 'https://' + url;
-      if (url.charAt(url.length - 1) === '/') url = url.substring(0, url.length - 1);
-      return url;
-    }
-
-    function setCurrentFanserialsHost(host) {
-      currentFanserialsHost = host;
-    }
-
-    function getCurrentFanserialsHost() {
-      return currentFanserialsHost;
-    }
-
-    function fanserialsHost() {
-      return currentFanserialsHost || decodeSecret([89, 69, 64, 69, 67, 14, 26, 26, 1, 86, 80, 95, 71, 80, 66, 93, 84, 89, 67, 30, 67, 68], atob('RnVja0Zhbg=='));
-    }
-
-    function fancdnHost() {
-      return fanserialsHost();
-    }
-
-    function filmixHost$1() {
-      return 'https://filmix.my';
-    }
-
-    function filmixAppHost() {
-      return 'http://filmixapp.vip';
-    }
-
-    function filmixToken(dev_id, token) {
-      return '?user_dev_id=' + dev_id + '&user_dev_name=Xiaomi&user_dev_token=' + token + '&user_dev_vendor=Xiaomi&user_dev_os=14&user_dev_apk=2.2.0&app_lang=ru-rRU';
-    }
-
-    function filmixUserAgent() {
-      return 'okhttp/3.10.0';
-    }
-
-    function baseUserAgent() {
+                                        function baseUserAgent() {
       return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
     }
 
@@ -151,21 +111,7 @@
       });
     }
 
-    function proxy(name) {
-      var ip = getMyIp() || '';
-      var param_ip = Lampa.Storage.field('online_mod_proxy_find_ip') === true ? 'ip' + ip + '/' : '';
-      var proxy1 = new Date().getHours() % 2 ? 'https://cors.nb557.workers.dev:8443/' : 'https://cors.fx666.workers.dev:8443/';
-      var proxy2 = (window.location.protocol === 'https:' ? 'https://' : 'http://') + 'iqslgbok.deploy.cx/';
-      var proxy3 = 'https://cors557.deno.dev/';
-      var proxy_apn = '';
-      var proxy_secret = '';
-      var proxy_secret_ip = '';
-
-      if (isDebug()) {
-        proxy_apn = (window.location.protocol === 'https:' ? 'https://' : 'http://') + decodeSecret([64, 90, 72, 90, 92, 91, 87, 87, 23, 83, 81, 65, 90, 91, 78, 24, 83, 65, 24]);
-        proxy_secret = decodeSecret([95, 64, 69, 70, 71, 13, 25, 31, 88, 71, 90, 28, 91, 86, 2, 3, 6, 23, 92, 91, 72, 83, 86, 25, 87, 64, 73, 24]);
-        proxy_secret_ip = proxy_secret + (param_ip || 'ip/');
-      }
+    
 
       var proxy_other = Lampa.Storage.field('online_mod_proxy_other') === true;
       var proxy_other_url = proxy_other ? Lampa.Storage.field('online_mod_proxy_other_url') + '' : '';
@@ -381,17 +327,7 @@
       isDebug: isDebug,
       isDebug2: isDebug2,
       rezka2Mirror: rezka2Mirror,
-      kinobaseMirror: kinobaseMirror,
-      setCurrentFanserialsHost: setCurrentFanserialsHost,
-      getCurrentFanserialsHost: getCurrentFanserialsHost,
-      fanserialsHost: fanserialsHost,
-      fancdnHost: fancdnHost,
-      filmixHost: filmixHost$1,
-      filmixAppHost: filmixAppHost,
-      filmixToken: filmixToken,
-      filmixUserAgent: filmixUserAgent,
       baseUserAgent: baseUserAgent,
-      vcdnToken: vcdnToken,
       setMyIp: setMyIp,
       getMyIp: getMyIp,
       checkMyIp: checkMyIp$1,
@@ -542,50 +478,7 @@
       clear: clear
     };
 
-    function lumex(component, _object) {
-      var network = new Lampa.Reguest();
-      var extract = {};
-      var object = _object;
-      extract.seasons = [];
-      extract.season_num = [];
-      extract.media = [];
-      var select_title = '';
-      var prefer_http = Lampa.Storage.field('online_mod_prefer_http') === true;
-      var prefer_mp4 = Lampa.Storage.field('online_mod_prefer_mp4') === true;
-      var prox = component.proxy('lumex');
-      var host = atob('aHR0cHM6Ly9wLmx1bWV4LnNwYWNl');
-      var ref = host + '/';
-      var user_agent = Utils.baseUserAgent();
-      var headers = Lampa.Platform.is('android') ? {
-        'Origin': host,
-        'Referer': ref,
-        'User-Agent': user_agent,
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'same-site'
-      } : {};
-      var headers2 = Lampa.Platform.is('android') ? {
-        'Origin': host,
-        'Referer': ref,
-        'User-Agent': user_agent,
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'same-site',
-        'Cookie': '',
-        'x-csrf-token': ''
-      } : {};
-      var prox_enc = '';
-
-      if (prox) {
-        prox_enc += 'param/Origin=' + encodeURIComponent(host) + '/';
-        prox_enc += 'param/Referer=' + encodeURIComponent(ref) + '/';
-        prox_enc += 'param/User-Agent=' + encodeURIComponent(user_agent) + '/';
-        prox_enc += 'param/Sec-Fetch-Dest=empty/';
-        prox_enc += 'param/Sec-Fetch-Mode=cors/';
-        prox_enc += 'param/Sec-Fetch-Site=same-site/';
-      }
-
-      var prox_enc2 = prox_enc;
+          var prox_enc2 = prox_enc;
       var embed = atob('aHR0cHM6Ly9hcGkubHVtZXguc3BhY2Uv');
       var suffix = atob('Y2xpZW50SWQ9Q1dmS1hMYzFhaklkJmRvbWFpbj1tb3ZpZWxhYi5vbmUmdXJsPW1vdmllbGFiLm9uZQ==');
       var filter_items = {};
@@ -596,22 +489,7 @@
         voice_id: 0
       };
 
-      function lumex_search(api, callback, error) {
-        var error_check = function error_check(a, c) {
-          if (a.status == 404 || a.status == 0 && a.statusText !== 'timeout') {
-            if (callback) callback('');
-          } else if (error) error(network.errorDecode(a, c));
-        };
-
-        var returnHeaders = true;
-        var prox_enc_cookie = prox_enc;
-
-        if (prox) {
-          prox_enc_cookie += 'cookie_plus/param/Cookie=/';
-          returnHeaders = false;
-        }
-
-        var success_check = function success_check(json) {
+              var success_check = function success_check(json) {
           var cookie = '';
 
           if (json && json.headers && json.body) {
@@ -1145,63 +1023,7 @@
       }
     }
 
-    function lumex2(component, _object) {
-      var network = new Lampa.Reguest();
-      var extract = [];
-      var object = _object;
-      var select_title = '';
-      var is_playlist = false;
-      var embed = atob('aHR0cHM6Ly9hcGkubGFtcGEuc3RyZWFtL2x1bWV4Lw==');
-      var api_suffix = '/' + encodeURIComponent(btoa(window.location.href));
-      var cub_id = encodeURIComponent(btoa(Lampa.Storage.get('account', '{}').email || 'none'));
-      var filter_items = {};
-      var choice = {
-        season: 0,
-        voice: 0,
-        voice_name: ''
-      };
-
-      function lumex_api(api, callback, error) {
-        var error_check = function error_check(a, c) {
-          if (a.status == 404 || a.status == 500 || a.status == 0 && a.statusText !== 'timeout') {
-            if (callback) callback('');
-          } else if (error) error(network.errorDecode(a, c));
-        };
-
-        var success_check = function success_check(json) {
-          callback(json);
-        };
-
-        network.clear();
-        network.timeout(20000);
-        network["native"](api, success_check, error_check);
-      }
-      /**
-       * Начать поиск
-       * @param {Object} _object
-       * @param {String} kinopoisk_id
-       */
-
-
-      this.search = function (_object, kinopoisk_id, data) {
-        object = _object;
-        select_title = object.search || object.movie.title;
-        var error = component.empty.bind(component);
-        var src = embed + 'sId/' + encodeURIComponent(object.movie.id) + '/mod/';
-
-        if (data && data[0] && data[0].content_type && data[0].id) {
-          var imdb_id = data[0].imdb_id || 'null';
-          var kp_id = data[0].kp_id || 'null';
-          src += encodeURIComponent(kp_id) + '/' + encodeURIComponent(imdb_id);
-        } else {
-          var _imdb_id = (+kinopoisk_id ? !object.clarification && object.movie.imdb_id : kinopoisk_id) || 'null';
-
-          var _kp_id = +kinopoisk_id ? kinopoisk_id : 'null';
-
-          src += encodeURIComponent(_kp_id) + '/' + encodeURIComponent(_imdb_id);
-        }
-
-        var original_title = !object.clarification && (object.movie.original_title || object.movie.original_name) || '';
+            var original_title = !object.clarification && (object.movie.original_title || object.movie.original_name) || '';
         var search_date = object.search_date || !object.clarification && (object.movie.release_date || object.movie.first_air_date || object.movie.last_air_date) || '0000';
         var search_year = parseInt((search_date + '').slice(0, 4));
         component.checkMyIp(function () {
@@ -14532,5 +14354,4 @@
     });
 
 })();
-
 
