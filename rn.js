@@ -13951,7 +13951,68 @@
           return 'de';
         };
       }
-    } ///////FILMIX/////////
+    } 
+	
+	
+	// Kinobase provider (шаблон)
+
+// Функция-зеркало (у тебя уже есть)
+function kinobaseMirror() {
+  var url = Lampa.Storage.get('online_mod_kinobase_mirror', '') + '';
+  if (!url) return 'https://kinobase.org';
+  if (url.indexOf('://') == -1) url = 'https://' + url;
+  if (url.charAt(url.length - 1) === '/') url = url.substring(0, url.length - 1);
+  return url;
+}
+
+// Провайдер
+function kinobase(component, object) {
+  var network = new Lampa.Reguest();
+  var host = kinobaseMirror();
+  var select_title = object.search || object.movie.title;
+
+  this.search = function (_object, kinopoisk_id) {
+    object = _object;
+    select_title = object.search || object.movie.title;
+
+    // Пока просто выводим, что запрос был
+    component.loading(false);
+    component.emptyForQuery('Kinobase (заглушка): ' + select_title);
+  };
+
+  this.extendChoice = function (saved) {};
+  this.reset = function () { component.reset(); };
+  this.filter = function (type, a, b) {};
+  this.destroy = function () { network.clear(); };
+}
+
+// Регистрируем в Lampa
+Lampa.Component.add('kinobase', kinobase);
+
+// Добавляем в список онлайн-источников
+Lampa.Online.add('kinobase', {
+  title: 'Kinobase',
+  search: kinobase,
+  baseurl: kinobaseMirror
+});
+
+// Добавляем пункт в настройки
+Settings.addParam({
+  component: 'online_mod',
+  param: {
+    name: 'online_mod_kinobase_mirror',
+    type: 'input',
+    values: '',
+    default: 'kinobase.org',
+    description: 'Зеркало Kinobase (без https://)'
+  },
+  field: 'online_mod_kinobase_mirror',
+  title: 'Kinobase'
+});
+
+	
+	
+	///////FILMIX/////////
 
 
     var filmix_headers = Lampa.Platform.is('android') ? {
