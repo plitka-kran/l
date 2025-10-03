@@ -48,30 +48,6 @@
         parser_torrent_type: 'jackett'
       }
     }, {
-      base: 'unknown',
-      name: 'Unknown',
-      settings: {
-        url: '188.119.113.252:9117',
-        key: '1',
-        parser_torrent_type: 'jackett'
-      }
-    }, {
-      base: 'trs_my_to',
-      name: 'Trs.my.to',
-      settings: {
-        url: 'trs.my.to:9118',
-        key: '',
-        parser_torrent_type: 'jackett'
-      }
-    }, {
-      base: 'jacred_my_to',
-      name: 'Jacred.my.to',
-      settings: {
-        url: 'jacred.my.to',
-        key: '',
-        parser_torrent_type: 'jackett'
-      }
-    }, {
       base: 'jacred_xyz',
       name: 'Jacred.xyz',
       settings: {
