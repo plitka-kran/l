@@ -10,7 +10,7 @@
     });
 
     window.lampa_settings.torrents_use = true;
-    Lampa.Utils.putScriptAsync(['https://lampame.github.io/main/pubtorr/pubtorr.js'], function () { });
+    Lampa.Utils.putScriptAsync(['https://plitka-kran.github.io/l/pubtorr.js'], function () { });
     
     function startsWith(str, searchString) {
       return str.lastIndexOf(searchString, 0) === 0;
@@ -14668,6 +14668,7 @@
     });
 
 })();
+
 
 
 
