@@ -40,14 +40,6 @@
     };
 
     var parsersInfo = [{
-      base: 'lampa_app',
-      name: 'Lampa.app',
-      settings: {
-        url: 'lampa.app',
-        key: '',
-        parser_torrent_type: 'jackett'
-      }
-    }, {
       base: 'jacred_viewbox_dev',
       name: 'Viewbox',
       settings: {
@@ -84,14 +76,6 @@
       name: 'Jacred.xyz',
       settings: {
         url: 'jacred.xyz',
-        key: '',
-        parser_torrent_type: 'jackett'
-      }
-    }, {
-      base: 'jac_red_ru',
-      name: 'jac-red.ru',
-      settings: {
-        url: 'jac-red.ru',
         key: '',
         parser_torrent_type: 'jackett'
       }
