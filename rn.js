@@ -3,6 +3,30 @@
 (function () {
     'use strict';
 
+    function component(object) {
+        var network = new Lampa.Reguest();
+        var scroll = new Lampa.Scroll({ mask: true, over: true });
+
+        this.create = function () {
+            // Создание интерфейса
+            // Добавьте здесь логику создания UI компонента
+        };
+
+        this.start = function () {
+            // Запуск компонента
+            // Добавьте здесь инициализацию
+        };
+
+        this.render = function () {
+            return scroll.render();
+        };
+
+        this.destroy = function () {
+            network.clear();
+            scroll.destroy();
+        };
+    }
+
     Lampa.Listener.follow('full', function (e) {
         if (e.type == 'complite') {
             e.object.activity.render().find('.view--trailer').remove();
