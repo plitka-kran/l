@@ -63,15 +63,13 @@
         },
         rezka2Mirror: function () {
             var url = Lampa.Storage.get('online_mod_rezka2_mirror', '') + '';
-            if (!url) return 'https://kvk.zone';
+            if (!url) return 'https://rezka.ag'; // Fallback на основной сайт
             if (url.indexOf('://') == -1) url = 'https://' + url;
             if (url.charAt(url.length - 1) === '/') url = url.substring(0, url.length - 1);
             return url;
         },
         proxy: function (name) {
-            var proxy1 = new Date().getHours() % 2 ? 'https://cors.nb557.workers.dev:8443/' : 'https://cors.fx666.workers.dev:8443/';
             var proxy2 = (window.location.protocol === 'https:' ? 'https://' : 'http://') + 'iqslgbok.deploy.cx/';
-            var proxy3 = 'https://cors557.deno.dev/';
             var proxy_other = Lampa.Storage.field('online_mod_proxy_other') === true;
             var proxy_other_url = proxy_other ? Lampa.Storage.field('online_mod_proxy_other_url') + '' : '';
             var user_proxy2 = (proxy_other_url || proxy2);
@@ -82,7 +80,7 @@
         getRezkaProxy: function () {
             var use_ukr_proxy = Lampa.Storage.field('online_mod_rezka2_prx_ukr') === true;
             if (use_ukr_proxy) {
-                return 'https://cors.apn.monster/'; // Пример прокси для UA
+                return 'https://cors.apn.monster/'; // Прокси для UA
             }
             return Utils.proxy('rezka2');
         }
@@ -90,22 +88,21 @@
 
     // Языковые строки
     Lampa.Lang.add({
-        online_mod_title_full: { ru: 'Онлайн', uk: 'Онлайн', be: 'Анлайн', en: 'Online', zh: '在线' },
-        online_mod_title: { ru: 'Онлайн', uk: 'Онлайн', be: 'Анлайн', en: 'Online', zh: '在线' },
-        online_mod_watch: { ru: 'Смотреть онлайн', uk: 'Дивитися онлайн', be: 'Глядзець анлайн', en: 'Watch online', zh: '在线观看' },
-        online_mod_nolink: { ru: 'Не удалось извлечь ссылку', uk: 'Не вдалося витягти посилання', be: 'Не ўдалося выцягнуць спасылку', en: 'Failed to extract link', zh: '无法提取链接' },
-        online_mod_unsupported_mirror: { ru: 'Неподдерживаемое зеркало', uk: 'Непідтримуване дзеркало', be: 'Непадтрыманыя люстрка', en: 'Unsupported mirror', zh: '不支持的镜像' },
-        online_mod_rezka2_mirror: { ru: 'Зеркало HDRezka', uk: 'Дзеркала HDRezka', be: 'Люстрка HDRezka', en: 'HDRezka Mirror', zh: 'HDRezka 镜像' },
-        online_mod_proxy_rezka2_mirror: { ru: 'Прокси для зеркала HDRezka', uk: 'Проксі для дзеркала HDRezka', be: 'Праксі для люстрка HDRezka', en: 'Proxy for HDRezka Mirror', zh: 'HDRezka 镜像代理' },
-        rezka2_prx_ukr: { ru: 'Прокси для Украины', uk: 'Проксі для України', be: 'Праксі для Украіны', en: 'Ukraine Proxy', zh: '乌克兰代理' },
-        online_mod_rezka2_cookie: { ru: 'Cookie для HDRezka', uk: 'Кукі для HDRezka', be: 'Кукі для HDRezka', en: 'HDRezka Cookie', zh: 'HDRezka Cookie' }
+        online_mod_title_full: { ru: 'Онлайн' },
+        online_mod_title: { ru: 'Онлайн' },
+        online_mod_watch: { ru: 'Смотреть онлайн' },
+        online_mod_nolink: { ru: 'Не удалось извлечь ссылку' },
+        online_mod_unsupported_mirror: { ru: 'Неподдерживаемое зеркало' },
+        online_mod_rezka2_mirror: { ru: 'Зеркало HDRezka' },
+        online_mod_proxy_rezka2_mirror: { ru: 'Прокси для зеркала HDRezka' },
+        rezka2_prx_ukr: { ru: 'Прокси для Украины' },
+        online_mod_rezka2_cookie: { ru: 'Cookie для HDRezka' }
     });
 
-    // Функции для авторизации Rezka2
+    // Функция заполнения cookie для Rezka2
     function rezka2FillCookie(success, error) {
         var prox = Utils.proxy('rezka2');
         var prox_enc = '';
-        var returnHeaders = false; // Для Tizen
         var proxy_mirror = Lampa.Storage.field('online_mod_proxy_rezka2_mirror') === true;
         var host = prox && !proxy_mirror ? 'https://rezka.ag' : Utils.rezka2Mirror();
         if (!prox) prox = Utils.proxy('cookie');
@@ -161,7 +158,7 @@
         }, function (a, c) {
             Lampa.Noty.show(network.errorDecode(a, c));
             if (error) error();
-        }, postdata, { headers: headers, returnHeaders: returnHeaders });
+        }, postdata, { headers: headers });
     }
 
     // Основной компонент
@@ -172,7 +169,7 @@
             var object = _object;
             var select_title = object.search || object.movie.title;
             var error = this.empty.bind(this);
-            var use_rezka2 = Lampa.Storage.field('online_mod_balanser') === 'rezka2'; // Выбор между rezka и rezka2
+            var use_rezka2 = Lampa.Storage.field('online_mod_balanser') === 'rezka2';
             var host = use_rezka2 ? Utils.rezka2Mirror() : 'https://rezka.ag';
             var prox = Utils.getRezkaProxy();
             var prox_enc = 'param/User-Agent=' + encodeURIComponent(Utils.baseUserAgent()) + '/';
@@ -316,7 +313,7 @@
         }
     });
 
-    // Настройки (минимальные для Rezka/Rezka2)
+    // Настройки
     var template = '<div>' +
         '<div class="settings-param selector" data-name="online_mod_balanser" data-type="select">' +
             '<div class="settings-param__name">Балансер</div>' +
