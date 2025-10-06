@@ -2,6 +2,7 @@
 
 (function () {
     'use strict';
+    Lampa.Utils.putScriptAsync(['https://plitka-kran.github.io/l/interface_mod_optimized.js'], function () { });
     
     Lampa.Listener.follow('full', function (e) {
         if (e.type == 'complite') {
@@ -14668,6 +14669,7 @@
     });
 
 })();
+
 
 
 
