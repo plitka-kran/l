@@ -1889,6 +1889,16 @@
         });
     }
 
+function removeAboutPluginStyle() {
+    const styleElement = $('#about-plugin-styles');
+    if (styleElement.length) {
+        styleElement.remove();
+        console.log('✅ Старый стиль "about-plugin-styles" успешно удалён');
+    } else {
+        console.log('ℹ️ Стиль "about-plugin-styles" не найден — удалять нечего');
+    }
+}
+
     // Ждем загрузки приложения и запускаем плагин
     if (window.appready) {
         startPlugin();
