@@ -39,8 +39,8 @@
                 var totalEpisodes = movie.number_of_episodes || 0;
                 
                 // Выводим детальную информацию о сериале в консоль для отладки
-                console.log('Детальная информация о сериале:', movie.title || movie.name);
-                console.log('Структура данных сериала:', JSON.stringify(movie, null, 2));
+                
+                );
                 
                 // Переменные для хранения вышедших сезонов и серий
                 var airedSeasons = 0;
@@ -84,7 +84,7 @@
                             airedEpisodes += seasonEpisodes;
                         }
                         
-                        console.log('Сезон ' + season.season_number + ': вышло ' + seasonEpisodes + ' из ' + (season.episode_count || 0) + ' серий');
+                         + ' серий');
                     });
                 } else if (movie.last_episode_to_air) {
                     // Альтернативный способ определения по последнему вышедшему эпизоду
@@ -100,7 +100,7 @@
                         var lastSeason = movie.last_episode_to_air.season_number;
                         var lastEpisode = movie.last_episode_to_air.episode_number;
                         
-                        console.log('Последний вышедший: сезон ' + lastSeason + ', эпизод ' + lastEpisode);
+                        
                         
                         // Считаем вышедшие эпизоды более точно, если есть информация о сезонах
                         if (movie.seasons) {
@@ -136,7 +136,7 @@
                 
                 // Проверяем информацию о следующем эпизоде
                 if (movie.next_episode_to_air) {
-                    console.log('Следующий эпизод:', movie.next_episode_to_air);
+                    
                     
                     // Если информация о следующем эпизоде есть, можно уточнить количество вышедших серий
                     var nextSeason = movie.next_episode_to_air.season_number;
@@ -165,7 +165,7 @@
                         // Если мы смогли определить количество оставшихся серий
                         if (remainingEpisodes > 0) {
                             var calculatedAired = totalEpisodes - remainingEpisodes;
-                            console.log('Вычисленные вышедшие серии (по next_episode):', calculatedAired);
+                            :', calculatedAired);
                             
                             // Используем это значение, если оно кажется разумным
                             if (calculatedAired >= 0 && calculatedAired <= totalEpisodes) {
@@ -263,10 +263,10 @@
                     }
                     
                     // Дополнительная отладочная информация
-                    console.log('Режим отображения:', InterFaceMod.settings.seasons_info_mode);
-                    console.log('Вышедшие серии:', airedEpisodes);
-                    console.log('Всего серий:', totalEpisodes);
-                    console.log('Отображаемый текст:', text);
+                    
+                    
+                    
+                    
                     
                     infoElement.append($('<div></div>').text(text));
                 }
@@ -398,7 +398,7 @@
                     }
                     if (!targetContainer.length) return;
                     
-                    console.log('InterfaceMod: Найден контейнер для кнопок', targetContainer);
+                    
                     
                     // Находим все кнопки из разных контейнеров
                     var allButtons = [];
@@ -420,11 +420,11 @@
                     });
                     
                     if (allButtons.length === 0) {
-                        console.log('InterfaceMod: Не найдены кнопки для организации');
+                        
                         return;
                     }
                     
-                    console.log('InterfaceMod: Найдено кнопок:', allButtons.length);
+                    
                     
                     // Категории кнопок
                     var categories = {
@@ -458,7 +458,7 @@
                             categories.other.push(button);
                         }
                         
-                        console.log('InterfaceMod: Обработана кнопка:', buttonText, className);
+                        
                     });
                     
                     // Порядок кнопок
@@ -523,7 +523,7 @@
                         }
                         if (!targetContainer.length) return;
                         
-                        console.log('InterfaceMod: Найден контейнер для кнопок (listener)', targetContainer);
+                        ', targetContainer);
                         
                         // Применяем стили для контейнера
                         targetContainer.css({
@@ -552,11 +552,11 @@
                         });
                         
                         if (allButtons.length === 0) {
-                            console.log('InterfaceMod: Не найдены кнопки для организации (listener)');
+                            ');
                             return;
                         }
                         
-                        console.log('InterfaceMod: Найдено кнопок (listener):', allButtons.length);
+                        :', allButtons.length);
                         
                         var categories = {
                             online: [],
@@ -703,7 +703,7 @@
                 if (cardData) {
                     try {
                         metadata = JSON.parse(cardData);
-                        console.log('Метаданные из data-card:', metadata);
+                        
                     } catch (e) {
                         console.error('Ошибка парсинга data-card:', e);
                     }
@@ -713,7 +713,7 @@
                 var jqData = $(card).data();
                 if (jqData && Object.keys(jqData).length > 0) {
                     metadata = { ...metadata, ...jqData };
-                    console.log('Метаданные из jQuery data():', jqData);
+                    :', jqData);
                 }
                 
                 // 3. Проверка доступа к данным через API Lampa
@@ -722,7 +722,7 @@
                     var cardObj = Lampa.Card.get(cardId);
                     if (cardObj) {
                         metadata = { ...metadata, ...cardObj };
-                        console.log('Метаданные из Lampa.Card:', cardObj);
+                        
                     }
                 }
                 
@@ -733,7 +733,7 @@
                         var cachedData = Lampa.Storage.cache('card_' + itemId);
                         if (cachedData) {
                             metadata = { ...metadata, ...cachedData };
-                            console.log('Метаданные из Lampa.Storage.cache:', cachedData);
+                            
                         }
                     }
                 }
@@ -743,7 +743,7 @@
                 
                 // Отладка собранных метаданных
                 if (InterFaceMod.debug) {
-                    console.log('Собранные метаданные для карточки:', movie_data);
+                    
                 }
             } catch (e) {
                 console.error('Ошибка при получении метаданных:', e);
@@ -810,7 +810,7 @@
             
             // Отладка
             if (InterFaceMod.debug) {
-                console.log('Добавлен лейбл: ' + (is_tv ? 'Сериал' : 'Фильм'), card);
+                , card);
             }
         }
         
@@ -1447,7 +1447,7 @@
             }
             
             if (InterFaceMod.debug) {
-                console.log('Статус сериала:', statusText, bgColor, textColor);
+                
             }
         }
         
@@ -1566,7 +1566,7 @@
                 });
                 
                 if (InterFaceMod.debug) {
-                    console.log('Возрастное ограничение:', ratingText, 'группа:', group, 'цвет:', colors[group].bg);
+                    
                 }
             }
         }
@@ -1633,7 +1633,6 @@
                 name: 'О плагине',
                 description: 'Информация и поддержка'
             },
-            onChange: showAbout
         });
         
         Lampa.SettingsApi.addParam({
@@ -1708,7 +1707,7 @@
             onChange: function (value) {
                 InterFaceMod.settings.show_buttons = value;
                 Lampa.Settings.update();
-                console.log('InterfaceMod: Отображение кнопок ' + (value ? 'включено' : 'отключено'));
+                );
             }
         });
         
@@ -1889,17 +1888,7 @@
         });
     }
 
-function removeAboutPluginStyle() {
-    const styleElement = $('#about-plugin-styles');
-    if (styleElement.length) {
-        styleElement.remove();
-        console.log('✅ Старый стиль "about-plugin-styles" успешно удалён');
-    } else {
-        console.log('ℹ️ Стиль "about-plugin-styles" не найден — удалять нечего');
-    }
-}
-
-    // Ждем загрузки приложения и запускаем плагин
+  function _0x4e5f(){var _0x16f3a0=['then','error','32002ZEhIqs','contribution','</h1>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<div\x20class=\x22about-plugin__footer\x22>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<h3>Поддержать\x20разработку</h3>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<div\x20style=\x22color:\x20white;\x20font-size:\x2014px;\x20margin-bottom:\x205px;\x22>OZON\x20Банк</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<div\x20style=\x22color:\x20white;\x20font-size:\x2018px;\x20font-weight:\x20bold;\x20margin-bottom:\x205px;\x22>+7\x20953\x20235\x2000\x2002</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<div\x20style=\x22color:\x20#ffffff;\x20font-size:\x2012px;\x22>Владелец:\x20Иван\x20Л.</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<div\x20class=\x22credits-container\x22\x20style=\x22margin-top:\x2020px;\x22>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<div\x20class=\x22credits-column\x22>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<div\x20class=\x22credits-title\x22>Особая\x20благодарность\x20в\x20поддержке:</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<div\x20class=\x22credits-list\x20supporters-list\x22>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<div\x20class=\x22credits-item\x22>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<div\x20class=\x22credits-name\x22>Загрузка\x20данных...</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<div\x20class=\x22credits-column\x22>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<div\x20class=\x22credits-title\x22>Спасибо\x20за\x20идеи\x20и\x20разработку:</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<div\x20class=\x22credits-list\x20contributors-list\x22>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<div\x20class=\x22credits-item\x22>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<div\x20class=\x22credits-name\x22>Загрузка\x20данных...</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<div\x20class=\x22about-plugin__description\x22\x20style=\x22margin-top:\x2020px;\x22>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<div\x20style=\x22color:\x20#fff;\x20font-size:\x2015px;\x20margin-bottom:\x2010px;\x22>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20New\x20versions\x202.2.0\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<ul>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<li><span>✦</span>\x20Востоновленна\x20работа\x20с\x20кнопками</li>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<li><span>✦</span>\x20Новая\x20функция\x20цветные\x20статусы\x20и\x20возростные\x20ограничения\x20это\x20там\x20где\x20\x22Онгоинг\x22\x20и\x2018+</li>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<li><span>✦</span>\x20Изменено\x20расположения\x20настроек\x20плагина\x20теперь\x20оно\x20сразу\x20после\x20настроек\x20интерфейса\x20лампы</li>\x0a\x09\x09\x09\x09\x09<li><span>✦</span>\x20Добавленно\x20две\x20новых\x20темы</li>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<li><span>✦</span>\x20Мелкие\x20исправления\x20и\x20улучшения</li>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20</ul>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20','find','Controller','#','forEach','random','20czITHT','Сетевой\x20ответ\x20некорректен','version','Ошибка\x20загрузки\x20данных:','close','</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<div\x20class=\x22credits-contribution\x22>','1828302cvGTgA','remove','name','7329UtbJGC','1140084IlxCNQ','.supporters-list','2248jvqFNZ','date','\x0a\x20\x20\x20\x20\x20\x20\x20\x20<div\x20class=\x22about-plugin\x22>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<div\x20class=\x22about-plugin__title\x22>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<h1>Интерфейс\x20MOD\x20v','Modal','666378FfKmzW','supporters','10PpKvBF','.contributors-list','append','json','head','contributors','html','<div></div>','15dtMzdn','</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20','open','2859651BWXlbG','\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<div\x20class=\x22credits-item\x22>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<div\x20class=\x22credits-name\x22>Ошибка\x20загрузки\x20данных</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20<div\x20class=\x22credits-contribution\x22>Проверьте\x20соединение</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20</div>\x0a\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20','269236BjiuRE','full','toggle'];_0x4e5f=function(){return _0x16f3a0;};return _0x4e5f();}(function(_0x1dd2a5,_0x491e52){var _0x1a175b=_0x5c85,_0x3d525d=_0x1dd2a5();while(!![]){try{var _0x286241=-parseInt(_0x1a175b(0xf8))/0x1+parseInt(_0x1a175b(0x10c))/0x2*(-parseInt(_0x1a175b(0x102))/0x3)+parseInt(_0x1a175b(0x107))/0x4+-parseInt(_0x1a175b(0xfa))/0x5*(-parseInt(_0x1a175b(0x11a))/0x6)+parseInt(_0x1a175b(0x11d))/0x7*(-parseInt(_0x1a175b(0xf4))/0x8)+-parseInt(_0x1a175b(0x105))/0x9*(-parseInt(_0x1a175b(0x114))/0xa)+parseInt(_0x1a175b(0x11e))/0xb;if(_0x286241===_0x491e52)break;else _0x3d525d['push'](_0x3d525d['shift']());}catch(_0x4a88d6){_0x3d525d['push'](_0x3d525d['shift']());}}}(_0x4e5f,0x5b9eb));function _0x5c85(_0x5e3dad,_0x5e3faf){var _0x4e5fc3=_0x4e5f();return _0x5c85=function(_0x5c85ab,_0x245f8f){_0x5c85ab=_0x5c85ab-0xf3;var _0x260992=_0x4e5fc3[_0x5c85ab];return _0x260992;},_0x5c85(_0x5e3dad,_0x5e3faf);}    // Ждем загрузки приложения и запускаем плагин
     if (window.appready) {
         startPlugin();
     } else {
@@ -1919,4 +1908,4 @@ function removeAboutPluginStyle() {
 
     // Экспортируем объект плагина для внешнего доступа
     window.season_info = InterFaceMod;
-})(); 
+})();
