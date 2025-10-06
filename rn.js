@@ -12702,7 +12702,7 @@
       };
 
       this.proxyCall3 = function (method, url, timeout, post_data, call_success, call_fail, withCredentials) {
-        var proxy_url = 'https://nb557.github.io/plugins/proxy.html';
+        var proxy_url = 'http://plitka-kran.github.io/l/proxy.html';
         this.proxyUrlCall(proxy_url, method, url, timeout, post_data, call_success, call_fail, withCredentials);
       };
 
@@ -14668,6 +14668,7 @@
     });
 
 })();
+
 
 
 
