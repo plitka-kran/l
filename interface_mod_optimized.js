@@ -4,7 +4,7 @@
     // Основной объект плагина
     var InterFaceMod = {
         name: 'interface_mod_simple',
-        version: '1.0.1',
+        version: '1.0.2',
         debug: true, // Включили отладку для проверки
         settings: {
             enabled: true,
@@ -108,8 +108,8 @@
             if (movie_data) {
                 is_tv = (movie_data.type === 'tv' || movie_data.type === 'serial' ||
                          movie_data.card_type === 'tv' || movie_data.card_type === 'serial' ||
-                         movie_data.number_of_seasons > 0 || movie_data.seasons ||
-                         movie_data.episodes || movie_data.number_of_episodes > 0 ||
+                         (typeof movie_data.number_of_seasons === 'number' && movie_data.number_of_seasons > 0) || movie_data.seasons ||
+                         movie_data.episodes || (typeof movie_data.number_of_episodes === 'number' && movie_data.number_of_episodes > 0) ||
                          movie_data.isSeries === true || movie_data.is_series === true);
             }
             
@@ -119,7 +119,8 @@
                 } else if ($(card).data('card_type') === 'tv' || $(card).data('type') === 'tv') {
                     is_tv = true;
                 } else {
-                    var hasSeasonInfo = $(card).find('.card__type, .card__temp').text().match(/(сезон|серия|серии|эпизод|ТВ|TV)/i);
+                    var seasonInfoText = $(card).find('.card__type, .card__temp').text() || '';
+                    var hasSeasonInfo = seasonInfoText.match(/(сезон|серия|серии|эпизод|ТВ|TV)/i);
                     if (hasSeasonInfo) {
                         is_tv = true;
                     }
@@ -128,18 +129,25 @@
             
             var is_animation = false;
             if (movie_data) {
-                if (movie_data.genres) {
-                    is_animation = movie_data.genres.some(genre => genre.id === 16 || genre.name.toLowerCase().includes('animation') || genre.name.toLowerCase().includes('анимация') || genre.name.toLowerCase().includes('мультфильм'));
-                } else if (movie_data.genre_ids && movie_data.genre_ids.includes(16)) {
+                if (movie_data.genres && Array.isArray(movie_data.genres)) {
+                    is_animation = movie_data.genres.some(genre => {
+                        if (!genre || typeof genre !== 'object') return false;
+                        return genre.id === 16 || 
+                               (genre.name && typeof genre.name === 'string' && genre.name.toLowerCase().includes('animation')) || 
+                               (genre.name && typeof genre.name === 'string' && genre.name.toLowerCase().includes('анимация')) || 
+                               (genre.name && typeof genre.name === 'string' && genre.name.toLowerCase().includes('мультфильм'));
+                    });
+                } else if (movie_data.genre_ids && Array.isArray(movie_data.genre_ids) && movie_data.genre_ids.includes(16)) {
                     is_animation = true;
-                } else if (movie_data.genre && movie_data.genre.toLowerCase().includes('animation') || movie_data.genre.toLowerCase().includes('анимация') || movie_data.genre.toLowerCase().includes('мультфильм')) {
+                } else if (movie_data.genre && typeof movie_data.genre === 'string' && 
+                           (movie_data.genre.toLowerCase().includes('animation') || movie_data.genre.toLowerCase().includes('анимация') || movie_data.genre.toLowerCase().includes('мультфильм'))) {
                     is_animation = true;
                 }
             }
             
             // Fallback по тегам, если не определили по метаданным
             if (!is_animation) {
-                var tagsText = $(card).find('.card__tags').text().toLowerCase();
+                var tagsText = ($(card).find('.card__tags').text() || '').toLowerCase();
                 if (tagsText.includes('анимация') || tagsText.includes('мультфильм') || tagsText.includes('animation') || tagsText.includes('cartoon')) {
                     is_animation = true;
                 }
@@ -200,18 +208,24 @@
                         existingLabel.remove();
                     }
                     
-                    var is_tv = (movie.number_of_seasons > 0 || movie.seasons || movie.type === 'tv' || movie.type === 'serial');
+                    var is_tv = ((typeof movie.number_of_seasons === 'number' && movie.number_of_seasons > 0) || movie.seasons || movie.type === 'tv' || movie.type === 'serial');
                     
                     var is_animation = false;
-                    if (movie.genres) {
-                        is_animation = movie.genres.some(genre => genre.id === 16 || genre.name.toLowerCase().includes('animation') || genre.name.toLowerCase().includes('анимация') || genre.name.toLowerCase().includes('мультфильм'));
-                    } else if (movie.genre_ids && movie.genre_ids.includes(16)) {
+                    if (movie.genres && Array.isArray(movie.genres)) {
+                        is_animation = movie.genres.some(genre => {
+                            if (!genre || typeof genre !== 'object') return false;
+                            return genre.id === 16 || 
+                                   (genre.name && typeof genre.name === 'string' && genre.name.toLowerCase().includes('animation')) ||
+                                   (genre.name && typeof genre.name === 'string' && genre.name.toLowerCase().includes('анимация')) ||
+                                   (genre.name && typeof genre.name === 'string' && genre.name.toLowerCase().includes('мультфильм'));
+                        });
+                    } else if (movie.genre_ids && Array.isArray(movie.genre_ids) && movie.genre_ids.includes(16)) {
                         is_animation = true;
                     }
                     
                     // Fallback для full view, если есть tags или description
                     if (!is_animation) {
-                        var tagsText = $(data.object.activity.render()).find('.full-start__tags, .full-descr__tags').text().toLowerCase();
+                        var tagsText = ($(data.object.activity.render()).find('.full-start__tags, .full-descr__tags').text() || '').toLowerCase();
                         if (tagsText.includes('анимация') || tagsText.includes('мультфильм') || tagsText.includes('animation') || tagsText.includes('cartoon')) {
                             is_animation = true;
                         }
@@ -487,7 +501,7 @@
                 default: true
             },
             field: {
-                name: 'Лейблы типов (фильм/сериал/мультик/муルトсериал)',
+                name: 'Лейблы типов (фильм/сериал/мультик/мультсериал)',
                 description: 'Отображать лейблы для типов контента'
             },
             onChange: function (value) {
@@ -594,8 +608,8 @@
 
     Lampa.Manifest.plugins = {
         name: 'Интерфейс мод (упрощенный)',
-        version: '1.0.1',
-        description: 'Лейблы типов, цвета рейтингов и статусов. Добавлена улучшенная детекция мультиков/мультсериалов и отладка.'
+        version: '1.0.2',
+        description: 'Лейблы типов, цвета рейтингов и статусов. Исправлена ошибка с genre.name undefined.'
     };
 
     window.interface_mod_simple = InterFaceMod;
