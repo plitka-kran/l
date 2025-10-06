@@ -3,11 +3,11 @@
 (function () {
     'use strict';
 
-    Lampa.Listener.follow('full', function (e) {
+/*     Lampa.Listener.follow('full', function (e) {
         if (e.type == 'complite') {
             e.object.activity.render().find('.view--trailer').remove();
         }
-    });
+    }); */
 
     window.lampa_settings.torrents_use = true;
     Lampa.Utils.putScriptAsync(['https://plitka-kran.github.io/l/pubtorr.js'], function () { });
@@ -14668,3 +14668,4 @@
     });
 
 })();
+
