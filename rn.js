@@ -2,49 +2,12 @@
 
 (function () {
     'use strict';
-
-
-
-(function() {
-    // Добавляем шаблон кнопки YouTube
-    Lampa.Template.add('youtube_button', `
-        <li class="menu__item selector" data-action="youtube">
-            <div class="menu__ico">
-                <svg viewBox="0 0 24 24">
-                    <path d="M10 15l5.19-3L10 9v6zm12-3c0 1.1-.9 2-2 2H4c-1.1 
-                             0-2-.9-2-2V6c0-1.1.9-2 2-2h16c1.1 
-                             0 2 .9 2 2v6z" fill="currentColor"/>
-                </svg>
-            </div>
-            <div class="menu__text">YouTube</div>
-        </li>
-    `);
-
-    // Отслеживаем, когда меню отрисовано
-    Lampa.Listener.follow('app', function(event) {
-        if (event.type === 'menu') {
-            // Добавляем кнопку YouTube в главное меню
-            $('.menu__list').eq(0).append(Lampa.Template.get('youtube_button', true));
-
-            // Назначаем действие при клике
-            $('.menu__item[data-action="youtube"]').on('hover:enter', function() {
-                Lampa.Activity.push({
-                    url: 'https://youtube.com/tv',
-                    title: 'YouTube',
-                    component: 'iframe',
-                    page: 1
-                });
-            });
-        }
-    });
-})();
     
-    
-/*     Lampa.Listener.follow('full', function (e) {
+    Lampa.Listener.follow('full', function (e) {
         if (e.type == 'complite') {
             e.object.activity.render().find('.view--trailer').remove();
         }
-    }); */
+    }); 
 
     window.lampa_settings.torrents_use = true;
     Lampa.Utils.putScriptAsync(['https://plitka-kran.github.io/l/pubtorr.js'], function () { });
@@ -14705,4 +14668,5 @@
     });
 
 })();
+
 
