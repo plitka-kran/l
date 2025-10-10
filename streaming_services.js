@@ -1,66 +1,95 @@
-class StreamingServices {
-    constructor() {
-        this.menu = ['Netflix', 'HBO', 'Hulu', 'Disney+'];
-        this.filters = ['Фильмы', 'Сериалы', 'Новинки', 'Популярное'];
-        this.serviceMapping = {
-            'Netflix': [8, 9],
-            'HBO': [10],
-            'Hulu': [11],
-            'Disney+': [12]
-        };
+(function() {
+    'use strict';
+
+    var Plugin = {
+        name: 'Стриминговые сервисы',
+        version: '3.0'
+    };
+
+    var STREAMING_SERVICES = {
+        netflix: { name: 'Netflix', id: 8 },
+        hbo: { name: 'HBO Max', id: 384 },
+        hulu: { name: 'Hulu', id: 15 },
+        disney: { name: 'Disney+', id: 337 }
+    };
+
+    var CATEGORIES = {
+        movies_popular: { name: 'Популярные фильмы', type: 'movie', sort: 'popularity.desc' },
+        movies_new: { name: 'Новинки фильмов', type: 'movie', sort: 'primary_release_date.desc', date_filter: true },
+        series_popular: { name: 'Популярные сериалы', type: 'tv', sort: 'popularity.desc' },
+        series_new: { name: 'Новинки сериалов', type: 'tv', sort: 'first_air_date.desc', date_filter: true }
+    };
+
+    function showContent(serviceKey, categoryKey) {
+        var service = STREAMING_SERVICES[serviceKey];
+        var category = CATEGORIES[categoryKey];
+
+        var url = Lampa.TMDB.api(category.type === 'movie' ? 'discover/movie' : 'discover/tv', {
+            sort_by: category.sort,
+            with_watch_providers: service.id,
+            watch_region: 'US',
+            'vote_count.gte': 20
+        });
+
+        Lampa.Activity.push({
+            url: url,
+            title: service.name + ' - ' + category.name,
+            component: 'category',
+            category: true,
+            source: 'tmdb',
+            type: category.type,
+            page: 1
+        });
     }
 
-    init() {
-        this.menu.forEach(service => {
-            Lampa.Menu.add({
-                title: service,
-                onClick: () => this.showFilters(service)
+    function showServiceMenu(serviceKey) {
+        var service = STREAMING_SERVICES[serviceKey];
+        var items = [];
+
+        for (var catKey in CATEGORIES) {
+            items.push({
+                title: CATEGORIES[catKey].name,
+                service: serviceKey,
+                category: catKey
             });
+        }
+
+        Lampa.Select.show({
+            title: service.name,
+            items: items,
+            onSelect: function(a) {
+                showContent(a.service, a.category);
+            },
+            onBack: function() {
+                Lampa.Controller.toggle('menu');
+            }
         });
     }
 
-    showFilters(service) {
-        Lampa.Select.show(this.filters, (filter) => {
-            this.fetchContent(service, filter);
+    function init() {
+        // Добавляем пункты меню через Lampa.Menu.add
+        for (var key in STREAMING_SERVICES) {
+            (function(serviceKey) {
+                Lampa.Menu.add({
+                    title: STREAMING_SERVICES[serviceKey].name,
+                    icon: '', // можно добавить svg иконку
+                    onClick: function() {
+                        showServiceMenu(serviceKey);
+                    }
+                });
+            })(key);
+        }
+
+        console.log('[Plugin] ' + Plugin.name + ' v' + Plugin.version + ' загружен');
+        Lampa.Noty.show('Расширение "' + Plugin.name + '" активировано');
+    }
+
+    if (window.Lampa) {
+        Lampa.Listener.follow('app', function(e) {
+            if (e.type === 'ready') {
+                init();
+            }
         });
     }
 
-    async fetchContent(service, filter) {
-        Lampa.Loader.show();
-
-        let promise;
-
-        if (filter === 'Фильмы') {
-            promise = Lampa.TMDB.moviePopular(); // встроенный метод TMDb для популярных фильмов
-        } else if (filter === 'Сериалы') {
-            promise = Lampa.TMDB.tvPopular(); // популярные сериалы
-        } else if (filter === 'Новинки') {
-            promise = Lampa.TMDB.movieNowPlaying(); // новинки фильмов
-        } else if (filter === 'Популярное') {
-            promise = Lampa.TMDB.moviePopular(); 
-        }
-
-        try {
-            const data = await promise;
-            const serviceIds = this.serviceMapping[service] || [];
-            const filteredItems = data.results.filter((item, idx) => serviceIds.includes(idx % 12));
-
-            const items = filteredItems.map(item => ({
-                title: item.title || item.name,
-                poster: item.poster_path ? `https://image.tmdb.org/t/p/w300${item.poster_path}` : '',
-                url: ''
-            }));
-
-            Lampa.Collections.render(items);
-
-        } catch(e) {
-            console.error(e);
-            Lampa.Loader.hide();
-            Lampa.Noty.show('Ошибка загрузки контента');
-        }
-    }
-}
-
-const plugin = new StreamingServices();
-plugin.init();
-export default plugin;
+})();
