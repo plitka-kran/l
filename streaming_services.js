@@ -2,136 +2,47 @@
     'use strict';
 
     var STREAMING_SERVICES = {
-        netflix: { name: 'Netflix', id: 8 },
-        hbo: { name: 'HBO Max', id: 384 }
-    };
-
-    var CATEGORIES = {
-        'Популярные фильмы': { type: 'movie', sort: 'popularity.desc' },
-        'Новинки фильмов': { type: 'movie', sort: 'primary_release_date.desc', date_filter: true },
-        'Популярные сериалы': { type: 'tv', sort: 'popularity.desc' },
-        'Новинки сериалов': { type: 'tv', sort: 'first_air_date.desc', date_filter: true }
-    };
-
-    function getDiscoverParams(category) {
-        var params = {
-            sort_by: category.sort,
-            page: 1
-        };
-
-        if (category.date_filter) {
-            var today = new Date();
-            var sixMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 6, today.getDate());
-            var dateStr = sixMonthsAgo.toISOString().split('T')[0];
-            if (category.type === 'movie') params['primary_release_date.gte'] = dateStr;
-            else params['first_air_date.gte'] = dateStr;
+        netflix: { 
+            name: 'Netflix', 
+            icon: '<svg width="26" height="26" viewBox="0 0 24 24" fill="#E50914"><path d="M5.398 0v.006c3.028 8.556 5.37 15.175 8.348 23.994 2.344.056 4.85.398 7.254.4-3.462-9.547-5.923-16.219-9.15-24.4H5.398z"/></svg>'
+        },
+        hbo: { 
+            name: 'HBO Max', 
+            icon: '<svg width="26" height="26" viewBox="0 0 24 24" fill="#9c27b0"><circle cx="12" cy="12" r="10"/></svg>'
+        },
+        hulu: { 
+            name: 'Hulu', 
+            icon: '<svg width="26" height="26" viewBox="0 0 24 24" fill="#3DBB3D"><rect width="24" height="24" rx="4"/></svg>'
+        },
+        disney: { 
+            name: 'Disney+', 
+            icon: '<svg width="26" height="26" viewBox="0 0 24 24" fill="#113CCF"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>'
         }
+    };
 
-        return params;
-    }
+    var CATEGORIES = ['Популярные фильмы', 'Новинки фильмов', 'Популярные сериалы', 'Новинки сериалов'];
 
-    function filterByProvider(items, serviceId, type) {
-        var promises = items.slice(0, 50).map(function(item) {  // Топ-50 для перевірки
-            var endpoint = type === 'movie' ? `movie/${item.id}/watch/providers` : `tv/${item.id}/watch/providers`;
-            return Lampa.TMDB.api(endpoint, { region: 'UA' }).then(function(providers) {
-                var flatrate = providers.results?.UA?.flatrate || [];
-                return flatrate.some(function(p) { return p.provider_id === serviceId; }) ? item : null;
-            }).catch(function() { return null; });
-        });
-
-        return Promise.all(promises).then(function(filtered) {
-            return filtered.filter(Boolean).slice(0, 20);  // Топ-20 релевантних
+    var TEST_ITEMS = [];
+    for (var i = 1; i <= 12; i++) {
+        TEST_ITEMS.push({
+            title: 'Тестовый фильм ' + i,
+            icon: 'https://via.placeholder.com/200x300?text=Poster+' + i,
+            description: 'Краткое описание фильма ' + i,
+            rating: (Math.random() * 10).toFixed(1),
+            component: 'movie'
         });
     }
 
     function showCategory(serviceKey, categoryName) {
-        var service = STREAMING_SERVICES[serviceKey];
-        var category = CATEGORIES[categoryName];
-        var params = getDiscoverParams(category);
-        var endpoint = category.type === 'movie' ? 'discover/movie' : 'discover/tv';
-
-        console.log('Завантажуємо discover для', categoryName, 'сервіс:', service.name);  // Лог для діагностики
-
-        Lampa.TMDB.api(endpoint, params).then(function(result) {
-            console.log('Discover results count:', result.results?.length || 0);  // Лог
-
-            if (!result.results || result.results.length === 0) {
-                Lampa.Activity.push({
-                    title: service.name + ' - ' + categoryName,
-                    component: 'grid',
-                    items: [{ title: 'Немає результатів', description: 'Спробуйте іншу категорію.' }],
-                    page: 1,
-                    tabs: Object.keys(CATEGORIES).map(function(name) { return { title: name }; }),
-                    onTabSelect: function(tabName) { showCategory(serviceKey, tabName); }
-                });
-                return;
+        Lampa.Activity.push({
+            title: STREAMING_SERVICES[serviceKey].name + ' - ' + categoryName,
+            component: 'grid', // сетка постеров
+            items: TEST_ITEMS,
+            page: 1,
+            tabs: CATEGORIES.map(function(name){ return { title: name }; }),
+            onTabSelect: function(tabName) {
+                showCategory(serviceKey, tabName);
             }
-
-            // Фільтруємо за провайдером
-            filterByProvider(result.results, service.id, category.type).then(function(filteredItems) {
-                console.log('Filtered items count:', filteredItems.length);  // Лог
-
-                if (filteredItems.length === 0) {
-                    Lampa.Activity.push({
-                        title: service.name + ' - ' + categoryName,
-                        component: 'grid',
-                        items: [{ title: 'Контент не знайдено в UA', description: 'Можливо, мало доступного на сервісі.' }],
-                        page: 1,
-                        tabs: Object.keys(CATEGORIES).map(function(name) { return { title: name }; }),
-                        onTabSelect: function(tabName) { showCategory(serviceKey, tabName); }
-                    });
-                    return;
-                }
-
-                var items = filteredItems.map(function(item) {
-                    return {
-                        title: item.title || item.name,
-                        icon: item.poster_path ? 'https://image.tmdb.org/t/p/w500' + item.poster_path : '',
-                        description: item.overview ? item.overview.substring(0, 120) + '...' : '',
-                        rating: item.vote_average ? item.vote_average.toFixed(1) : 'N/A',
-                        url: item.id,
-                        component: category.type
-                    };
-                });
-
-                Lampa.Activity.push({
-                    title: service.name + ' - ' + categoryName,
-                    component: 'grid',
-                    items: items,
-                    page: 1,
-                    tabs: Object.keys(CATEGORIES).map(function(name) { return { title: name }; }),
-                    onTabSelect: function(tabName) { showCategory(serviceKey, tabName); }
-                });
-            }).catch(function(error) {
-                console.error('Помилка фільтрації:', error);
-                // Fallback: показуємо без фільтра
-                var items = result.results.slice(0, 20).map(function(item) {
-                    return {
-                        title: item.title || item.name,
-                        icon: item.poster_path ? 'https://image.tmdb.org/t/p/w500' + item.poster_path : '',
-                        description: item.overview ? item.overview.substring(0, 120) + '...' : '',
-                        rating: item.vote_average ? item.vote_average.toFixed(1) : 'N/A',
-                        url: item.id,
-                        component: category.type
-                    };
-                });
-                Lampa.Activity.push({
-                    title: service.name + ' - ' + categoryName + ' (без фільтра)',
-                    component: 'grid',
-                    items: items,
-                    page: 1,
-                    tabs: Object.keys(CATEGORIES).map(function(name) { return { title: name }; }),
-                    onTabSelect: function(tabName) { showCategory(serviceKey, tabName); }
-                });
-            });
-        }).catch(function(error) {
-            console.error('Помилка discover:', error);
-            Lampa.Activity.push({
-                title: 'Помилка',
-                component: 'grid',
-                items: [{ title: 'Помилка завантаження', description: error.message || 'Перевірте консоль.' }],
-                page: 1
-            });
         });
     }
 
@@ -144,7 +55,7 @@
             (function(serviceKey) {
                 var service = STREAMING_SERVICES[serviceKey];
                 var button = $('<li class="menu__item selector">' +
-                    '<div class="menu__ico"><svg height="36" viewBox="0 0 38 36" fill="currentColor"></svg></div>' +
+                    '<div class="menu__ico">' + service.icon + '</div>' +
                     '<div class="menu__text">' + service.name + '</div>' +
                     '</li>');
 
