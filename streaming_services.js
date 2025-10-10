@@ -19,7 +19,7 @@
         var endpoint = category.type === 'movie' ? 'discover/movie' : 'discover/tv';
         var params = {
             sort_by: category.sort,
-            with_watch_providers: serviceId,
+            with_watch_providers: String(serviceId),
             watch_region: 'UA',
             'vote_count.gte': 20
         };
@@ -32,33 +32,42 @@
             else params['first_air_date.gte'] = dateStr;
         }
 
-        return Lampa.TMDB.api(endpoint, params);
-    }
-
-    function showCategory(serviceKey, categoryName) {
-        var service = STREAMING_SERVICES[serviceKey];
-        var category = CATEGORIES[categoryName];
-
-        Lampa.Activity.push({
-            url: buildUrl(service.id, category),
-            title: service.name + ' - ' + categoryName,
-            component: 'category',
-            category: true,
-            source: 'tmdb',
-            type: category.type,
-            page: 1,
-            tabs: Object.keys(CATEGORIES).map(function(name) {
-                return { title: name };
-            }),
-            onTabSelect: function(tabName) {
-                showCategory(serviceKey, tabName);
-            }
-        });
+        return { endpoint: endpoint, params: params };
     }
 
     function showService(serviceKey) {
-        // При клике на сервис сразу открываем "Популярные фильмы"
-        showCategory(serviceKey, 'Популярные фильмы');
+        var service = STREAMING_SERVICES[serviceKey];
+
+        // Создаём массив вкладок
+        var tabs = Object.keys(CATEGORIES).map(function(name) {
+            return { title: name };
+        });
+
+        // Показываем сразу категорию "Популярные фильмы" с вкладками
+        Lampa.Activity.push({
+            url: buildUrl(service.id, CATEGORIES['Популярные фильмы']),
+            title: service.name + ' - Популярные фильмы',
+            component: 'category',
+            category: true,
+            source: 'tmdb',
+            type: CATEGORIES['Популярные фильмы'].type,
+            page: 1,
+            tabs: tabs,
+            onTabSelect: function(tabName) {
+                var cat = CATEGORIES[tabName];
+                Lampa.Activity.push({
+                    url: buildUrl(service.id, cat),
+                    title: service.name + ' - ' + tabName,
+                    component: 'category',
+                    category: true,
+                    source: 'tmdb',
+                    type: cat.type,
+                    page: 1,
+                    tabs: tabs,
+                    onTabSelect: this.onTabSelect // рекурсивно для переключения
+                });
+            }
+        });
     }
 
     function addMenu() {
