@@ -1,183 +1,185 @@
-// Плагин для Lampa: Добавление категорий стриминговых сервисов с использованием встроенного TMDB
-// Автор: Grok (на основе Lampa API)
-// Версия: 1.1
+// Расширение для Лампы - Стриминговые сервисы
+// Добавляет категории в левое меню
+// Версия: 3.0
 
 (function() {
     'use strict';
 
-    // Список сервисов (ID из TMDB)
-    const providers = {
-        'Netflix': 8,
-        'HBO Max': 2,
-        'Hulu': 3,
-        'Disney+': 99,
-        'Prime Video': 9
+    var Plugin = {
+        name: 'Стриминговые сервисы',
+        version: '3.0'
     };
 
-    const REGION = 'US'; // Или 'RU' для России
+    // Конфигурация стриминговых сервисов
+    var STREAMING_SERVICES = {
+        netflix: {
+            name: 'Netflix',
+            id: 8,
+            icon: '<svg width="26" height="26" viewBox="0 0 24 24" fill="#E50914"><path d="M5.398 0v.006c3.028 8.556 5.37 15.175 8.348 23.994 2.344.056 4.85.398 7.254.4-3.462-9.547-5.923-16.219-9.15-24.4H5.398z"/></svg>'
+        },
+        hbo: {
+            name: 'HBO Max',
+            id: 384,
+            icon: '<svg width="26" height="26" viewBox="0 0 24 24" fill="#9c27b0"><circle cx="12" cy="12" r="10"/></svg>'
+        },
+        hulu: {
+            name: 'Hulu',
+            id: 15,
+            icon: '<svg width="26" height="26" viewBox="0 0 24 24" fill="#3DBB3D"><rect width="24" height="24" rx="4"/></svg>'
+        },
+        disney: {
+            name: 'Disney+',
+            id: 337,
+            icon: '<svg width="26" height="26" viewBox="0 0 24 24" fill="#113CCF"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>'
+        },
+        amazon: {
+            name: 'Prime Video',
+            id: 9,
+            icon: '<svg width="26" height="26" viewBox="0 0 24 24" fill="#00A8E1"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/></svg>'
+        },
+        apple: {
+            name: 'Apple TV+',
+            id: 350,
+            icon: '<svg width="26" height="26" viewBox="0 0 24 24" fill="#555"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09z"/></svg>'
+        }
+    };
 
-    // Функция для fetching через встроенный TMDB Lampa
-    function fetchContent(providerId, category, page = 1) {
-        let url = '';
-        let params = {
-            language: 'ru-RU',
-            watch_region: REGION,
-            with_watch_providers: providerId,
-            page: page
+    // Категории контента
+    var CATEGORIES = {
+        movies_popular: { 
+            name: 'Популярные фильмы', 
+            type: 'movie', 
+            sort: 'popularity.desc'
+        },
+        movies_new: { 
+            name: 'Новинки фильмов', 
+            type: 'movie', 
+            sort: 'primary_release_date.desc',
+            date_filter: true
+        },
+        series_popular: { 
+            name: 'Популярные сериалы', 
+            type: 'tv', 
+            sort: 'popularity.desc'
+        },
+        series_new: { 
+            name: 'Новинки сериалов', 
+            type: 'tv', 
+            sort: 'first_air_date.desc',
+            date_filter: true
+        }
+    };
+
+    // Функция для создания URL запроса
+    function buildUrl(serviceId, category) {
+        var type = category.type;
+        var endpoint = type === 'movie' ? 'discover/movie' : 'discover/tv';
+        
+        var params = {
+            sort_by: category.sort,
+            with_watch_providers: serviceId,
+            watch_region: 'US',
+            'vote_count.gte': 20
         };
 
-        switch (category) {
-            case 'movies':
-                url = '/discover/movie';
-                break;
-            case 'series':
-                url = '/discover/tv';
-                break;
-            case 'new':
-                url = '/trending/all/week';
-                break;
-            case 'popular':
-                url = '/discover/movie'; // Для сериалов — '/discover/tv'
-                if (category === 'series') url = '/discover/tv';
-                params.sort_by = 'popularity.desc';
-                break;
-            default:
-                return Promise.reject('Неизвестная категория');
+        // Добавляем фильтр по дате для новинок
+        if (category.date_filter) {
+            var today = new Date();
+            var sixMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 6, today.getDate());
+            var dateStr = sixMonthsAgo.toISOString().split('T')[0];
+            
+            if (type === 'movie') {
+                params['primary_release_date.gte'] = dateStr;
+            } else {
+                params['first_air_date.gte'] = dateStr;
+            }
         }
 
-        // Используем встроенный TMDB Lampa (если доступен)
-        if (typeof Lampa.TMDB !== 'undefined' && Lampa.TMDB.request) {
-            return Lampa.TMDB.request(url, params).then(data => processTMDBData(data));
-        } else if (typeof Lampa.Api !== 'undefined' && Lampa.Api.tmdb) {
-            return Lampa.Api.tmdb({url: url, params: params}).then(data => processTMDBData(data));
-        } else {
-            // Fallback на прямой fetch (с дефолтным ключом Lampa, если известен; иначе укажи свой)
-            const TMDB_API_KEY = ''; // Lampa использует свой, но для теста возьми с themoviedb.org
-            const fullUrl = `https://api.themoviedb.org/3${url}?api_key=${TMDB_API_KEY}&${new URLSearchParams(params)}`;
-            return fetch(fullUrl).then(res => res.json()).then(data => processTMDBData(data));
-        }
+        return Lampa.TMDB.api(endpoint, params);
     }
 
-    // Обработка данных TMDB (общее для всех методов)
-    function processTMDBData(data) {
-        if (data.results) {
-            return data.results.map(item => ({
-                title: item.title || item.name,
-                original_title: item.original_title || item.original_name,
-                img: `https://image.tmdb.org/t/p/w300${item.poster_path}`,
-                description: item.overview,
-                year: item.release_date ? new Date(item.release_date).getFullYear() : (item.first_air_date ? new Date(item.first_air_date).getFullYear() : ''),
-                id: item.id,
-                type: item.title ? 'movie' : 'tv'
-            }));
-        }
-        return [];
+    // Показ контента
+    function showContent(serviceKey, categoryKey) {
+        var service = STREAMING_SERVICES[serviceKey];
+        var category = CATEGORIES[categoryKey];
+        
+        var url = buildUrl(service.id, category);
+
+        Lampa.Activity.push({
+            url: url,
+            title: service.name + ' - ' + category.name,
+            component: 'category',
+            category: true,
+            source: 'tmdb',
+            type: category.type,
+            page: 1
+        });
     }
 
-    // Функция для создания подменю (без изменений)
-    function createSubMenu(providerName, providerId) {
-        const html = `
-            <div class="selector" style="padding: 20px;">
-                <div class="full-start__buttons selector no-margin">
-                    <div class="full-start__button selector" data-action="movies">
-                        <div class="full-start__button-titles">
-                            <div class="full-start__button-title">Фильмы</div>
-                        </div>
-                    </div>
-                    <div class="full-start__button selector" data-action="series">
-                        <div class="full-start__button-titles">
-                            <div class="full-start__button-title">Сериалы</div>
-                        </div>
-                    </div>
-                    <div class="full-start__button selector" data-action="new">
-                        <div class="full-start__button-titles">
-                            <div class="full-start__button-title">Новинки</div>
-                        </div>
-                    </div>
-                    <div class="full-start__button selector" data-action="popular">
-                        <div class="full-start__button-titles">
-                            <div class="full-start__button-title">Популярные</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
+    // Показ меню категорий для сервиса
+    function showServiceMenu(serviceKey) {
+        var service = STREAMING_SERVICES[serviceKey];
+        var items = [];
 
-        $(html).find('[data-action]').on('hover:enter', function(e) {
-            const action = $(this).data('action');
-            if (action === 'series') action = 'series'; // Для popular скорректировать в fetch
-            loadContent(providerName, providerId, action);
+        for (var catKey in CATEGORIES) {
+            items.push({
+                title: CATEGORIES[catKey].name,
+                subtitle: '',
+                service: serviceKey,
+                category: catKey
+            });
+        }
+
+        Lampa.Select.show({
+            title: service.name,
+            items: items,
+            onSelect: function(a) {
+                showContent(a.service, a.category);
+            },
+            onBack: function() {
+                Lampa.Controller.toggle('menu');
+            }
+        });
+    }
+
+    // Добавление пункта в меню
+    function addMenuItem(serviceKey, serviceData) {
+        var item = $('<li class="menu__item selector" data-action="streaming_' + serviceKey + '">' +
+            '<div class="menu__ico">' + serviceData.icon + '</div>' +
+            '<div class="menu__text">' + serviceData.name + '</div>' +
+        '</li>');
+
+        item.on('hover:enter', function() {
+            showServiceMenu(serviceKey);
         });
 
-        return html;
+        $('.menu .menu__list').eq(0).append(item);
     }
 
-    // Функция для загрузки и отображения (адаптировано под Lampa)
-    function loadContent(providerName, providerId, category) {
-        fetchContent(providerId, category).then(items => {
-            if (items.length === 0) {
-                Lampa.Noty.show('Контент не найден');
-                return;
-            }
-
-            // Создаём HTML для карточек
-            let html = '';
-            items.forEach(item => {
-                html += `<div class="full-item" data-item="${JSON.stringify(item)}">
-                    <div class="full-item__img" style="background-image: url(${item.img});"></div>
-                    <div class="full-item__title">${item.title} (${item.year})</div>
-                    <div class="full-item__text">${item.description.substring(0, 100)}...</div>
-                </div>`;
-            });
-
-            // Пушим в Activity Lampa
-            Lampa.Activity.push({
-                url: '',
-                title: `${providerName} - ${category.charAt(0).toUpperCase() + category.slice(1)}`,
-                component: 'full',
-                html: `<div class="full-start__body selector">${html}</div>`,
-                onBack: () => Lampa.Activity.back(),
-                // Обработчик клика на карточку (Lampa сама найдёт торренты/онлайн)
-                toggle: () => {
-                    $('.full-item').on('hover:enter', function() {
-                        const item = JSON.parse($(this).attr('data-item'));
-                        Lampa.Activity.push({
-                            url: item.id,
-                            component: 'full',
-                            movie: { object: item }
-                        });
-                    });
-                }
-            });
-        }).catch(err => Lampa.Noty.show('Ошибка: ' + err.message));
-    }
-
-    // Добавление в меню (без изменений)
-    Lampa.Listener.follow('app', function(e) {
-        if (e.type == 'ready') {
-            const menuItem = {
-                title: 'Сервисы',
-                items: Object.keys(providers).map(name => ({
-                    title: name,
-                    subtitle: 'Фильмы, сериалы, новинки',
-                    one: '🛋️',
-                    action: () => {
-                        const html_string = createSubMenu(name, providers[name]);
-                        Lampa.Select.show({
-                            title: name,
-                            items: [],
-                            html: html_string,
-                            onSelect: false,
-                            onBack: () => Lampa.Activity.back()
-                        });
+    // Инициализация
+    function init() {
+        // Добавляем пункты меню после загрузки интерфейса
+        Lampa.Listener.follow('full', function(e) {
+            if (e.type == 'complite') {
+                setTimeout(function() {
+                    for (var key in STREAMING_SERVICES) {
+                        addMenuItem(key, STREAMING_SERVICES[key]);
                     }
-                }))
-            };
-            if (Lampa.Menu) {
-                Lampa.Menu.add('main', menuItem, { before: 'catalog' });
+                }, 100);
             }
-        }
-    });
+        });
 
-    console.log('Плагин Streaming Services (TMDB Lampa) загружен');
+        console.log('[Plugin] ' + Plugin.name + ' v' + Plugin.version + ' загружен');
+        Lampa.Noty.show('Расширение "' + Plugin.name + '" активировано');
+    }
+
+    // Старт плагина
+    if (window.Lampa) {
+        Lampa.Listener.follow('app', function(e) {
+            if (e.type == 'ready') {
+                init();
+            }
+        });
+    }
+
 })();
