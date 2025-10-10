@@ -1,24 +1,19 @@
-// streaming_services.js
 class StreamingServices {
     constructor() {
-        this.name = 'Streaming Services';
+        this.menu = ['Netflix', 'HBO', 'Hulu', 'Disney+'];
         this.filters = ['Фильмы', 'Сериалы', 'Новинки', 'Популярное'];
-        this.tmdbKey = 'ВАШ_TMDB_API_KEY';
         this.serviceMapping = {
             'Netflix': [8, 9],
             'HBO': [10],
             'Hulu': [11],
             'Disney+': [12]
-        }; 
-        this.menu = Object.keys(this.serviceMapping);
+        };
     }
 
     init() {
-        // Добавляем категории в боковое меню Лампы
         this.menu.forEach(service => {
             Lampa.Menu.add({
                 title: service,
-                icon: '', // можно добавить иконку
                 onClick: () => this.showFilters(service)
             });
         });
@@ -33,21 +28,20 @@ class StreamingServices {
     async fetchContent(service, filter) {
         Lampa.Loader.show();
 
-        let url = '';
+        let promise;
+
         if (filter === 'Фильмы') {
-            url = `https://api.themoviedb.org/3/movie/popular?api_key=${this.tmdbKey}&language=ru-RU&page=1`;
+            promise = Lampa.TMDB.moviePopular(); // встроенный метод TMDb для популярных фильмов
         } else if (filter === 'Сериалы') {
-            url = `https://api.themoviedb.org/3/tv/popular?api_key=${this.tmdbKey}&language=ru-RU&page=1`;
+            promise = Lampa.TMDB.tvPopular(); // популярные сериалы
         } else if (filter === 'Новинки') {
-            url = `https://api.themoviedb.org/3/movie/now_playing?api_key=${this.tmdbKey}&language=ru-RU&page=1`;
+            promise = Lampa.TMDB.movieNowPlaying(); // новинки фильмов
         } else if (filter === 'Популярное') {
-            url = `https://api.themoviedb.org/3/movie/popular?api_key=${this.tmdbKey}&language=ru-RU&page=1`;
+            promise = Lampa.TMDB.moviePopular(); 
         }
 
         try {
-            const res = await fetch(url);
-            const data = await res.json();
-
+            const data = await promise;
             const serviceIds = this.serviceMapping[service] || [];
             const filteredItems = data.results.filter((item, idx) => serviceIds.includes(idx % 12));
 
@@ -58,7 +52,8 @@ class StreamingServices {
             }));
 
             Lampa.Collections.render(items);
-        } catch (e) {
+
+        } catch(e) {
             console.error(e);
             Lampa.Loader.hide();
             Lampa.Noty.show('Ошибка загрузки контента');
@@ -66,7 +61,6 @@ class StreamingServices {
     }
 }
 
-// Регистрируем плагин и инициализируем меню
 const plugin = new StreamingServices();
 plugin.init();
 export default plugin;
