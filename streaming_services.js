@@ -2,7 +2,6 @@
 class StreamingServices {
     constructor() {
         this.name = 'Streaming Services';
-        this.menu = ['Netflix', 'HBO', 'Hulu', 'Disney+'];
         this.filters = ['Фильмы', 'Сериалы', 'Новинки', 'Популярное'];
         this.tmdbKey = 'ВАШ_TMDB_API_KEY';
         this.serviceMapping = {
@@ -10,14 +9,19 @@ class StreamingServices {
             'HBO': [10],
             'Hulu': [11],
             'Disney+': [12]
-        }; // Заглушка для имитации фильтрации
+        }; 
+        this.menu = Object.keys(this.serviceMapping);
     }
 
-    getMenu() {
-        return this.menu.map(service => ({
-            title: service,
-            onClick: () => this.showFilters(service)
-        }));
+    init() {
+        // Добавляем категории в боковое меню Лампы
+        this.menu.forEach(service => {
+            Lampa.Menu.add({
+                title: service,
+                icon: '', // можно добавить иконку
+                onClick: () => this.showFilters(service)
+            });
+        });
     }
 
     showFilters(service) {
@@ -44,9 +48,8 @@ class StreamingServices {
             const res = await fetch(url);
             const data = await res.json();
 
-            // Имитируем фильтрацию по сервису
             const serviceIds = this.serviceMapping[service] || [];
-            const filteredItems = data.results.filter((item, idx) => serviceIds.includes(idx % 12)); // просто для примера
+            const filteredItems = data.results.filter((item, idx) => serviceIds.includes(idx % 12));
 
             const items = filteredItems.map(item => ({
                 title: item.title || item.name,
@@ -55,7 +58,6 @@ class StreamingServices {
             }));
 
             Lampa.Collections.render(items);
-
         } catch (e) {
             console.error(e);
             Lampa.Loader.hide();
@@ -64,5 +66,7 @@ class StreamingServices {
     }
 }
 
-// Регистрация плагина в Лампе
-export default new StreamingServices();
+// Регистрируем плагин и инициализируем меню
+const plugin = new StreamingServices();
+plugin.init();
+export default plugin;
