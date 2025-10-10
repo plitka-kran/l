@@ -67,7 +67,6 @@
     }
 
     function init() {
-        // Добавляем пункты меню через Lampa.Menu.add
         for (var key in STREAMING_SERVICES) {
             (function(serviceKey) {
                 Lampa.Menu.add({
