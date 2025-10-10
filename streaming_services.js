@@ -37,7 +37,7 @@
             sort_by: category.sort,
             with_watch_providers: String(serviceId),
             watch_region: 'UA',
-            'vote_count.gte': 20
+            'vote_count.gte': 0
         };
 
         if (category.date_filter) {
