@@ -27,16 +27,23 @@
 
     // Показ списка по фильтру
     function showFilteredList(serviceKey, categoryName) {
-        var filtered = TEST_ITEMS.filter(function(item){
+        var filtered = TEST_ITEMS.filter(function(item) {
             return item.category === categoryName;
         });
+
+        console.log('Отфильтрованные фильмы для ' + categoryName + ': ', filtered); // Отладка
+
+        // Если нет фильмов для этой категории, показываем сообщение
+        if (filtered.length === 0) {
+            alert('Нет фильмов в категории: ' + categoryName);
+        }
 
         Lampa.Activity.push({
             title: STREAMING_SERVICES[serviceKey].name + ' - ' + categoryName,
             component: 'grid', // сетка постеров
             items: filtered,
             page: 1,
-            tabs: CATEGORIES.map(function(name){ return { title: name }; }),
+            tabs: CATEGORIES.map(function(name) { return { title: name }; }),
             onTabSelect: function(tabName) {
                 showFilteredList(serviceKey, tabName);
             }
@@ -45,18 +52,26 @@
 
     // Показ сервиса с открытием первой категории
     function showService(serviceKey) {
+        console.log('Открываю сервис: ' + STREAMING_SERVICES[serviceKey].name); // Отладка
         showFilteredList(serviceKey, CATEGORIES[0]);
     }
 
     // Добавление фильтров в меню
     function addMenu() {
+        if (!$('.menu .menu__list').length) {
+            console.error('Элемент меню не найден!');
+            return;
+        }
+
         for (var key in STREAMING_SERVICES) {
-            (function(serviceKey){
+            (function(serviceKey) {
                 var service = STREAMING_SERVICES[serviceKey];
                 var button = $('<li class="menu__item selector">' +
                     '<div class="menu__ico">' + service.icon + '</div>' +
                     '<div class="menu__text">' + service.name + '</div>' +
                 '</li>');
+
+                console.log('Добавляю кнопку для: ' + service.name); // Отладка
 
                 button.on('hover:enter', function() {
                     showService(serviceKey);
@@ -67,11 +82,21 @@
         }
     }
 
+    // Проверка на загрузку библиотеки Lampa
     if (window.Lampa) {
-        if (window.appready) addMenu();
-        else Lampa.Listener.follow('app', function(e) {
-            if (e.type === 'ready') addMenu();
-        });
+        console.log('Lampa загружена');
+        if (window.appready) {
+            addMenu();
+        } else {
+            Lampa.Listener.follow('app', function(e) {
+                if (e.type === 'ready') {
+                    console.log('Приложение готово, добавляю меню');
+                    addMenu();
+                }
+            });
+        }
+    } else {
+        console.error('Lampa не найдена!');
     }
 
 })();
