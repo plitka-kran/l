@@ -1,11 +1,6 @@
 (function() {
     'use strict';
 
-    var Plugin = {
-        name: 'Стриминговые сервисы',
-        version: '1.0'
-    };
-
     var STREAMING_SERVICES = {
         netflix: { name: 'Netflix', id: 8 },
         hbo: { name: 'HBO Max', id: 384 },
@@ -14,16 +9,14 @@
     };
 
     var CATEGORIES = {
-        movies_popular: { name: 'Популярные фильмы', type: 'movie', sort: 'popularity.desc' },
-        movies_new: { name: 'Новинки фильмов', type: 'movie', sort: 'primary_release_date.desc', date_filter: true },
-        series_popular: { name: 'Популярные сериалы', type: 'tv', sort: 'popularity.desc' },
-        series_new: { name: 'Новинки сериалов', type: 'tv', sort: 'first_air_date.desc', date_filter: true }
+        'Популярные фильмы': { type: 'movie', sort: 'popularity.desc' },
+        'Новинки фильмов': { type: 'movie', sort: 'primary_release_date.desc', date_filter: true },
+        'Популярные сериалы': { type: 'tv', sort: 'popularity.desc' },
+        'Новинки сериалов': { type: 'tv', sort: 'first_air_date.desc', date_filter: true }
     };
 
     function buildUrl(serviceId, category) {
-        var type = category.type;
-        var endpoint = type === 'movie' ? 'discover/movie' : 'discover/tv';
-
+        var endpoint = category.type === 'movie' ? 'discover/movie' : 'discover/tv';
         var params = {
             sort_by: category.sort,
             with_watch_providers: serviceId,
@@ -35,26 +28,21 @@
             var today = new Date();
             var sixMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 6, today.getDate());
             var dateStr = sixMonthsAgo.toISOString().split('T')[0];
-
-            if (type === 'movie') {
-                params['primary_release_date.gte'] = dateStr;
-            } else {
-                params['first_air_date.gte'] = dateStr;
-            }
+            if (category.type === 'movie') params['primary_release_date.gte'] = dateStr;
+            else params['first_air_date.gte'] = dateStr;
         }
 
         return Lampa.TMDB.api(endpoint, params);
     }
 
-    function showContent(serviceKey, categoryKey) {
+    function showCategory(serviceKey, categoryName) {
         var service = STREAMING_SERVICES[serviceKey];
-        var category = CATEGORIES[categoryKey];
-
+        var category = CATEGORIES[categoryName];
         var url = buildUrl(service.id, category);
 
         Lampa.Activity.push({
             url: url,
-            title: service.name + ' - ' + category.name,
+            title: service.name + ' - ' + categoryName,
             component: 'category',
             category: true,
             source: 'tmdb',
@@ -63,23 +51,18 @@
         });
     }
 
-    function showServiceMenu(serviceKey) {
-        var service = STREAMING_SERVICES[serviceKey];
+    function showService(serviceKey) {
+        // При выборе сервиса сразу показываем категории
         var items = [];
-
-        for (var catKey in CATEGORIES) {
-            items.push({
-                title: CATEGORIES[catKey].name,
-                service: serviceKey,
-                category: catKey
-            });
+        for (var catName in CATEGORIES) {
+            items.push({ title: catName, category: catName });
         }
 
         Lampa.Select.show({
-            title: service.name,
+            title: STREAMING_SERVICES[serviceKey].name,
             items: items,
             onSelect: function(a) {
-                showContent(a.service, a.category);
+                showCategory(serviceKey, a.category);
             },
             onBack: function() {
                 Lampa.Controller.toggle('menu');
@@ -97,7 +80,7 @@
                     '</li>');
 
                 button.on('hover:enter', function() {
-                    showServiceMenu(serviceKey);
+                    showService(serviceKey);
                 });
 
                 $('.menu .menu__list').eq(0).append(button);
@@ -106,13 +89,10 @@
     }
 
     if (window.Lampa) {
-        if (window.appready) {
-            addMenu();
-        } else {
-            Lampa.Listener.follow('app', function(e) {
-                if (e.type == 'ready') addMenu();
-            });
-        }
+        if (window.appready) addMenu();
+        else Lampa.Listener.follow('app', function(e) {
+            if (e.type === 'ready') addMenu();
+        });
     }
 
 })();
