@@ -6,7 +6,6 @@
         version: '1.0'
     };
 
-    // Конфигурация сервисов
     var STREAMING_SERVICES = {
         netflix: { name: 'Netflix', id: 8 },
         hbo: { name: 'HBO Max', id: 384 },
@@ -14,7 +13,6 @@
         disney: { name: 'Disney+', id: 337 }
     };
 
-    // Категории контента
     var CATEGORIES = {
         movies_popular: { name: 'Популярные фильмы', type: 'movie', sort: 'popularity.desc' },
         movies_new: { name: 'Новинки фильмов', type: 'movie', sort: 'primary_release_date.desc', date_filter: true },
@@ -22,7 +20,6 @@
         series_new: { name: 'Новинки сериалов', type: 'tv', sort: 'first_air_date.desc', date_filter: true }
     };
 
-    // Формирование URL TMDb через встроенный API
     function buildUrl(serviceId, category) {
         var type = category.type;
         var endpoint = type === 'movie' ? 'discover/movie' : 'discover/tv';
@@ -34,7 +31,6 @@
             'vote_count.gte': 20
         };
 
-        // Фильтр по дате для новинок
         if (category.date_filter) {
             var today = new Date();
             var sixMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 6, today.getDate());
@@ -50,7 +46,6 @@
         return Lampa.TMDB.api(endpoint, params);
     }
 
-    // Отображение контента в виде сетки
     function showContent(serviceKey, categoryKey) {
         var service = STREAMING_SERVICES[serviceKey];
         var category = CATEGORIES[categoryKey];
@@ -68,7 +63,6 @@
         });
     }
 
-    // Показ меню фильтров для выбранного сервиса
     function showServiceMenu(serviceKey) {
         var service = STREAMING_SERVICES[serviceKey];
         var items = [];
@@ -93,31 +87,32 @@
         });
     }
 
-    // Добавление сервисов в меню Лампы
-    function init() {
+    function addMenu() {
         for (var key in STREAMING_SERVICES) {
             (function(serviceKey) {
-                Lampa.Menu.add({
-                    title: STREAMING_SERVICES[serviceKey].name,
-                    icon: '', // можно добавить SVG иконку
-                    onClick: function() {
-                        showServiceMenu(serviceKey);
-                    }
+                var service = STREAMING_SERVICES[serviceKey];
+                var button = $('<li class="menu__item selector">' +
+                    '<div class="menu__ico"><svg height="36" viewBox="0 0 38 36" fill="currentColor"></svg></div>' +
+                    '<div class="menu__text">' + service.name + '</div>' +
+                    '</li>');
+
+                button.on('hover:enter', function() {
+                    showServiceMenu(serviceKey);
                 });
+
+                $('.menu .menu__list').eq(0).append(button);
             })(key);
         }
-
-        console.log('[Plugin] ' + Plugin.name + ' v' + Plugin.version + ' загружен');
-        Lampa.Noty.show('Расширение "' + Plugin.name + '" активировано');
     }
 
-    // Старт плагина после загрузки Лампы
     if (window.Lampa) {
-        Lampa.Listener.follow('app', function(e) {
-            if (e.type === 'ready') {
-                init();
-            }
-        });
+        if (window.appready) {
+            addMenu();
+        } else {
+            Lampa.Listener.follow('app', function(e) {
+                if (e.type == 'ready') addMenu();
+            });
+        }
     }
 
 })();
