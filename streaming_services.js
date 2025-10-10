@@ -35,39 +35,45 @@
         return { endpoint: endpoint, params: params };
     }
 
-    function showService(serviceKey) {
+    function showCategory(serviceKey, categoryName) {
         var service = STREAMING_SERVICES[serviceKey];
+        var category = CATEGORIES[categoryName];
 
-        // Создаём массив вкладок
-        var tabs = Object.keys(CATEGORIES).map(function(name) {
-            return { title: name };
-        });
+        // Загружаем данные через TMDb
+        Lampa.TMDB.api(category.type === 'movie' ? 'discover/movie' : 'discover/tv', {
+            sort_by: category.sort,
+            with_watch_providers: String(service.id),
+            watch_region: 'UA',
+            'vote_count.gte': 20,
+            ...(category.date_filter ? (category.type === 'movie' ? { 'primary_release_date.gte': new Date(new Date().setMonth(new Date().getMonth() - 6)).toISOString().split('T')[0] } : { 'first_air_date.gte': new Date(new Date().setMonth(new Date().getMonth() - 6)).toISOString().split('T')[0] }) : {})
+        }).then(function(result) {
+            // Формируем сетку постеров
+            var items = result.results.map(function(item) {
+                return {
+                    title: item.title || item.name,
+                    icon: item.poster_path ? 'https://image.tmdb.org/t/p/w500' + item.poster_path : '',
+                    description: item.overview ? item.overview.substring(0, 120) + '...' : '',
+                    rating: item.vote_average ? item.vote_average.toFixed(1) : 'N/A',
+                    url: item.id,
+                    component: category.type
+                };
+            });
 
-        // Показываем сразу категорию "Популярные фильмы" с вкладками
-        Lampa.Activity.push({
-            url: buildUrl(service.id, CATEGORIES['Популярные фильмы']),
-            title: service.name + ' - Популярные фильмы',
-            component: 'category',
-            category: true,
-            source: 'tmdb',
-            type: CATEGORIES['Популярные фильмы'].type,
-            page: 1,
-            tabs: tabs,
-            onTabSelect: function(tabName) {
-                var cat = CATEGORIES[tabName];
-                Lampa.Activity.push({
-                    url: buildUrl(service.id, cat),
-                    title: service.name + ' - ' + tabName,
-                    component: 'category',
-                    category: true,
-                    source: 'tmdb',
-                    type: cat.type,
-                    page: 1,
-                    tabs: tabs,
-                    onTabSelect: this.onTabSelect // рекурсивно для переключения
-                });
-            }
+            Lampa.Activity.push({
+                title: service.name + ' - ' + categoryName,
+                component: 'grid', // сетка постеров
+                items: items,
+                page: 1,
+                tabs: Object.keys(CATEGORIES).map(function(name) { return { title: name }; }),
+                onTabSelect: function(tabName) {
+                    showCategory(serviceKey, tabName);
+                }
+            });
         });
+    }
+
+    function showService(serviceKey) {
+        showCategory(serviceKey, 'Популярные фильмы');
     }
 
     function addMenu() {
