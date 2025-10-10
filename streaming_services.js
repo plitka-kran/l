@@ -71,7 +71,7 @@
             (function(serviceKey) {
                 Lampa.Menu.add({
                     title: STREAMING_SERVICES[serviceKey].name,
-                    icon: '', // можно добавить svg иконку
+                    icon: '', // можно добавить svg
                     onClick: function() {
                         showServiceMenu(serviceKey);
                     }
