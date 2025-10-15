@@ -382,7 +382,7 @@
       decodeSecret: decodeSecret,
       isDebug: isDebug,
       isDebug2: isDebug2,
-      2Mirror: 2Mirror,
+      rezka2Mirror: rezka2Mirror,
       kinobaseMirror: kinobaseMirror,
       setCurrentFanserialsHost: setCurrentFanserialsHost,
       getCurrentFanserialsHost: getCurrentFanserialsHost,
@@ -1550,7 +1550,7 @@
       }
     }
 
-    function 2(component, _object) {
+    function rezka2(component, _object) {
       var network = new Lampa.Reguest();
       var extract = {};
       var object = _object;
@@ -14668,27 +14668,3 @@
     });
 
 })();
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
