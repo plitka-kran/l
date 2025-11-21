@@ -81,7 +81,7 @@
         }
     </style>
 </svg>`,
-            name: "РџС–РґР±С–СЂРєРё"
+            name: "Подборки"
         });
 
         menuItems.forEach(item => {
@@ -90,7 +90,7 @@
                 param: {
                     name: `porborki_${item.id}`,
                     type: "select",
-                    values: { 1: "Поэтапно", 0: "Процесс" },
+                    values: { 1: "Показать", 0: "Скрыть" },
                     default: 0
                 },
                 field: { name: item.title }
