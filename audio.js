@@ -5,6 +5,7 @@
     var list_opened = false;
     var current_torrent_hash = '';
     var tracks_cache = {};
+    var current_unsubscribe = null; // Хранилище для отписки от старых событий видео-плеера
 
     function reguest(params, callback) {
       if (params.ffprobe && params.path.split('.').pop() !== 'mp4') {
@@ -15,7 +16,7 @@
         }, 200);
       } else {
         var hash = params.torrent_hash || current_torrent_hash;
-        var id = params.id || params.index;
+        var id = params.id !== undefined ? params.id : params.index;
         
         if (!hash || id === undefined) return;
 
@@ -67,6 +68,11 @@
       var inited = false;
       var inited_parse = false;
       var webos_replace = {};
+
+      // Если уже был запущен процесс для предыдущей серии — принудительно отписываемся от старых эвентов видео
+      if (current_unsubscribe) {
+        current_unsubscribe();
+      }
 
       function getTracks() {
         var video = Lampa.PlayerVideo.video();
@@ -266,12 +272,18 @@
       function listenDestroy() {
         inited = false;
         Lampa.Player.listener.remove('destroy', listenDestroy);
+        cleanVideoListeners();
+      }
+
+      function cleanVideoListeners() {
         Lampa.PlayerVideo.listener.remove('tracks', listenTracks);
         Lampa.PlayerVideo.listener.remove('subs', listenSubs);
         Lampa.PlayerVideo.listener.remove('webos_subs', listenWebosSubs);
         Lampa.PlayerVideo.listener.remove('webos_tracks', listenWebosTracks);
         Lampa.PlayerVideo.listener.remove('canplay', canPlay);
       }
+
+      current_unsubscribe = cleanVideoListeners;
 
       Lampa.Player.listener.follow('destroy', listenDestroy);
       Lampa.PlayerVideo.listener.follow('tracks', listenTracks);
@@ -408,7 +420,10 @@
       }
 
       if (data.torrent_hash) {
-        subscribeTracks(data);
+        // При переключении серии принудительно заставляем Lampa PlayerPanel подхватить новые дорожки текущего потока
+        setTimeout(function() {
+            subscribeTracks(data);
+        }, 10);
       }
     }
 
@@ -424,6 +439,7 @@
       if (data.type == 'list_close') {
         list_opened = false;
         tracks_cache = {}; 
+        current_unsubscribe = null;
       }
 
       if (data.type == 'render' && data.items.length == 1 && list_opened) {
