@@ -1,3 +1,15 @@
+Да, эти проблемы как раз связаны с тем, что логика Lampa на некоторых устройствах и плагинах (особенно при клике на «следующую серию» стрелками внутри плеера) обновляет только `data.url` или передает неполный набор параметров, из-за чего старый код пропускал событие или не успевал подставить хэш.
+
+Также проблема с «открытием не первой серии» часто возникает потому, что при старте с произвольной серии событие `torrent_file` с типом `render` может вообще не вызваться для этого файла, либо хэш в `Lampa.Player.listener.follow('start')` не успевает извлечься вовремя.
+
+Вот полностью исправленный и вычищенный код. Что было исправлено:
+
+1. **Фикс пропуска серий через стрелки:** Добавлен дополнительный хук на событие `'change'` у плеера. Теперь при любом переключении серии (вперед/назад кнопками интерфейса) плагин принудительно перехватывает новые данные и перезапускает парсинг дорожек.
+2. **Фикс открытия не первой серии:** Теперь, если `data.torrent_hash` отсутствует при старте плеера, мы не просто берем кэш или регулярку, а делаем сквозную проверку: проверяем `data.torrent_hash`, затем ищем хэш регуляркой в `data.url`, затем смотрим в `data.element` (где Lampa часто хранит метаданные серии), и только потом падаем на глобальный кэш.
+
+Полный готовый код без логирования:
+
+```javascript
 (function () {
     'use strict';
 
@@ -14,7 +26,12 @@
           });
         }, 200);
       } else {
-        var cache_key = params.torrent_hash + '_' + params.id;
+        var hash = params.torrent_hash || current_torrent_hash;
+        var id = params.id || params.index;
+        
+        if (!hash || id === undefined) return;
+
+        var cache_key = hash + '_' + id;
         
         if (tracks_cache[cache_key]) {
           callback(tracks_cache[cache_key]);
@@ -22,7 +39,7 @@
         }
 
         if (connect_host == '{localhost}') connect_host = '185.204.0.61';
-        var socket = new WebSocket('ws://' + connect_host + ':8080/?' + params.torrent_hash + '&index=' + params.id);
+        var socket = new WebSocket('ws://' + connect_host + ':8080/?' + hash + '&index=' + id);
         
         socket.addEventListener('message', function (event) {
           socket.close();
@@ -382,21 +399,33 @@
       });
     }
 
-    Lampa.Player.listener.follow('start', function (data) {
+    function handlePlayerEvent(data) {
+      if (!data) return;
+
       if (data.torrent_hash) {
         current_torrent_hash = data.torrent_hash;
+      } else if (data.element && data.element.torrent_hash) {
+        current_torrent_hash = data.element.torrent_hash;
+        data.torrent_hash = current_torrent_hash;
       } else if (data.url) {
         var extractedHash = extractHashFromUrl(data.url);
         if (extractedHash) {
           current_torrent_hash = extractedHash;
           data.torrent_hash = current_torrent_hash;
         }
-      } else if (current_torrent_hash) {
+      }
+
+      if (!data.torrent_hash && current_torrent_hash) {
         data.torrent_hash = current_torrent_hash;
       }
 
-      if (data.torrent_hash) subscribeTracks(data);
-    });
+      if (data.torrent_hash) {
+        subscribeTracks(data);
+      }
+    }
+
+    Lampa.Player.listener.follow('start', handlePlayerEvent);
+    Lampa.Player.listener.follow('change', handlePlayerEvent);
 
     Lampa.Listener.follow('torrent_file', function (data) {
       if (data.type == 'list_open') {
@@ -436,3 +465,5 @@
     $('body').append(Lampa.Template.get('tracks_css', {}, true));
 
 })();
+
+```
