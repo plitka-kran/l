@@ -18,12 +18,10 @@
         init: function() {
             if (this.initialized) return;
             
-            // Создаем контейнер для логов
             this.container = $('<div id="tracks-debug-log" style="position:fixed;bottom:10px;right:10px;width:450px;max-height:350px;background:rgba(0,0,0,0.95);color:#0f0;font-family:monospace;font-size:11px;padding:10px;border-radius:8px;z-index:99999;overflow:hidden;border:2px solid #0f0;box-shadow:0 0 30px rgba(0,255,0,0.2);"></div>');
             
-            // Заголовок с кнопками
             var header = $('<div style="display:flex;justify-content:space-between;margin-bottom:5px;cursor:move;user-select:none;border-bottom:2px solid #0f0;padding-bottom:5px;">' +
-                '<span style="color:#0f0;font-weight:bold;font-size:13px;">🔍 TRACKS DEBUG</span>' +
+                '<span style="color:#0f0;font-weight:bold;font-size:13px;">🔍 TRACKS DEBUG 2</span>' +
                 '<div>' +
                 '<button id="debug-clear" style="background:none;border:none;color:#0f0;cursor:pointer;margin-right:10px;font-size:14px;" title="Очистить логи">🗑️</button>' +
                 '<button id="debug-toggle" style="background:none;border:none;color:#0f0;cursor:pointer;margin-right:10px;font-size:14px;" title="Свернуть/развернуть">⬇️</button>' +
@@ -31,14 +29,12 @@
                 '</div>' +
                 '</div>');
             
-            // Контейнер для сообщений
             var messages = $('<div id="debug-messages" style="overflow-y:auto;max-height:270px;padding-right:5px;"></div>');
             
             this.container.append(header);
             this.container.append(messages);
             $('body').append(this.container);
             
-            // Кнопки управления
             $('#debug-clear').on('click', function() {
                 $('#debug-messages').empty();
                 LogSystem.logs = [];
@@ -61,7 +57,6 @@
                 LogSystem.isVisible = !LogSystem.isVisible;
             });
             
-            // Перетаскивание окна
             var isDragging = false;
             var offsetX, offsetY;
             
@@ -132,7 +127,6 @@
             container.append(msgElement);
             container.scrollTop(container[0].scrollHeight);
             
-            // Также выводим в консоль
             console.log('🔍 [' + timestamp + ']', icon, message, data || '');
         },
 
@@ -158,7 +152,6 @@
         }
     };
 
-    // Заменяем старые функции логов на новые
     function log() {
         if (DEBUG) {
             var args = Array.prototype.slice.call(arguments);
@@ -187,19 +180,64 @@
         }
     }
 
+    // Функция для извлечения хэша из URL
+    function extractHashFromUrl(url) {
+        if (!url) return null;
+        
+        // Ищем hash в параметрах link
+        var linkMatch = url.match(/[?&]link=([a-f0-9]{40})/i);
+        if (linkMatch) {
+            return linkMatch[1];
+        }
+        
+        // Ищем hash в пути
+        var hashMatch = url.match(/\/([a-f0-9]{40})\./i);
+        if (hashMatch) {
+            return hashMatch[1];
+        }
+        
+        // Ищем hash как 40 символов hex
+        var hexMatch = url.match(/([a-f0-9]{40})/i);
+        if (hexMatch) {
+            return hexMatch[1];
+        }
+        
+        return null;
+    }
+
     function reguest(params, callback) {
       log('📡', 'Request started:', params);
       
-      if (params.ffprobe && params.path.split('.').pop() !== 'mp4') {
+      // Если нет torrent_hash, но есть URL, пробуем извлечь хэш
+      if (!params.torrent_hash && params.url) {
+        var extractedHash = extractHashFromUrl(params.url);
+        if (extractedHash) {
+          log('📡', 'Extracted hash from URL:', extractedHash);
+          params.torrent_hash = extractedHash;
+        }
+      }
+      
+      // Если все еще нет torrent_hash, пробуем использовать ffprobe
+      if (!params.torrent_hash && params.ffprobe) {
+        log('📡', 'Using ffprobe data without hash');
+        setTimeout(function () {
+          callback({
+            streams: params.ffprobe
+          });
+        }, 200);
+        return;
+      }
+      
+      if (params.ffprobe && params.path && params.path.split('.').pop() !== 'mp4') {
         log('📡', 'Using ffprobe data');
         setTimeout(function () {
           callback({
             streams: params.ffprobe
           });
         }, 200);
-      } else {
+      } else if (params.torrent_hash) {
         if (connect_host == '{localhost}') connect_host = '185.204.0.61';
-        var wsUrl = 'ws://' + connect_host + ':8080/?' + params.torrent_hash + '&index=' + params.id;
+        var wsUrl = 'ws://' + connect_host + ':8080/?' + params.torrent_hash + '&index=' + (params.id || 0);
         log('📡', 'WebSocket URL:', wsUrl);
         
         var socket = new WebSocket(wsUrl);
@@ -220,16 +258,44 @@
             callback(json);
           } else {
             warnLog('No streams in response');
+            // Пробуем использовать ffprobe если есть
+            if (params.ffprobe) {
+              log('📡', 'Falling back to ffprobe');
+              callback({ streams: params.ffprobe });
+            }
           }
         });
         
         socket.addEventListener('error', function(e) {
           errorLog('WebSocket error:', e);
+          // При ошибке пробуем использовать ffprobe
+          if (params.ffprobe) {
+            log('📡', 'Falling back to ffprobe after error');
+            callback({ streams: params.ffprobe });
+          }
         });
         
         socket.addEventListener('open', function() {
           log('📡', 'WebSocket opened');
         });
+      } else {
+        warnLog('No torrent_hash or ffprobe available');
+        // Пробуем найти hash в данных
+        if (params.url) {
+          var hash = extractHashFromUrl(params.url);
+          if (hash) {
+            log('📡', 'Retrying with extracted hash:', hash);
+            params.torrent_hash = hash;
+            reguest(params, callback);
+            return;
+          }
+        }
+        // Если ничего не помогло, используем пустые данные
+        if (params.ffprobe) {
+          callback({ streams: params.ffprobe });
+        } else {
+          callback({ streams: [] });
+        }
       }
     }
 
@@ -408,7 +474,17 @@
       var inited = false;
       var inited_parse = false;
       var webos_replace = {};
-      var playerId = data.torrent_hash + '_' + data.id;
+      
+      // Создаем ID даже если нет torrent_hash
+      var playerId = data.torrent_hash ? data.torrent_hash + '_' + (data.id || 0) : 'direct_' + Date.now();
+      if (data.url) {
+        var hashFromUrl = extractHashFromUrl(data.url);
+        if (hashFromUrl) {
+          playerId = hashFromUrl + '_' + (data.id || 0);
+          data.torrent_hash = hashFromUrl;
+        }
+      }
+      
       var isWebOS = navigator.userAgent.toLowerCase().includes('webos') || navigator.userAgent.toLowerCase().includes('tizen');
 
       log('🎬', 'Player ID:', playerId);
@@ -703,7 +779,11 @@
         reguest(data, function (result) {
           log('📡', 'Data received from server');
           inited_parse = result;
-          log('📡', 'Parsed streams:', result.streams.length);
+          if (result && result.streams) {
+            log('📡', 'Parsed streams:', result.streams.length);
+          } else {
+            log('📡', 'No streams in result');
+          }
 
           if (inited) {
             log('📡', 'Processing received data');
@@ -810,10 +890,12 @@
       },
       clear: function() {
         LogSystem.clear();
+      },
+      extractHash: function(url) {
+        return extractHashFromUrl(url);
       }
     };
 
-    // parseMetainfo
     function parseMetainfo(data) {
       log('📊', 'parseMetainfo called');
       var loading = Lampa.Template.get('tracks_loading');
@@ -846,73 +928,76 @@
           var video = [];
           var audio = [];
           var subs = [];
-          var codec_video = result.streams.filter(function (a) {
-            return a.codec_type == 'video';
-          });
-          var codec_audio = result.streams.filter(function (a) {
-            return a.codec_type == 'audio';
-          });
-          var codec_subs = result.streams.filter(function (a) {
-            return a.codec_type == 'subtitle';
-          });
           
-          log('📊', 'Video streams:', codec_video.length);
-          log('📊', 'Audio streams:', codec_audio.length);
-          log('📊', 'Subtitle streams:', codec_subs.length);
-          
-          codec_video.slice(0, 1).forEach(function (v) {
-            var line = {};
-            if (v.width && v.height) line.video = v.width + 'х' + v.height;
+          if (result && result.streams) {
+            var codec_video = result.streams.filter(function (a) {
+              return a.codec_type == 'video';
+            });
+            var codec_audio = result.streams.filter(function (a) {
+              return a.codec_type == 'audio';
+            });
+            var codec_subs = result.streams.filter(function (a) {
+              return a.codec_type == 'subtitle';
+            });
+            
+            log('📊', 'Video streams:', codec_video.length);
+            log('📊', 'Audio streams:', codec_audio.length);
+            log('📊', 'Subtitle streams:', codec_subs.length);
+            
+            codec_video.slice(0, 1).forEach(function (v) {
+              var line = {};
+              if (v.width && v.height) line.video = v.width + 'х' + v.height;
 
-            if (v.duration) {
-              line.duration = new Date(v.duration * 1000).toISOString().slice(11, 19);
-            } else if (v.tags) {
-              if (v.tags.DURATION) {
-                line.duration = v.tags.DURATION ? v.tags.DURATION.split(".") : '';
-                line.duration.pop();
-              } else if (v.tags["DURATION-eng"]) {
-                line.duration = v.tags["DURATION-eng"] ? v.tags["DURATION-eng"].split(".") : '';
-                line.duration.pop();
+              if (v.duration) {
+                line.duration = new Date(v.duration * 1000).toISOString().slice(11, 19);
+              } else if (v.tags) {
+                if (v.tags.DURATION) {
+                  line.duration = v.tags.DURATION ? v.tags.DURATION.split(".") : '';
+                  line.duration.pop();
+                } else if (v.tags["DURATION-eng"]) {
+                  line.duration = v.tags["DURATION-eng"] ? v.tags["DURATION-eng"].split(".") : '';
+                  line.duration.pop();
+                }
               }
-            }
 
-            if (v.codec_name) line.codec = v.codec_name.toUpperCase();
-            if (Boolean(v.is_avc)) line.avc = 'AVC';
-            var bit = v.bit_rate ? v.bit_rate : v.tags && (v.tags.BPS || v.tags["BPS-eng"]) ? v.tags.BPS || v.tags["BPS-eng"] : '--';
-            line.rate = bit == '--' ? bit : Math.round(bit / 1000000) + ' ' + Lampa.Lang.translate('speed_mb');
-            if (Lampa.Arrays.getKeys(line).length) video.push(line);
-          });
-          
-          codec_audio.forEach(function (a, i) {
-            var line = {
-              num: i + 1
-            };
+              if (v.codec_name) line.codec = v.codec_name.toUpperCase();
+              if (Boolean(v.is_avc)) line.avc = 'AVC';
+              var bit = v.bit_rate ? v.bit_rate : v.tags && (v.tags.BPS || v.tags["BPS-eng"]) ? v.tags.BPS || v.tags["BPS-eng"] : '--';
+              line.rate = bit == '--' ? bit : Math.round(bit / 1000000) + ' ' + Lampa.Lang.translate('speed_mb');
+              if (Lampa.Arrays.getKeys(line).length) video.push(line);
+            });
+            
+            codec_audio.forEach(function (a, i) {
+              var line = {
+                num: i + 1
+              };
 
-            if (a.tags) {
-              line.lang = (a.tags.language || '').toUpperCase();
-            }
+              if (a.tags) {
+                line.lang = (a.tags.language || '').toUpperCase();
+              }
 
-            line.name = a.tags ? a.tags.title || a.tags.handler_name : '';
-            if (a.codec_name) line.codec = a.codec_name.toUpperCase();
-            if (a.channel_layout) line.channels = a.channel_layout.replace('(side)', '').replace('stereo', '2.0').replace('8 channels (FL+FR+FC+LFE+SL+SR+TFL+TFR)', '7.1');
-            var bit = a.bit_rate ? a.bit_rate : a.tags && (a.tags.BPS || a.tags["BPS-eng"]) ? a.tags.BPS || a.tags["BPS-eng"] : '--';
-            line.rate = bit == '--' ? bit : Math.round(bit / 1000) + ' ' + Lampa.Lang.translate('speed_kb');
-            if (Lampa.Arrays.getKeys(line).length) audio.push(line);
-          });
-          
-          codec_subs.forEach(function (a, i) {
-            var line = {
-              num: i + 1
-            };
+              line.name = a.tags ? a.tags.title || a.tags.handler_name : '';
+              if (a.codec_name) line.codec = a.codec_name.toUpperCase();
+              if (a.channel_layout) line.channels = a.channel_layout.replace('(side)', '').replace('stereo', '2.0').replace('8 channels (FL+FR+FC+LFE+SL+SR+TFL+TFR)', '7.1');
+              var bit = a.bit_rate ? a.bit_rate : a.tags && (a.tags.BPS || a.tags["BPS-eng"]) ? a.tags.BPS || a.tags["BPS-eng"] : '--';
+              line.rate = bit == '--' ? bit : Math.round(bit / 1000) + ' ' + Lampa.Lang.translate('speed_kb');
+              if (Lampa.Arrays.getKeys(line).length) audio.push(line);
+            });
+            
+            codec_subs.forEach(function (a, i) {
+              var line = {
+                num: i + 1
+              };
 
-            if (a.tags) {
-              line.lang = (a.tags.language || '').toUpperCase();
-            }
+              if (a.tags) {
+                line.lang = (a.tags.language || '').toUpperCase();
+              }
 
-            line.name = a.tags ? a.tags.title || a.tags.handler_name : '';
-            if (a.codec_name) line.codec = a.codec_name.toUpperCase().replace('SUBRIP', 'SRT').replace('HDMV_PGS_SUBTITLE', 'HDMV PGS').replace('MOV_TEXT', 'MOV TEXT');
-            if (Lampa.Arrays.getKeys(line).length) subs.push(line);
-          });
+              line.name = a.tags ? a.tags.title || a.tags.handler_name : '';
+              if (a.codec_name) line.codec = a.codec_name.toUpperCase().replace('SUBRIP', 'SRT').replace('HDMV_PGS_SUBTITLE', 'HDMV PGS').replace('MOV_TEXT', 'MOV TEXT');
+              if (Lampa.Arrays.getKeys(line).length) subs.push(line);
+            });
+          }
           
           var html = Lampa.Template.get('tracks_metainfo', {});
           append('video', video);
@@ -979,10 +1064,25 @@
 
     Lampa.Player.listener.follow('start', function (data) {
       log('🎬', 'Player start event:', data);
-      if (data.torrent_hash) {
+      
+      // Если нет torrent_hash, но есть URL - пробуем извлечь хэш
+      if (!data.torrent_hash && data.url) {
+        var hash = extractHashFromUrl(data.url);
+        if (hash) {
+          log('🎬', 'Extracted hash from URL:', hash);
+          data.torrent_hash = hash;
+        }
+      }
+      
+      if (data.torrent_hash || data.url) {
         subscribeTracks(data);
       } else {
-        warnLog('No torrent_hash in player start');
+        warnLog('No torrent_hash or url in player start');
+        // Пробуем найти данные в lastData
+        if (lastData) {
+          log('🎬', 'Using lastData:', lastData);
+          subscribeTracks(lastData);
+        }
       }
     });
 
@@ -1002,6 +1102,7 @@
     LogSystem.info('  • debugTracks.getState() - Show current state');
     LogSystem.info('  • debugTracks.toggle() - Toggle debug window');
     LogSystem.info('  • debugTracks.clear() - Clear logs');
+    LogSystem.info('  • debugTracks.extractHash(url) - Extract hash from URL');
     LogSystem.info('  • toggleDebug() - Toggle debug mode');
 
     console.log('%c🔍 TRACKS DEBUG SCRIPT LOADED', 'font-size:16px;font-weight:bold;color:#0f0;');
