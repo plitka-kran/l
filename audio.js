@@ -5,7 +5,6 @@
     var list_opened = false;
     var current_torrent_hash = '';
     var tracks_cache = {};
-    var current_unsubscribe = null; // Хранилище для отписки от старых событий видео-плеера
 
     function reguest(params, callback) {
       if (params.ffprobe && params.path.split('.').pop() !== 'mp4') {
@@ -15,12 +14,7 @@
           });
         }, 200);
       } else {
-        var hash = params.torrent_hash || current_torrent_hash;
-        var id = params.id !== undefined ? params.id : params.index;
-        
-        if (!hash || id === undefined) return;
-
-        var cache_key = hash + '_' + id;
+        var cache_key = params.torrent_hash + '_' + params.id;
         
         if (tracks_cache[cache_key]) {
           callback(tracks_cache[cache_key]);
@@ -28,7 +22,7 @@
         }
 
         if (connect_host == '{localhost}') connect_host = '185.204.0.61';
-        var socket = new WebSocket('ws://' + connect_host + ':8080/?' + hash + '&index=' + id);
+        var socket = new WebSocket('ws://' + connect_host + ':8080/?' + params.torrent_hash + '&index=' + params.id);
         
         socket.addEventListener('message', function (event) {
           socket.close();
@@ -68,11 +62,6 @@
       var inited = false;
       var inited_parse = false;
       var webos_replace = {};
-
-      // Если уже был запущен процесс для предыдущей серии — принудительно отписываемся от старых эвентов видео
-      if (current_unsubscribe) {
-        current_unsubscribe();
-      }
 
       function getTracks() {
         var video = Lampa.PlayerVideo.video();
@@ -272,18 +261,12 @@
       function listenDestroy() {
         inited = false;
         Lampa.Player.listener.remove('destroy', listenDestroy);
-        cleanVideoListeners();
-      }
-
-      function cleanVideoListeners() {
         Lampa.PlayerVideo.listener.remove('tracks', listenTracks);
         Lampa.PlayerVideo.listener.remove('subs', listenSubs);
         Lampa.PlayerVideo.listener.remove('webos_subs', listenWebosSubs);
         Lampa.PlayerVideo.listener.remove('webos_tracks', listenWebosTracks);
         Lampa.PlayerVideo.listener.remove('canplay', canPlay);
       }
-
-      current_unsubscribe = cleanVideoListeners;
 
       Lampa.Player.listener.follow('destroy', listenDestroy);
       Lampa.PlayerVideo.listener.follow('tracks', listenTracks);
@@ -399,36 +382,21 @@
       });
     }
 
-    function handlePlayerEvent(data) {
-      if (!data) return;
-
+    Lampa.Player.listener.follow('start', function (data) {
       if (data.torrent_hash) {
         current_torrent_hash = data.torrent_hash;
-      } else if (data.element && data.element.torrent_hash) {
-        current_torrent_hash = data.element.torrent_hash;
-        data.torrent_hash = current_torrent_hash;
       } else if (data.url) {
         var extractedHash = extractHashFromUrl(data.url);
         if (extractedHash) {
           current_torrent_hash = extractedHash;
           data.torrent_hash = current_torrent_hash;
         }
-      }
-
-      if (!data.torrent_hash && current_torrent_hash) {
+      } else if (current_torrent_hash) {
         data.torrent_hash = current_torrent_hash;
       }
 
-      if (data.torrent_hash) {
-        // При переключении серии принудительно заставляем Lampa PlayerPanel подхватить новые дорожки текущего потока
-        setTimeout(function() {
-            subscribeTracks(data);
-        }, 10);
-      }
-    }
-
-    Lampa.Player.listener.follow('start', handlePlayerEvent);
-    Lampa.Player.listener.follow('change', handlePlayerEvent);
+      if (data.torrent_hash) subscribeTracks(data);
+    });
 
     Lampa.Listener.follow('torrent_file', function (data) {
       if (data.type == 'list_open') {
@@ -439,7 +407,6 @@
       if (data.type == 'list_close') {
         list_opened = false;
         tracks_cache = {}; 
-        current_unsubscribe = null;
       }
 
       if (data.type == 'render' && data.items.length == 1 && list_opened) {
