@@ -3,8 +3,8 @@
 
     var connect_host = '{localhost}';
     var list_opened = false;
-    // Кэш для хранения хэша текущего торрента между переключениями серий
     var current_torrent_hash = '';
+    var tracks_cache = {};
 
     function reguest(params, callback) {
       if (params.ffprobe && params.path.split('.').pop() !== 'mp4') {
@@ -14,8 +14,16 @@
           });
         }, 200);
       } else {
+        var cache_key = params.torrent_hash + '_' + params.id;
+        
+        if (tracks_cache[cache_key]) {
+          callback(tracks_cache[cache_key]);
+          return;
+        }
+
         if (connect_host == '{localhost}') connect_host = '185.204.0.61';
         var socket = new WebSocket('ws://' + connect_host + ':8080/?' + params.torrent_hash + '&index=' + params.id);
+        
         socket.addEventListener('message', function (event) {
           socket.close();
           var json = {};
@@ -24,19 +32,36 @@
             json = JSON.parse(event.data);
           } catch (e) {}
 
-          if (json.streams) callback(json);
+          if (json.streams) {
+            tracks_cache[cache_key] = json;
+            callback(json);
+          }
         });
       }
+    }
+
+    function extractHashFromUrl(url) {
+      if (!url) return null;
+      
+      var linkMatch = url.match(/[?&]link=([a-f0-9]{40})/i);
+      if (linkMatch) return linkMatch[1];
+      
+      var hashMatch = url.match(/[?&]hash=([a-f0-9]{40})/i);
+      if (hashMatch) return hashMatch[1];
+      
+      var pathMatch = url.match(/\/([a-f0-9]{40})\./i);
+      if (pathMatch) return pathMatch[1];
+      
+      var hexMatch = url.match(/([a-f0-9]{40})/i);
+      if (hexMatch) return hexMatch[1];
+      
+      return null;
     }
 
     function subscribeTracks(data) {
       var inited = false;
       var inited_parse = false;
       var webos_replace = {};
-
-      function log() {
-        console.log.apply(console.log, arguments);
-      }
 
       function getTracks() {
         var video = Lampa.PlayerVideo.video();
@@ -48,8 +73,6 @@
         return video.textTracks || [];
       }
 
-      log('Tracks', 'start');
-
       function setTracks() {
         if (inited_parse) {
           var new_tracks = [];
@@ -58,14 +81,12 @@
             return a.codec_type == 'audio';
           });
           var minus = 1;
-          log('Tracks', 'set tracks:', video_tracks.length);
           if (parse_tracks.length !== video_tracks.length) parse_tracks = parse_tracks.filter(function (a) {
             return a.codec_name !== 'dts';
           });
           parse_tracks = parse_tracks.filter(function (a) {
             return a.tags;
           });
-          log('Tracks', 'filtred tracks:', parse_tracks.length);
           parse_tracks.forEach(function (track) {
             var orig = video_tracks[track.index - minus];
             var elem = {
@@ -75,7 +96,6 @@
               ghost: orig ? false : true,
               selected: orig ? orig.selected == true || orig.enabled == true : false
             };
-            console.log('Tracks', 'tracks original', orig);
             Object.defineProperty(elem, "enabled", {
               set: function set(v) {
                 if (v) {
@@ -111,11 +131,9 @@
           var minus = inited_parse.streams.filter(function (a) {
             return a.codec_type == 'audio';
           }).length + 1;
-          log('Tracks', 'set subs:', video_subs.length);
           parse_subs = parse_subs.filter(function (a) {
             return a.tags;
           });
-          log('Tracks', 'filtred subs:', parse_subs.length);
           parse_subs.forEach(function (track) {
             var orig = video_subs[track.index - minus];
             var elem = {
@@ -125,7 +143,6 @@
               ghost: video_subs[track.index - minus] ? false : true,
               selected: orig ? orig.selected == true || orig.mode == 'showing' : false
             };
-            console.log('Tracks', 'subs original', orig);
             Object.defineProperty(elem, "mode", {
               set: function set(v) {
                 if (v) {
@@ -152,19 +169,16 @@
       }
 
       function listenTracks() {
-        log('Tracks', 'tracks video event');
         setTracks();
         Lampa.PlayerVideo.listener.remove('tracks', listenTracks);
       }
 
       function listenSubs() {
-        log('Tracks', 'subs video event');
         setSubs();
         Lampa.PlayerVideo.listener.remove('subs', listenSubs);
       }
 
       function canPlay() {
-        log('Tracks', 'canplay video event');
         if (webos_replace.tracks) setWebosTracks(webos_replace.tracks);else setTracks();
         if (webos_replace.subs) setWebosSubs(webos_replace.subs);else setSubs();
         Lampa.PlayerVideo.listener.remove('canplay', canPlay);
@@ -175,7 +189,6 @@
           var parse_tracks = inited_parse.streams.filter(function (a) {
             return a.codec_type == 'audio';
           });
-          log('Tracks', 'webos set tracks:', video_tracks.length);
 
           if (parse_tracks.length !== video_tracks.length) {
             parse_tracks = parse_tracks.filter(function (a) {
@@ -192,7 +205,6 @@
           parse_tracks = parse_tracks.filter(function (a) {
             return a.tags;
           });
-          log('Tracks', 'webos tracks', video_tracks);
           parse_tracks.forEach(function (track, i) {
             if (video_tracks[i]) {
               video_tracks[i].language = track.tags.language;
@@ -207,7 +219,6 @@
           var parse_subs = inited_parse.streams.filter(function (a) {
             return a.codec_type == 'subtitle';
           });
-          log('Tracks', 'webos set subs:', video_subs.length);
           if (parse_subs.length !== video_subs.length - 1) parse_subs = parse_subs.filter(function (a) {
             return a.codec_name !== 'hdmv_pgs_subtitle';
           });
@@ -226,13 +237,11 @@
       }
 
       function listenWebosSubs(_data) {
-        log('Tracks', 'webos subs event');
         webos_replace.subs = _data.subs;
         if (inited_parse) setWebosSubs(_data.subs);
       }
 
       function listenWebosTracks(_data) {
-        log('Tracks', 'webos tracks event');
         webos_replace.tracks = _data.tracks;
         if (inited_parse) setWebosTracks(_data.tracks);
       }
@@ -240,7 +249,6 @@
       function listenStart() {
         inited = true;
         reguest(data, function (result) {
-          log('Tracks', 'parsed', inited_parse);
           inited_parse = result;
 
           if (inited) {
@@ -258,7 +266,6 @@
         Lampa.PlayerVideo.listener.remove('webos_subs', listenWebosSubs);
         Lampa.PlayerVideo.listener.remove('webos_tracks', listenWebosTracks);
         Lampa.PlayerVideo.listener.remove('canplay', canPlay);
-        log('Tracks', 'end');
       }
 
       Lampa.Player.listener.follow('destroy', listenDestroy);
@@ -375,10 +382,15 @@
       });
     }
 
-    // Слушатель старта плеера с поддержкой кэширования хэша раздачи
     Lampa.Player.listener.follow('start', function (data) {
       if (data.torrent_hash) {
         current_torrent_hash = data.torrent_hash;
+      } else if (data.url) {
+        var extractedHash = extractHashFromUrl(data.url);
+        if (extractedHash) {
+          current_torrent_hash = extractedHash;
+          data.torrent_hash = current_torrent_hash;
+        }
       } else if (current_torrent_hash) {
         data.torrent_hash = current_torrent_hash;
       }
@@ -386,14 +398,15 @@
       if (data.torrent_hash) subscribeTracks(data);
     });
 
-    // Слушатель событий списка файлов
     Lampa.Listener.follow('torrent_file', function (data) {
       if (data.type == 'list_open') {
         list_opened = true;
         if (data.torrent_hash) current_torrent_hash = data.torrent_hash;
       }
+      
       if (data.type == 'list_close') {
         list_opened = false;
+        tracks_cache = {}; 
       }
 
       if (data.type == 'render' && data.items.length == 1 && list_opened) {
@@ -403,6 +416,18 @@
         parseMetainfo(data);
       }
     });
+
+    window.setTorrentHash = function(hash) {
+      if (hash && hash.length === 40) {
+        current_torrent_hash = hash;
+        return true;
+      }
+      return false;
+    };
+
+    window.getTorrentHash = function() {
+      return current_torrent_hash;
+    };
 
     Lampa.Template.add('tracks_loading', "\n    <div class=\"tracks-loading\">\n        <span>#{loading}...</span>\n    </div>\n");
     Lampa.Template.add('tracks_metainfo', "\n    <div class=\"tracks-metainfo\"></div>\n");
