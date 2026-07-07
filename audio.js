@@ -3,7 +3,8 @@
 
     var connect_host = '{localhost}';
     var list_opened = false;
-    var current_torrent_data = null; // Запоминаем данные торрента для переключения серий
+    var current_gen = 0;       // растущий id "поколения" (серии)
+    var active_cleanup = null; // функция очистки слушателей текущей серии
 
     function reguest(params, callback) {
       if (params.ffprobe && params.path.split('.').pop() !== 'mp4') {
@@ -15,13 +16,7 @@
       } else {
         if (connect_host == '{localhost}') connect_host = '185.204.0.61';
         var socket = new WebSocket('ws://' + connect_host + ':8080/?' + params.torrent_hash + '&index=' + params.id);
-        
-        var timeout = setTimeout(function() {
-          socket.close();
-        }, 4000); 
-
         socket.addEventListener('message', function (event) {
-          clearTimeout(timeout);
           socket.close();
           var json = {};
 
@@ -31,17 +26,25 @@
 
           if (json.streams) callback(json);
         });
-
-        socket.addEventListener('error', function() {
-          clearTimeout(timeout);
-        });
       }
     }
 
     function subscribeTracks(data) {
+      // чистим слушатели предыдущей серии, если destroy не долетел до смены источника
+      if (active_cleanup) {
+        active_cleanup();
+        active_cleanup = null;
+      }
+
+      var my_gen = ++current_gen;
       var inited = false;
       var inited_parse = false;
-      var last_index = data.id; // Следим за ID текущей серии
+      var webos_replace = {};
+      var applied_tracks = false;
+      var applied_subs = false;
+      var poll_timer = null;
+      var poll_attempts = 0;
+      var POLL_MAX_ATTEMPTS = 20; // ~10 секунд при интервале 500мс
 
       function log() {
         console.log.apply(console.log, arguments);
@@ -57,38 +60,37 @@
         return video.textTracks || [];
       }
 
-      log('Tracks', 'start [Tizen Series Fix]');
+      log('Tracks', 'start gen', my_gen);
 
       function setTracks() {
         if (inited_parse) {
           var new_tracks = [];
           var video_tracks = getTracks();
+
+          if (!video_tracks.length) return false;
+
           var parse_tracks = inited_parse.streams.filter(function (a) {
             return a.codec_type == 'audio';
           });
-          
           var minus = 1;
-          
-          if (parse_tracks.length !== video_tracks.length) {
-            parse_tracks = parse_tracks.filter(function (a) {
-              return a.codec_name !== 'dts' && a.codec_name !== 'truehd';
-            });
-          }
-          
+          log('Tracks', 'set tracks:', video_tracks.length);
+          if (parse_tracks.length !== video_tracks.length) parse_tracks = parse_tracks.filter(function (a) {
+            return a.codec_name !== 'dts';
+          });
           parse_tracks = parse_tracks.filter(function (a) {
             return a.tags;
           });
-          
+          log('Tracks', 'filtred tracks:', parse_tracks.length);
           parse_tracks.forEach(function (track) {
             var orig = video_tracks[track.index - minus];
             var elem = {
               index: track.index - minus,
               language: track.tags.language,
-              label: track.tags.title || track.tags.handler_name || 'Audio',
+              label: track.tags.title || track.tags.handler_name,
               ghost: orig ? false : true,
               selected: orig ? orig.selected == true || orig.enabled == true : false
             };
-            
+            console.log('Tracks', 'tracks original', orig);
             Object.defineProperty(elem, "enabled", {
               set: function set(v) {
                 if (v) {
@@ -110,42 +112,43 @@
             });
             new_tracks.push(elem);
           });
-          if (new_tracks.length) Lampa.PlayerPanel.setTracks(new_tracks);
+          if (parse_tracks.length) {
+            Lampa.PlayerPanel.setTracks(new_tracks);
+            applied_tracks = true;
+            return true;
+          }
         }
+        return false;
       }
 
       function setSubs() {
         if (inited_parse) {
           var new_subs = [];
           var video_subs = getSubs();
+
+          if (!video_subs.length) return false;
+
           var parse_subs = inited_parse.streams.filter(function (a) {
             return a.codec_type == 'subtitle';
           });
-          
           var minus = inited_parse.streams.filter(function (a) {
             return a.codec_type == 'audio';
           }).length + 1;
-          
-          if (parse_subs.length !== video_subs.length) {
-            parse_subs = parse_subs.filter(function (a) {
-              return a.codec_name !== 'hdmv_pgs_subtitle' && a.codec_name !== 'dvd_subtitle';
-            });
-          }
-
+          log('Tracks', 'set subs:', video_subs.length);
           parse_subs = parse_subs.filter(function (a) {
             return a.tags;
           });
-          
+          log('Tracks', 'filtred subs:', parse_subs.length);
           parse_subs.forEach(function (track) {
             var orig = video_subs[track.index - minus];
             var elem = {
               index: track.index - minus,
               language: track.tags.language,
-              label: track.tags.title || track.tags.handler_name || 'Subtitle',
-              ghost: orig ? false : true,
+              label: track.tags.title || track.tags.handler_name,
+              ghost: video_subs[track.index - minus] ? false : true,
               selected: orig ? orig.selected == true || orig.mode == 'showing' : false
             };
-            
+            console.log('Tracks', 'subs original', orig);
             Object.defineProperty(elem, "mode", {
               set: function set(v) {
                 if (v) {
@@ -167,59 +170,182 @@
             });
             new_subs.push(elem);
           });
-          if (new_subs.length) Lampa.PlayerPanel.setSubs(new_subs);
+          if (parse_subs.length) {
+            Lampa.PlayerPanel.setSubs(new_subs);
+            applied_subs = true;
+            return true;
+          }
+        }
+        return false;
+      }
+
+      function tryApplyAll() {
+        if (webos_replace.tracks) setWebosTracks(webos_replace.tracks); else setTracks();
+        if (webos_replace.subs) setWebosSubs(webos_replace.subs); else setSubs();
+      }
+
+      // Резервный поллинг: на некоторых прошивках Tizen события tracks/subs/canplay
+      // не перевызываются при смене серии внутри уже созданного плеера.
+      function startPolling() {
+        stopPolling();
+        poll_attempts = 0;
+        poll_timer = setInterval(function () {
+          if (my_gen !== current_gen) {
+            stopPolling();
+            return;
+          }
+
+          poll_attempts++;
+
+          if (inited_parse && (!applied_tracks || !applied_subs)) {
+            log('Tracks', 'poll attempt', poll_attempts);
+            tryApplyAll();
+          }
+
+          if ((applied_tracks && applied_subs) || poll_attempts >= POLL_MAX_ATTEMPTS) {
+            stopPolling();
+          }
+        }, 500);
+      }
+
+      function stopPolling() {
+        if (poll_timer) {
+          clearInterval(poll_timer);
+          poll_timer = null;
         }
       }
 
-      function listenTracks() { setTracks(); }
-      function listenSubs() { setSubs(); }
-      function canPlay() { setTracks(); setSubs(); }
+      function listenTracks() {
+        log('Tracks', 'tracks video event');
+        setTracks();
+        Lampa.PlayerVideo.listener.remove('tracks', listenTracks);
+      }
 
-      // Проверка переключения серии внутри одного плеера
-      function checkSeriesChange() {
-        var current_file = Lampa.Player.data() || {};
-        if (current_file.id && current_file.id !== last_index) {
-          log('Tracks', 'Series changed inside player to ID:', current_file.id);
-          last_index = current_file.id;
-          inited_parse = false;
-          
-          // Делаем новый запрос под актуальный ID серии
-          reguest(current_file, function (result) {
-            inited_parse = result;
-            setTracks();
-            setSubs();
+      function listenSubs() {
+        log('Tracks', 'subs video event');
+        setSubs();
+        Lampa.PlayerVideo.listener.remove('subs', listenSubs);
+      }
+
+      function canPlay() {
+        log('Tracks', 'canplay video event');
+        if (webos_replace.tracks) setWebosTracks(webos_replace.tracks); else setTracks();
+        if (webos_replace.subs) setWebosSubs(webos_replace.subs); else setSubs();
+        Lampa.PlayerVideo.listener.remove('canplay', canPlay);
+      }
+
+      function setWebosTracks(video_tracks) {
+        if (inited_parse) {
+          var parse_tracks = inited_parse.streams.filter(function (a) {
+            return a.codec_type == 'audio';
           });
+          log('Tracks', 'webos set tracks:', video_tracks.length);
+
+          if (parse_tracks.length !== video_tracks.length) {
+            parse_tracks = parse_tracks.filter(function (a) {
+              return a.codec_name !== 'truehd';
+            });
+
+            if (parse_tracks.length !== video_tracks.length) {
+              parse_tracks = parse_tracks.filter(function (a) {
+                return a.codec_name !== 'dts';
+              });
+            }
+          }
+
+          parse_tracks = parse_tracks.filter(function (a) {
+            return a.tags;
+          });
+          log('Tracks', 'webos tracks', video_tracks);
+          parse_tracks.forEach(function (track, i) {
+            if (video_tracks[i]) {
+              video_tracks[i].language = track.tags.language;
+              video_tracks[i].label = track.tags.title || track.tags.handler_name;
+            }
+          });
+          applied_tracks = true;
         }
+      }
+
+      function setWebosSubs(video_subs) {
+        if (inited_parse) {
+          var parse_subs = inited_parse.streams.filter(function (a) {
+            return a.codec_type == 'subtitle';
+          });
+          log('Tracks', 'webos set subs:', video_subs.length);
+          if (parse_subs.length !== video_subs.length - 1) parse_subs = parse_subs.filter(function (a) {
+            return a.codec_name !== 'hdmv_pgs_subtitle';
+          });
+          parse_subs = parse_subs.filter(function (a) {
+            return a.tags;
+          });
+          parse_subs.forEach(function (track, a) {
+            var i = a + 1;
+
+            if (video_subs[i]) {
+              video_subs[i].language = track.tags.language;
+              video_subs[i].label = track.tags.title || track.tags.handler_name;
+            }
+          });
+          applied_subs = true;
+        }
+      }
+
+      function listenWebosSubs(_data) {
+        log('Tracks', 'webos subs event');
+        webos_replace.subs = _data.subs;
+        if (inited_parse) setWebosSubs(_data.subs);
+      }
+
+      function listenWebosTracks(_data) {
+        log('Tracks', 'webos tracks event');
+        webos_replace.tracks = _data.tracks;
+        if (inited_parse) setWebosTracks(_data.tracks);
       }
 
       function listenStart() {
         inited = true;
         reguest(data, function (result) {
+          if (my_gen !== current_gen) {
+            log('Tracks', 'stale response for gen', my_gen, 'ignored');
+            return; // ответ пришёл уже после переключения серии — игнорируем
+          }
+
+          log('Tracks', 'parsed', result);
           inited_parse = result;
+
           if (inited) {
-            setSubs();
-            setTracks();
+            tryApplyAll();
+            startPolling(); // подстрахуемся, если события не сработали (актуально для Tizen)
           }
         });
       }
 
-      function listenDestroy() {
+      function cleanup() {
         inited = false;
+        stopPolling();
         Lampa.Player.listener.remove('destroy', listenDestroy);
         Lampa.PlayerVideo.listener.remove('tracks', listenTracks);
         Lampa.PlayerVideo.listener.remove('subs', listenSubs);
+        Lampa.PlayerVideo.listener.remove('webos_subs', listenWebosSubs);
+        Lampa.PlayerVideo.listener.remove('webos_tracks', listenWebosTracks);
         Lampa.PlayerVideo.listener.remove('canplay', canPlay);
-        Lampa.PlayerVideo.listener.remove('timeupdate', checkSeriesChange);
-        log('Tracks', 'end');
+        log('Tracks', 'end gen', my_gen);
+      }
+
+      function listenDestroy() {
+        cleanup();
+        active_cleanup = null;
       }
 
       Lampa.Player.listener.follow('destroy', listenDestroy);
       Lampa.PlayerVideo.listener.follow('tracks', listenTracks);
       Lampa.PlayerVideo.listener.follow('subs', listenSubs);
+      Lampa.PlayerVideo.listener.follow('webos_subs', listenWebosSubs);
+      Lampa.PlayerVideo.listener.follow('webos_tracks', listenWebosTracks);
       Lampa.PlayerVideo.listener.follow('canplay', canPlay);
-      // Каждую секунду проверяем, не переключилась ли серия
-      Lampa.PlayerVideo.listener.follow('timeupdate', checkSeriesChange); 
-      
+
+      active_cleanup = cleanup;
       listenStart();
     }
 
@@ -253,10 +379,15 @@
           var video = [];
           var audio = [];
           var subs = [];
-          var codec_video = result.streams.filter(function (a) { return a.codec_type == 'video'; });
-          var codec_audio = result.streams.filter(function (a) { return a.codec_type == 'audio'; });
-          var codec_subs = result.streams.filter(function (a) { return a.codec_type == 'subtitle'; });
-          
+          var codec_video = result.streams.filter(function (a) {
+            return a.codec_type == 'video';
+          });
+          var codec_audio = result.streams.filter(function (a) {
+            return a.codec_type == 'audio';
+          });
+          var codec_subs = result.streams.filter(function (a) {
+            return a.codec_type == 'subtitle';
+          });
           codec_video.slice(0, 1).forEach(function (v) {
             var line = {};
             if (v.width && v.height) line.video = v.width + 'х' + v.height;
@@ -279,34 +410,35 @@
             line.rate = bit == '--' ? bit : Math.round(bit / 1000000) + ' ' + Lampa.Lang.translate('speed_mb');
             if (Lampa.Arrays.getKeys(line).length) video.push(line);
           });
-          
           codec_audio.forEach(function (a, i) {
-            var line = { num: i + 1 };
-            if (a.tags) line.lang = (a.tags.language || '').toUpperCase();
-            line.name = a.tags ? a.tags.title || a.tags.handler_name : '';
-            
-            if (a.codec_name) {
-              var cName = a.codec_name.toUpperCase();
-              if (cName === 'DTS' || cName === 'TRUEHD') {
-                cName += ' ⚠️ (No Sound)';
-              }
-              line.codec = cName;
+            var line = {
+              num: i + 1
+            };
+
+            if (a.tags) {
+              line.lang = (a.tags.language || '').toUpperCase();
             }
-            
+
+            line.name = a.tags ? a.tags.title || a.tags.handler_name : '';
+            if (a.codec_name) line.codec = a.codec_name.toUpperCase();
             if (a.channel_layout) line.channels = a.channel_layout.replace('(side)', '').replace('stereo', '2.0').replace('8 channels (FL+FR+FC+LFE+SL+SR+TFL+TFR)', '7.1');
             var bit = a.bit_rate ? a.bit_rate : a.tags && (a.tags.BPS || a.tags["BPS-eng"]) ? a.tags.BPS || a.tags["BPS-eng"] : '--';
             line.rate = bit == '--' ? bit : Math.round(bit / 1000) + ' ' + Lampa.Lang.translate('speed_kb');
             if (Lampa.Arrays.getKeys(line).length) audio.push(line);
           });
-          
           codec_subs.forEach(function (a, i) {
-            var line = { num: i + 1 };
-            if (a.tags) line.lang = (a.tags.language || '').toUpperCase();
+            var line = {
+              num: i + 1
+            };
+
+            if (a.tags) {
+              line.lang = (a.tags.language || '').toUpperCase();
+            }
+
             line.name = a.tags ? a.tags.title || a.tags.handler_name : '';
-            if (a.codec_name) line.codec = a.codec_name.toUpperCase().replace('SUBRIP', 'SRT').replace('HDMV_PGS_SUBTITLE', 'PGS (Unsupported)').replace('MOV_TEXT', 'MOV TEXT');
+            if (a.codec_name) line.codec = a.codec_name.toUpperCase().replace('SUBRIP', 'SRT').replace('HDMV_PGS_SUBTITLE', 'HDMV PGS').replace('MOV_TEXT', 'MOV TEXT');
             if (Lampa.Arrays.getKeys(line).length) subs.push(line);
           });
-          
           var html = Lampa.Template.get('tracks_metainfo', {});
           append('video', video);
           append('audio', audio);
@@ -323,12 +455,8 @@
     }
 
     Lampa.Player.listener.follow('start', function (data) {
-      if (data.torrent_hash) {
-        current_torrent_data = data;
-        subscribeTracks(data);
-      }
+      if (data.torrent_hash) subscribeTracks(data);
     });
-    
     Lampa.Listener.follow('torrent_file', function (data) {
       if (data.type == 'list_open') list_opened = true;
       if (data.type == 'list_close') list_opened = false;
@@ -337,7 +465,6 @@
         parseMetainfo(data);
       }
     });
-    
     Lampa.Template.add('tracks_loading', "\n    <div class=\"tracks-loading\">\n        <span>#{loading}...</span>\n    </div>\n");
     Lampa.Template.add('tracks_metainfo', "\n    <div class=\"tracks-metainfo\"></div>\n");
     Lampa.Template.add('tracks_metainfo_block', "\n    <div class=\"tracks-metainfo__line\">\n        <div class=\"tracks-metainfo__label\"></div>\n        <div class=\"tracks-metainfo__info\"></div>\n    </div>\n");
