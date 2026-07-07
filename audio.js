@@ -31,8 +31,6 @@
       var inited = false;
       var inited_parse = false;
       var webos_replace = {};
-      // Добавляем флаг для отслеживания активного плеера
-      var currentPlayerId = null;
 
       function log() {
         console.log.apply(console.log, arguments);
@@ -237,44 +235,33 @@
         if (inited_parse) setWebosTracks(_data.tracks);
       }
 
-      // Добавляем функцию полного сброса состояния
-      function resetState() {
-        inited = false;
-        inited_parse = false;
-        webos_replace = {};
-        currentPlayerId = null;
-        log('Tracks', 'state reset');
-      }
-
-      function listenStart() {
-        // Проверяем, изменился ли плеер (новая серия)
-        var newPlayerId = data.torrent_hash + '_' + data.id;
-        if (currentPlayerId && currentPlayerId !== newPlayerId) {
-          resetState();
-        }
-        currentPlayerId = newPlayerId;
-
+      function listenStart(currentData) {
         inited = true;
-        reguest(data, function (result) {
-          log('Tracks', 'parsed', inited_parse);
+        inited_parse = false; // Очищаем старый парсинг перед новым запросом
+        reguest(currentData || data, function (result) {
+          log('Tracks', 'parsed', result);
           inited_parse = result;
 
           if (inited) {
-            // Добавляем небольшую задержку для корректной инициализации
-            setTimeout(function() {
-              if (webos_replace.subs) setWebosSubs(webos_replace.subs);else setSubs();
-              if (webos_replace.tracks) setWebosTracks(webos_replace.tracks);else setTracks();
-            }, 100);
+            if (webos_replace.subs) setWebosSubs(webos_replace.subs);else setSubs();
+            if (webos_replace.tracks) setWebosTracks(webos_replace.tracks);else setTracks();
           }
         });
       }
 
+      // Слушатель смены файла внутри плеера (для сериалов)
+      function listenChangeFile(e) {
+        log('Tracks', 'change file event', e);
+        // Сбрасываем кэш замен для Tizen/WebOS плеера
+        webos_replace = {}; 
+        // Запускаем парсинг заново с новыми данными файла
+        listenStart(e.data);
+      }
+
       function listenDestroy() {
         inited = false;
-        // Не сбрасываем inited_parse здесь, чтобы данные сохранились
-        // но помечаем, что плеер уничтожен
-        currentPlayerId = null;
         Lampa.Player.listener.remove('destroy', listenDestroy);
+        Lampa.Player.listener.remove('change_file', listenChangeFile);
         Lampa.PlayerVideo.listener.remove('tracks', listenTracks);
         Lampa.PlayerVideo.listener.remove('subs', listenSubs);
         Lampa.PlayerVideo.listener.remove('webos_subs', listenWebosSubs);
@@ -284,6 +271,7 @@
       }
 
       Lampa.Player.listener.follow('destroy', listenDestroy);
+      Lampa.Player.listener.follow('change_file', listenChangeFile);
       Lampa.PlayerVideo.listener.follow('tracks', listenTracks);
       Lampa.PlayerVideo.listener.follow('subs', listenSubs);
       Lampa.PlayerVideo.listener.follow('webos_subs', listenWebosSubs);
