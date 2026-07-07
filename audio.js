@@ -5,6 +5,9 @@
     var list_opened = false;
     var current_torrent_hash = '';
     var tracks_cache = {};
+    // FIX: единая точка "текущая активная сессия" — чтобы при быстром
+    // переключении серии не плодить дублирующиеся подписки/сокеты.
+    var active_teardown = null;
 
     function reguest(params, callback) {
       if (params.ffprobe && params.path.split('.').pop() !== 'mp4') {
@@ -13,48 +16,71 @@
             streams: params.ffprobe
           });
         }, 200);
-      } else {
-        var cache_key = params.torrent_hash + '_' + params.id;
-        
-        if (tracks_cache[cache_key]) {
-          callback(tracks_cache[cache_key]);
-          return;
-        }
-
-        if (connect_host == '{localhost}') connect_host = '185.204.0.61';
-        var socket = new WebSocket('ws://' + connect_host + ':8080/?' + params.torrent_hash + '&index=' + params.id);
-        
-        socket.addEventListener('message', function (event) {
-          socket.close();
-          var json = {};
-
-          try {
-            json = JSON.parse(event.data);
-          } catch (e) {}
-
-          if (json.streams) {
-            tracks_cache[cache_key] = json;
-            callback(json);
-          }
-        });
+        return;
       }
+
+      var cache_key = params.torrent_hash + '_' + params.id;
+
+      if (tracks_cache[cache_key]) {
+        callback(tracks_cache[cache_key]);
+        return;
+      }
+
+      if (connect_host == '{localhost}') connect_host = '185.204.0.61';
+      var socket = new WebSocket('ws://' + connect_host + ':8080/?' + params.torrent_hash + '&index=' + params.id);
+
+      // FIX: раньше не было ни таймаута, ни обработки ошибок сокета —
+      // если сервер не ответил (или порвалось соединение), callback
+      // не вызывался никогда и загрузка "висела" бесконечно.
+      var finished = false;
+      var timeout_id = setTimeout(function () {
+        if (finished) return;
+        finished = true;
+        try { socket.close(); } catch (e) {}
+      }, 15000);
+
+      socket.addEventListener('message', function (event) {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timeout_id);
+        socket.close();
+        var json = {};
+
+        try {
+          json = JSON.parse(event.data);
+        } catch (e) {}
+
+        if (json.streams) {
+          tracks_cache[cache_key] = json;
+          callback(json);
+        }
+      });
+
+      socket.addEventListener('error', function () {
+        finished = true;
+        clearTimeout(timeout_id);
+      });
+
+      socket.addEventListener('close', function () {
+        clearTimeout(timeout_id);
+      });
     }
 
     function extractHashFromUrl(url) {
       if (!url) return null;
-      
+
       var linkMatch = url.match(/[?&]link=([a-f0-9]{40})/i);
       if (linkMatch) return linkMatch[1];
-      
+
       var hashMatch = url.match(/[?&]hash=([a-f0-9]{40})/i);
       if (hashMatch) return hashMatch[1];
-      
+
       var pathMatch = url.match(/\/([a-f0-9]{40})\./i);
       if (pathMatch) return pathMatch[1];
-      
+
       var hexMatch = url.match(/([a-f0-9]{40})/i);
       if (hexMatch) return hexMatch[1];
-      
+
       return null;
     }
 
@@ -266,6 +292,9 @@
         Lampa.PlayerVideo.listener.remove('webos_subs', listenWebosSubs);
         Lampa.PlayerVideo.listener.remove('webos_tracks', listenWebosTracks);
         Lampa.PlayerVideo.listener.remove('canplay', canPlay);
+        // FIX: сбрасываем "активную сессию", только если она всё ещё наша —
+        // чтобы не затереть teardown уже новой (следующей) сессии.
+        if (active_teardown === listenDestroy) active_teardown = null;
       }
 
       Lampa.Player.listener.follow('destroy', listenDestroy);
@@ -274,6 +303,10 @@
       Lampa.PlayerVideo.listener.follow('webos_subs', listenWebosSubs);
       Lampa.PlayerVideo.listener.follow('webos_tracks', listenWebosTracks);
       Lampa.PlayerVideo.listener.follow('canplay', canPlay);
+
+      // FIX: регистрируем teardown этой сессии как активный.
+      active_teardown = listenDestroy;
+
       listenStart();
     }
 
@@ -281,118 +314,142 @@
       var loading = Lampa.Template.get('tracks_loading');
       data.item.after(loading);
       reguest(data.element, function (result) {
-        if (list_opened) {
-          var append = function append(name, fields) {
-            if (fields.length) {
-              var block = Lampa.Template.get('tracks_metainfo_block', {});
-              block.find('.tracks-metainfo__label').text(Lampa.Lang.translate(name == 'video' ? 'extensions_hpu_video' : name == 'audio' ? 'player_tracks' : 'player_' + name));
-              fields.forEach(function (data) {
-                var item = $('<div class="tracks-metainfo__item tracks-metainfo__item--' + name + ' selector"></div>');
-                item.on('hover:focus', function (e) {
-                  Lampa.Modal.scroll().update(item);
-                });
-
-                for (var i in data) {
-                  var div = $('<div class="tracks-metainfo__column--' + i + '"></div>');
-                  div.text(data[i]);
-                  item.append(div);
-                }
-
-                block.find('.tracks-metainfo__info').append(item);
-              });
-              html.append(block);
-            }
-          };
-
-          var video = [];
-          var audio = [];
-          var subs = [];
-          var codec_video = result.streams.filter(function (a) {
-            return a.codec_type == 'video';
-          });
-          var codec_audio = result.streams.filter(function (a) {
-            return a.codec_type == 'audio';
-          });
-          var codec_subs = result.streams.filter(function (a) {
-            return a.codec_type == 'subtitle';
-          });
-          codec_video.slice(0, 1).forEach(function (v) {
-            var line = {};
-            if (v.width && v.height) line.video = v.width + 'х' + v.height;
-
-            if (v.duration) {
-              line.duration = new Date(v.duration * 1000).toISOString().slice(11, 19);
-            } else if (v.tags) {
-              if (v.tags.DURATION) {
-                line.duration = v.tags.DURATION ? v.tags.DURATION.split(".") : '';
-                line.duration.pop();
-              } else if (v.tags["DURATION-eng"]) {
-                line.duration = v.tags["DURATION-eng"] ? v.tags["DURATION-eng"].split(".") : '';
-                line.duration.pop();
-              }
-            }
-
-            if (v.codec_name) line.codec = v.codec_name.toUpperCase();
-            if (Boolean(v.is_avc)) line.avc = 'AVC';
-            var bit = v.bit_rate ? v.bit_rate : v.tags && (v.tags.BPS || v.tags["BPS-eng"]) ? v.tags.BPS || v.tags["BPS-eng"] : '--';
-            line.rate = bit == '--' ? bit : Math.round(bit / 1000000) + ' ' + Lampa.Lang.translate('speed_mb');
-            if (Lampa.Arrays.getKeys(line).length) video.push(line);
-          });
-          codec_audio.forEach(function (a, i) {
-            var line = {
-              num: i + 1
-            };
-
-            if (a.tags) {
-              line.lang = (a.tags.language || '').toUpperCase();
-            }
-
-            line.name = a.tags ? a.tags.title || a.tags.handler_name : '';
-            if (a.codec_name) line.codec = a.codec_name.toUpperCase();
-            if (a.channel_layout) line.channels = a.channel_layout.replace('(side)', '').replace('stereo', '2.0').replace('8 channels (FL+FR+FC+LFE+SL+SR+TFL+TFR)', '7.1');
-            var bit = a.bit_rate ? a.bit_rate : a.tags && (a.tags.BPS || a.tags["BPS-eng"]) ? a.tags.BPS || a.tags["BPS-eng"] : '--';
-            line.rate = bit == '--' ? bit : Math.round(bit / 1000) + ' ' + Lampa.Lang.translate('speed_kb');
-            if (Lampa.Arrays.getKeys(line).length) audio.push(line);
-          });
-          codec_subs.forEach(function (a, i) {
-            var line = {
-              num: i + 1
-            };
-
-            if (a.tags) {
-              line.lang = (a.tags.language || '').toUpperCase();
-            }
-
-            line.name = a.tags ? a.tags.title || a.tags.handler_name : '';
-            if (a.codec_name) line.codec = a.codec_name.toUpperCase().replace('SUBRIP', 'SRT').replace('HDMV_PGS_SUBTITLE', 'HDMV PGS').replace('MOV_TEXT', 'MOV TEXT');
-            if (Lampa.Arrays.getKeys(line).length) subs.push(line);
-          });
-          var html = Lampa.Template.get('tracks_metainfo', {});
-          append('video', video);
-          append('audio', audio);
-          append('subs', subs);
+        // FIX: если список успели закрыть, пока ждали ответ —
+        // раньше индикатор загрузки так и оставался висеть в DOM навсегда.
+        if (!list_opened) {
           loading.remove();
+          return;
+        }
 
-          if (video.length || audio.length || subs.length) {
-            data.item.after(html);
+        var append = function append(name, fields) {
+          if (fields.length) {
+            var block = Lampa.Template.get('tracks_metainfo_block', {});
+            block.find('.tracks-metainfo__label').text(Lampa.Lang.translate(name == 'video' ? 'extensions_hpu_video' : name == 'audio' ? 'player_tracks' : 'player_' + name));
+            fields.forEach(function (data) {
+              var item = $('<div class="tracks-metainfo__item tracks-metainfo__item--' + name + ' selector"></div>');
+              item.on('hover:focus', function (e) {
+                Lampa.Modal.scroll().update(item);
+              });
+
+              for (var i in data) {
+                var div = $('<div class="tracks-metainfo__column--' + i + '"></div>');
+                div.text(data[i]);
+                item.append(div);
+              }
+
+              block.find('.tracks-metainfo__info').append(item);
+            });
+            html.append(block);
+          }
+        };
+
+        var video = [];
+        var audio = [];
+        var subs = [];
+        var codec_video = result.streams.filter(function (a) {
+          return a.codec_type == 'video';
+        });
+        var codec_audio = result.streams.filter(function (a) {
+          return a.codec_type == 'audio';
+        });
+        var codec_subs = result.streams.filter(function (a) {
+          return a.codec_type == 'subtitle';
+        });
+        codec_video.slice(0, 1).forEach(function (v) {
+          var line = {};
+          if (v.width && v.height) line.video = v.width + 'х' + v.height;
+
+          if (v.duration) {
+            line.duration = new Date(v.duration * 1000).toISOString().slice(11, 19);
+          } else if (v.tags) {
+            if (v.tags.DURATION) {
+              line.duration = v.tags.DURATION ? v.tags.DURATION.split(".") : '';
+              line.duration.pop();
+            } else if (v.tags["DURATION-eng"]) {
+              line.duration = v.tags["DURATION-eng"] ? v.tags["DURATION-eng"].split(".") : '';
+              line.duration.pop();
+            }
           }
 
-          if (Lampa.Controller.enabled().name == 'modal') Lampa.Controller.toggle('modal');
+          if (v.codec_name) line.codec = v.codec_name.toUpperCase();
+          if (Boolean(v.is_avc)) line.avc = 'AVC';
+          var bit = v.bit_rate ? v.bit_rate : v.tags && (v.tags.BPS || v.tags["BPS-eng"]) ? v.tags.BPS || v.tags["BPS-eng"] : '--';
+          line.rate = bit == '--' ? bit : Math.round(bit / 1000000) + ' ' + Lampa.Lang.translate('speed_mb');
+          if (Lampa.Arrays.getKeys(line).length) video.push(line);
+        });
+        codec_audio.forEach(function (a, i) {
+          var line = {
+            num: i + 1
+          };
+
+          if (a.tags) {
+            line.lang = (a.tags.language || '').toUpperCase();
+          }
+
+          line.name = a.tags ? a.tags.title || a.tags.handler_name : '';
+          if (a.codec_name) line.codec = a.codec_name.toUpperCase();
+          if (a.channel_layout) line.channels = a.channel_layout.replace('(side)', '').replace('stereo', '2.0').replace('8 channels (FL+FR+FC+LFE+SL+SR+TFL+TFR)', '7.1');
+          var bit = a.bit_rate ? a.bit_rate : a.tags && (a.tags.BPS || a.tags["BPS-eng"]) ? a.tags.BPS || a.tags["BPS-eng"] : '--';
+          line.rate = bit == '--' ? bit : Math.round(bit / 1000) + ' ' + Lampa.Lang.translate('speed_kb');
+          if (Lampa.Arrays.getKeys(line).length) audio.push(line);
+        });
+        codec_subs.forEach(function (a, i) {
+          var line = {
+            num: i + 1
+          };
+
+          if (a.tags) {
+            line.lang = (a.tags.language || '').toUpperCase();
+          }
+
+          line.name = a.tags ? a.tags.title || a.tags.handler_name : '';
+          if (a.codec_name) line.codec = a.codec_name.toUpperCase().replace('SUBRIP', 'SRT').replace('HDMV_PGS_SUBTITLE', 'HDMV PGS').replace('MOV_TEXT', 'MOV TEXT');
+          if (Lampa.Arrays.getKeys(line).length) subs.push(line);
+        });
+        var html = Lampa.Template.get('tracks_metainfo', {});
+        append('video', video);
+        append('audio', audio);
+        append('subs', subs);
+        loading.remove();
+
+        if (video.length || audio.length || subs.length) {
+          data.item.after(html);
         }
+
+        if (Lampa.Controller.enabled().name == 'modal') Lampa.Controller.toggle('modal');
       });
     }
 
     Lampa.Player.listener.follow('start', function (data) {
+      // FIX: раньше это была цепочка if / else if / else if. Если у data.url
+      // не удавалось вытащить хэш регуляркой (например, при автопереходе
+      // на следующую серию ссылка формируется иначе), код НЕ проваливался
+      // к current_torrent_hash — data.torrent_hash так и оставался пустым,
+      // subscribeTracks вообще не вызывался, и дорожки не подтягивались.
+      // Теперь фолбэк на current_torrent_hash срабатывает во всех случаях,
+      // когда явного torrent_hash или извлекаемого из url хэша нет.
       if (data.torrent_hash) {
         current_torrent_hash = data.torrent_hash;
-      } else if (data.url) {
-        var extractedHash = extractHashFromUrl(data.url);
+      } else {
+        var extractedHash = data.url ? extractHashFromUrl(data.url) : null;
+
         if (extractedHash) {
           current_torrent_hash = extractedHash;
           data.torrent_hash = current_torrent_hash;
+        } else if (current_torrent_hash) {
+          data.torrent_hash = current_torrent_hash;
         }
-      } else if (current_torrent_hash) {
-        data.torrent_hash = current_torrent_hash;
+      }
+
+      // FIX: если предыдущая сессия (прошлая серия) ещё не была закрыта
+      // событием destroy к моменту старта новой (гонка при быстром
+      // переключении/клике на "следующая серия"), принудительно чистим
+      // её слушатели, чтобы не плодить дублирующиеся подписки и запросы,
+      // из-за которых переключение серии могло тормозить/срабатывать не сразу.
+      if (active_teardown) {
+        var prev_teardown = active_teardown;
+        active_teardown = null;
+        prev_teardown();
       }
 
       if (data.torrent_hash) subscribeTracks(data);
@@ -403,10 +460,10 @@
         list_opened = true;
         if (data.torrent_hash) current_torrent_hash = data.torrent_hash;
       }
-      
+
       if (data.type == 'list_close') {
         list_opened = false;
-        tracks_cache = {}; 
+        tracks_cache = {};
       }
 
       if (data.type == 'render' && data.items.length == 1 && list_opened) {
