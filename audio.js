@@ -14,13 +14,7 @@
       } else {
         if (connect_host == '{localhost}') connect_host = '185.204.0.61';
         var socket = new WebSocket('ws://' + connect_host + ':8080/?' + params.torrent_hash + '&index=' + params.id);
-        
-        var timeout = setTimeout(function() {
-          socket.close();
-        }, 5000); // Таймаут для Tizen, чтобы не держать битые соединения
-
         socket.addEventListener('message', function (event) {
-          clearTimeout(timeout);
           socket.close();
           var json = {};
 
@@ -30,16 +24,13 @@
 
           if (json.streams) callback(json);
         });
-
-        socket.addEventListener('error', function() {
-          clearTimeout(timeout);
-        });
       }
     }
 
     function subscribeTracks(data) {
       var inited = false;
       var inited_parse = false;
+      var webos_replace = {};
 
       function log() {
         console.log.apply(console.log, arguments);
@@ -55,7 +46,7 @@
         return video.textTracks || [];
       }
 
-      log('Tracks', 'start [Tizen Optimized]');
+      log('Tracks', 'start');
 
       function setTracks() {
         if (inited_parse) {
@@ -64,33 +55,25 @@
           var parse_tracks = inited_parse.streams.filter(function (a) {
             return a.codec_type == 'audio';
           });
-          
           var minus = 1;
           log('Tracks', 'set tracks:', video_tracks.length);
-          
-          // ТАКТИКА ДЛЯ TIZEN: Исключаем DTS и TrueHD, так как Samsung их не видит
-          if (parse_tracks.length !== video_tracks.length) {
-            parse_tracks = parse_tracks.filter(function (a) {
-              return a.codec_name !== 'dts' && a.codec_name !== 'truehd';
-            });
-          }
-          
+          if (parse_tracks.length !== video_tracks.length) parse_tracks = parse_tracks.filter(function (a) {
+            return a.codec_name !== 'dts';
+          });
           parse_tracks = parse_tracks.filter(function (a) {
             return a.tags;
           });
-          
-          log('Tracks', 'filtered tracks:', parse_tracks.length);
-          
+          log('Tracks', 'filtred tracks:', parse_tracks.length);
           parse_tracks.forEach(function (track) {
             var orig = video_tracks[track.index - minus];
             var elem = {
               index: track.index - minus,
               language: track.tags.language,
-              label: track.tags.title || track.tags.handler_name || 'Audio',
+              label: track.tags.title || track.tags.handler_name,
               ghost: orig ? false : true,
               selected: orig ? orig.selected == true || orig.enabled == true : false
             };
-            
+            console.log('Tracks', 'tracks original', orig);
             Object.defineProperty(elem, "enabled", {
               set: function set(v) {
                 if (v) {
@@ -123,36 +106,24 @@
           var parse_subs = inited_parse.streams.filter(function (a) {
             return a.codec_type == 'subtitle';
           });
-          
           var minus = inited_parse.streams.filter(function (a) {
             return a.codec_type == 'audio';
           }).length + 1;
-          
           log('Tracks', 'set subs:', video_subs.length);
-          
-          // Фильтруем графические дорожки PGS/DVD для Tizen, оставляя SRT/ASS
-          if (parse_subs.length !== video_subs.length) {
-            parse_subs = parse_subs.filter(function (a) {
-              return a.codec_name !== 'hdmv_pgs_subtitle' && a.codec_name !== 'dvd_subtitle';
-            });
-          }
-
           parse_subs = parse_subs.filter(function (a) {
             return a.tags;
           });
-          
-          log('Tracks', 'filtered subs:', parse_subs.length);
-          
+          log('Tracks', 'filtred subs:', parse_subs.length);
           parse_subs.forEach(function (track) {
             var orig = video_subs[track.index - minus];
             var elem = {
               index: track.index - minus,
               language: track.tags.language,
-              label: track.tags.title || track.tags.handler_name || 'Subtitle',
-              ghost: orig ? false : true,
+              label: track.tags.title || track.tags.handler_name,
+              ghost: video_subs[track.index - minus] ? false : true,
               selected: orig ? orig.selected == true || orig.mode == 'showing' : false
             };
-            
+            console.log('Tracks', 'subs original', orig);
             Object.defineProperty(elem, "mode", {
               set: function set(v) {
                 if (v) {
@@ -179,28 +150,100 @@
       }
 
       function listenTracks() {
+        log('Tracks', 'tracks video event');
         setTracks();
         Lampa.PlayerVideo.listener.remove('tracks', listenTracks);
       }
 
       function listenSubs() {
+        log('Tracks', 'subs video event');
         setSubs();
         Lampa.PlayerVideo.listener.remove('subs', listenSubs);
       }
 
       function canPlay() {
-        setTracks();
-        setSubs();
+        log('Tracks', 'canplay video event');
+        if (webos_replace.tracks) setWebosTracks(webos_replace.tracks);else setTracks();
+        if (webos_replace.subs) setWebosSubs(webos_replace.subs);else setSubs();
         Lampa.PlayerVideo.listener.remove('canplay', canPlay);
+      }
+
+      function setWebosTracks(video_tracks) {
+        if (inited_parse) {
+          var parse_tracks = inited_parse.streams.filter(function (a) {
+            return a.codec_type == 'audio';
+          });
+          log('Tracks', 'webos set tracks:', video_tracks.length);
+
+          if (parse_tracks.length !== video_tracks.length) {
+            parse_tracks = parse_tracks.filter(function (a) {
+              return a.codec_name !== 'truehd';
+            });
+
+            if (parse_tracks.length !== video_tracks.length) {
+              parse_tracks = parse_tracks.filter(function (a) {
+                return a.codec_name !== 'dts';
+              });
+            }
+          }
+
+          parse_tracks = parse_tracks.filter(function (a) {
+            return a.tags;
+          });
+          log('Tracks', 'webos tracks', video_tracks);
+          parse_tracks.forEach(function (track, i) {
+            if (video_tracks[i]) {
+              video_tracks[i].language = track.tags.language;
+              video_tracks[i].label = track.tags.title || track.tags.handler_name;
+            }
+          });
+        }
+      }
+
+      function setWebosSubs(video_subs) {
+        if (inited_parse) {
+          var parse_subs = inited_parse.streams.filter(function (a) {
+            return a.codec_type == 'subtitle';
+          });
+          log('Tracks', 'webos set subs:', video_subs.length);
+          if (parse_subs.length !== video_subs.length - 1) parse_subs = parse_subs.filter(function (a) {
+            return a.codec_name !== 'hdmv_pgs_subtitle';
+          });
+          parse_subs = parse_subs.filter(function (a) {
+            return a.tags;
+          });
+          parse_subs.forEach(function (track, a) {
+            var i = a + 1;
+
+            if (video_subs[i]) {
+              video_subs[i].language = track.tags.language;
+              video_subs[i].label = track.tags.title || track.tags.handler_name;
+            }
+          });
+        }
+      }
+
+      function listenWebosSubs(_data) {
+        log('Tracks', 'webos subs event');
+        webos_replace.subs = _data.subs;
+        if (inited_parse) setWebosSubs(_data.subs);
+      }
+
+      function listenWebosTracks(_data) {
+        log('Tracks', 'webos tracks event');
+        webos_replace.tracks = _data.tracks;
+        if (inited_parse) setWebosTracks(_data.tracks);
       }
 
       function listenStart() {
         inited = true;
         reguest(data, function (result) {
+          log('Tracks', 'parsed', inited_parse);
           inited_parse = result;
+
           if (inited) {
-            setSubs();
-            setTracks();
+            if (webos_replace.subs) setWebosSubs(webos_replace.subs);else setSubs();
+            if (webos_replace.tracks) setWebosTracks(webos_replace.tracks);else setTracks();
           }
         });
       }
@@ -210,6 +253,8 @@
         Lampa.Player.listener.remove('destroy', listenDestroy);
         Lampa.PlayerVideo.listener.remove('tracks', listenTracks);
         Lampa.PlayerVideo.listener.remove('subs', listenSubs);
+        Lampa.PlayerVideo.listener.remove('webos_subs', listenWebosSubs);
+        Lampa.PlayerVideo.listener.remove('webos_tracks', listenWebosTracks);
         Lampa.PlayerVideo.listener.remove('canplay', canPlay);
         log('Tracks', 'end');
       }
@@ -217,6 +262,8 @@
       Lampa.Player.listener.follow('destroy', listenDestroy);
       Lampa.PlayerVideo.listener.follow('tracks', listenTracks);
       Lampa.PlayerVideo.listener.follow('subs', listenSubs);
+      Lampa.PlayerVideo.listener.follow('webos_subs', listenWebosSubs);
+      Lampa.PlayerVideo.listener.follow('webos_tracks', listenWebosTracks);
       Lampa.PlayerVideo.listener.follow('canplay', canPlay);
       listenStart();
     }
@@ -260,7 +307,6 @@
           var codec_subs = result.streams.filter(function (a) {
             return a.codec_type == 'subtitle';
           });
-          
           codec_video.slice(0, 1).forEach(function (v) {
             var line = {};
             if (v.width && v.height) line.video = v.width + 'х' + v.height;
@@ -283,35 +329,35 @@
             line.rate = bit == '--' ? bit : Math.round(bit / 1000000) + ' ' + Lampa.Lang.translate('speed_mb');
             if (Lampa.Arrays.getKeys(line).length) video.push(line);
           });
-          
           codec_audio.forEach(function (a, i) {
-            var line = { num: i + 1 };
-            if (a.tags) line.lang = (a.tags.language || '').toUpperCase();
-            line.name = a.tags ? a.tags.title || a.tags.handler_name : '';
-            
-            if (a.codec_name) {
-              var cName = a.codec_name.toUpperCase();
-              // Пометка для пользователя Tizen, что звук не будет воспроизводиться телевизором напрямую
-              if (cName === 'DTS' || cName === 'TRUEHD') {
-                cName += ' ⚠️ (No Sound)';
-              }
-              line.codec = cName;
+            var line = {
+              num: i + 1
+            };
+
+            if (a.tags) {
+              line.lang = (a.tags.language || '').toUpperCase();
             }
-            
+
+            line.name = a.tags ? a.tags.title || a.tags.handler_name : '';
+            if (a.codec_name) line.codec = a.codec_name.toUpperCase();
             if (a.channel_layout) line.channels = a.channel_layout.replace('(side)', '').replace('stereo', '2.0').replace('8 channels (FL+FR+FC+LFE+SL+SR+TFL+TFR)', '7.1');
-            var bit = a.bit_rate ? a.bit_rate : a.tags && (v.tags.BPS || v.tags["BPS-eng"]) ? a.tags.BPS || a.tags["BPS-eng"] : '--';
+            var bit = a.bit_rate ? a.bit_rate : a.tags && (a.tags.BPS || a.tags["BPS-eng"]) ? a.tags.BPS || a.tags["BPS-eng"] : '--';
             line.rate = bit == '--' ? bit : Math.round(bit / 1000) + ' ' + Lampa.Lang.translate('speed_kb');
             if (Lampa.Arrays.getKeys(line).length) audio.push(line);
           });
-          
           codec_subs.forEach(function (a, i) {
-            var line = { num: i + 1 };
-            if (a.tags) line.lang = (a.tags.language || '').toUpperCase();
+            var line = {
+              num: i + 1
+            };
+
+            if (a.tags) {
+              line.lang = (a.tags.language || '').toUpperCase();
+            }
+
             line.name = a.tags ? a.tags.title || a.tags.handler_name : '';
-            if (a.codec_name) line.codec = a.codec_name.toUpperCase().replace('SUBRIP', 'SRT').replace('HDMV_PGS_SUBTITLE', 'PGS (Unsupported)').replace('MOV_TEXT', 'MOV TEXT');
+            if (a.codec_name) line.codec = a.codec_name.toUpperCase().replace('SUBRIP', 'SRT').replace('HDMV_PGS_SUBTITLE', 'HDMV PGS').replace('MOV_TEXT', 'MOV TEXT');
             if (Lampa.Arrays.getKeys(line).length) subs.push(line);
           });
-          
           var html = Lampa.Template.get('tracks_metainfo', {});
           append('video', video);
           append('audio', audio);
