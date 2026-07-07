@@ -3,8 +3,6 @@
 
     var connect_host = '{localhost}';
     var list_opened = false;
-    var current_gen = 0;       // растущий id "поколения" (серии)
-    var active_cleanup = null; // функция очистки слушателей текущей серии
 
     function reguest(params, callback) {
       if (params.ffprobe && params.path.split('.').pop() !== 'mp4') {
@@ -30,21 +28,11 @@
     }
 
     function subscribeTracks(data) {
-      // чистим слушатели предыдущей серии, если destroy не долетел до смены источника
-      if (active_cleanup) {
-        active_cleanup();
-        active_cleanup = null;
-      }
-
-      var my_gen = ++current_gen;
       var inited = false;
       var inited_parse = false;
       var webos_replace = {};
-      var applied_tracks = false;
-      var applied_subs = false;
-      var poll_timer = null;
-      var poll_attempts = 0;
-      var POLL_MAX_ATTEMPTS = 20; // ~10 секунд при интервале 500мс
+      // Добавляем флаг для отслеживания активного плеера
+      var currentPlayerId = null;
 
       function log() {
         console.log.apply(console.log, arguments);
@@ -60,15 +48,12 @@
         return video.textTracks || [];
       }
 
-      log('Tracks', 'start gen', my_gen);
+      log('Tracks', 'start');
 
       function setTracks() {
         if (inited_parse) {
           var new_tracks = [];
           var video_tracks = getTracks();
-
-          if (!video_tracks.length) return false;
-
           var parse_tracks = inited_parse.streams.filter(function (a) {
             return a.codec_type == 'audio';
           });
@@ -112,22 +97,14 @@
             });
             new_tracks.push(elem);
           });
-          if (parse_tracks.length) {
-            Lampa.PlayerPanel.setTracks(new_tracks);
-            applied_tracks = true;
-            return true;
-          }
+          if (parse_tracks.length) Lampa.PlayerPanel.setTracks(new_tracks);
         }
-        return false;
       }
 
       function setSubs() {
         if (inited_parse) {
           var new_subs = [];
           var video_subs = getSubs();
-
-          if (!video_subs.length) return false;
-
           var parse_subs = inited_parse.streams.filter(function (a) {
             return a.codec_type == 'subtitle';
           });
@@ -170,48 +147,7 @@
             });
             new_subs.push(elem);
           });
-          if (parse_subs.length) {
-            Lampa.PlayerPanel.setSubs(new_subs);
-            applied_subs = true;
-            return true;
-          }
-        }
-        return false;
-      }
-
-      function tryApplyAll() {
-        if (webos_replace.tracks) setWebosTracks(webos_replace.tracks); else setTracks();
-        if (webos_replace.subs) setWebosSubs(webos_replace.subs); else setSubs();
-      }
-
-      // Резервный поллинг: на некоторых прошивках Tizen события tracks/subs/canplay
-      // не перевызываются при смене серии внутри уже созданного плеера.
-      function startPolling() {
-        stopPolling();
-        poll_attempts = 0;
-        poll_timer = setInterval(function () {
-          if (my_gen !== current_gen) {
-            stopPolling();
-            return;
-          }
-
-          poll_attempts++;
-
-          if (inited_parse && (!applied_tracks || !applied_subs)) {
-            log('Tracks', 'poll attempt', poll_attempts);
-            tryApplyAll();
-          }
-
-          if ((applied_tracks && applied_subs) || poll_attempts >= POLL_MAX_ATTEMPTS) {
-            stopPolling();
-          }
-        }, 500);
-      }
-
-      function stopPolling() {
-        if (poll_timer) {
-          clearInterval(poll_timer);
-          poll_timer = null;
+          if (parse_subs.length) Lampa.PlayerPanel.setSubs(new_subs);
         }
       }
 
@@ -229,8 +165,8 @@
 
       function canPlay() {
         log('Tracks', 'canplay video event');
-        if (webos_replace.tracks) setWebosTracks(webos_replace.tracks); else setTracks();
-        if (webos_replace.subs) setWebosSubs(webos_replace.subs); else setSubs();
+        if (webos_replace.tracks) setWebosTracks(webos_replace.tracks);else setTracks();
+        if (webos_replace.subs) setWebosSubs(webos_replace.subs);else setSubs();
         Lampa.PlayerVideo.listener.remove('canplay', canPlay);
       }
 
@@ -263,7 +199,6 @@
               video_tracks[i].label = track.tags.title || track.tags.handler_name;
             }
           });
-          applied_tracks = true;
         }
       }
 
@@ -287,7 +222,6 @@
               video_subs[i].label = track.tags.title || track.tags.handler_name;
             }
           });
-          applied_subs = true;
         }
       }
 
@@ -303,39 +237,50 @@
         if (inited_parse) setWebosTracks(_data.tracks);
       }
 
+      // Добавляем функцию полного сброса состояния
+      function resetState() {
+        inited = false;
+        inited_parse = false;
+        webos_replace = {};
+        currentPlayerId = null;
+        log('Tracks', 'state reset');
+      }
+
       function listenStart() {
+        // Проверяем, изменился ли плеер (новая серия)
+        var newPlayerId = data.torrent_hash + '_' + data.id;
+        if (currentPlayerId && currentPlayerId !== newPlayerId) {
+          resetState();
+        }
+        currentPlayerId = newPlayerId;
+
         inited = true;
         reguest(data, function (result) {
-          if (my_gen !== current_gen) {
-            log('Tracks', 'stale response for gen', my_gen, 'ignored');
-            return; // ответ пришёл уже после переключения серии — игнорируем
-          }
-
-          log('Tracks', 'parsed', result);
+          log('Tracks', 'parsed', inited_parse);
           inited_parse = result;
 
           if (inited) {
-            tryApplyAll();
-            startPolling(); // подстрахуемся, если события не сработали (актуально для Tizen)
+            // Добавляем небольшую задержку для корректной инициализации
+            setTimeout(function() {
+              if (webos_replace.subs) setWebosSubs(webos_replace.subs);else setSubs();
+              if (webos_replace.tracks) setWebosTracks(webos_replace.tracks);else setTracks();
+            }, 100);
           }
         });
       }
 
-      function cleanup() {
+      function listenDestroy() {
         inited = false;
-        stopPolling();
+        // Не сбрасываем inited_parse здесь, чтобы данные сохранились
+        // но помечаем, что плеер уничтожен
+        currentPlayerId = null;
         Lampa.Player.listener.remove('destroy', listenDestroy);
         Lampa.PlayerVideo.listener.remove('tracks', listenTracks);
         Lampa.PlayerVideo.listener.remove('subs', listenSubs);
         Lampa.PlayerVideo.listener.remove('webos_subs', listenWebosSubs);
         Lampa.PlayerVideo.listener.remove('webos_tracks', listenWebosTracks);
         Lampa.PlayerVideo.listener.remove('canplay', canPlay);
-        log('Tracks', 'end gen', my_gen);
-      }
-
-      function listenDestroy() {
-        cleanup();
-        active_cleanup = null;
+        log('Tracks', 'end');
       }
 
       Lampa.Player.listener.follow('destroy', listenDestroy);
@@ -344,8 +289,6 @@
       Lampa.PlayerVideo.listener.follow('webos_subs', listenWebosSubs);
       Lampa.PlayerVideo.listener.follow('webos_tracks', listenWebosTracks);
       Lampa.PlayerVideo.listener.follow('canplay', canPlay);
-
-      active_cleanup = cleanup;
       listenStart();
     }
 
