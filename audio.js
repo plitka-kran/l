@@ -3,6 +3,8 @@
 
     var connect_host = '{localhost}';
     var list_opened = false;
+    var currentPlayerId = null;
+    var lastData = null;
 
     function reguest(params, callback) {
       if (params.ffprobe && params.path.split('.').pop() !== 'mp4') {
@@ -27,27 +29,150 @@
       }
     }
 
+    // Функция для принудительного обновления дорожек
+    function forceUpdateTracks(data) {
+      var video = Lampa.PlayerVideo.video();
+      if (!video) return;
+
+      var new_tracks = [];
+      var video_tracks = video.audioTracks || [];
+      var parse_tracks = data.streams.filter(function (a) {
+        return a.codec_type == 'audio';
+      });
+      var minus = 1;
+
+      console.log('Force update tracks:', video_tracks.length, 'parsed:', parse_tracks.length);
+
+      if (parse_tracks.length !== video_tracks.length) {
+        parse_tracks = parse_tracks.filter(function (a) {
+          return a.codec_name !== 'dts';
+        });
+      }
+
+      parse_tracks = parse_tracks.filter(function (a) {
+        return a.tags;
+      });
+
+      parse_tracks.forEach(function (track) {
+        var orig = video_tracks[track.index - minus];
+        var elem = {
+          index: track.index - minus,
+          language: track.tags.language,
+          label: track.tags.title || track.tags.handler_name,
+          ghost: orig ? false : true,
+          selected: orig ? orig.selected == true || orig.enabled == true : false
+        };
+
+        Object.defineProperty(elem, "enabled", {
+          set: function set(v) {
+            if (v) {
+              var aud = video.audioTracks || [];
+              var trk = aud[elem.index];
+
+              for (var i = 0; i < aud.length; i++) {
+                aud[i].enabled = false;
+                aud[i].selected = false;
+              }
+
+              if (trk) {
+                trk.enabled = true;
+                trk.selected = true;
+              }
+            }
+          },
+          get: function get() {}
+        });
+        new_tracks.push(elem);
+      });
+
+      if (parse_tracks.length) {
+        Lampa.PlayerPanel.setTracks(new_tracks);
+        console.log('Tracks updated successfully');
+      }
+    }
+
+    function forceUpdateSubs(data) {
+      var video = Lampa.PlayerVideo.video();
+      if (!video) return;
+
+      var new_subs = [];
+      var video_subs = video.textTracks || [];
+      var parse_subs = data.streams.filter(function (a) {
+        return a.codec_type == 'subtitle';
+      });
+      var minus = data.streams.filter(function (a) {
+        return a.codec_type == 'audio';
+      }).length + 1;
+
+      console.log('Force update subs:', video_subs.length, 'parsed:', parse_subs.length);
+
+      parse_subs = parse_subs.filter(function (a) {
+        return a.tags;
+      });
+
+      parse_subs.forEach(function (track) {
+        var orig = video_subs[track.index - minus];
+        var elem = {
+          index: track.index - minus,
+          language: track.tags.language,
+          label: track.tags.title || track.tags.handler_name,
+          ghost: video_subs[track.index - minus] ? false : true,
+          selected: orig ? orig.selected == true || orig.mode == 'showing' : false
+        };
+
+        Object.defineProperty(elem, "mode", {
+          set: function set(v) {
+            if (v) {
+              var txt = video.textTracks || [];
+              var sub = txt[elem.index];
+
+              for (var i = 0; i < txt.length; i++) {
+                txt[i].mode = 'disabled';
+                txt[i].selected = false;
+              }
+
+              if (sub) {
+                sub.mode = 'showing';
+                sub.selected = true;
+              }
+            }
+          },
+          get: function get() {}
+        });
+        new_subs.push(elem);
+      });
+
+      if (parse_subs.length) {
+        Lampa.PlayerPanel.setSubs(new_subs);
+        console.log('Subs updated successfully');
+      }
+    }
+
     function subscribeTracks(data) {
       var inited = false;
       var inited_parse = false;
       var webos_replace = {};
-      var current_index = -1; // Храним текущий номер серии
+      var playerId = data.torrent_hash + '_' + data.id;
+      var isWebOS = navigator.userAgent.toLowerCase().includes('webos') || navigator.userAgent.toLowerCase().includes('tizen');
 
       function log() {
         console.log.apply(console.log, arguments);
       }
 
+      log('Tracks', 'start for', playerId);
+
+      // Сохраняем данные для принудительного обновления
+      lastData = data;
+
       function getTracks() {
         var video = Lampa.PlayerVideo.video();
-        return video ? (video.audioTracks || []) : [];
+        return video.audioTracks || [];
       }
 
       function getSubs() {
         var video = Lampa.PlayerVideo.video();
-        return video ? (video.textTracks || []) : [];
+        return video.textTracks || [];
       }
-
-      log('Tracks', 'start');
 
       function setTracks() {
         if (inited_parse) {
@@ -57,14 +182,21 @@
             return a.codec_type == 'audio';
           });
           var minus = 1;
+          
           log('Tracks', 'set tracks:', video_tracks.length);
-          if (parse_tracks.length !== video_tracks.length) parse_tracks = parse_tracks.filter(function (a) {
-            return a.codec_name !== 'dts';
-          });
+          
+          if (parse_tracks.length !== video_tracks.length) {
+            parse_tracks = parse_tracks.filter(function (a) {
+              return a.codec_name !== 'dts';
+            });
+          }
+          
           parse_tracks = parse_tracks.filter(function (a) {
             return a.tags;
           });
-          log('Tracks', 'filtred tracks:', parse_tracks.length);
+          
+          log('Tracks', 'filtered tracks:', parse_tracks.length);
+          
           parse_tracks.forEach(function (track) {
             var orig = video_tracks[track.index - minus];
             var elem = {
@@ -74,6 +206,7 @@
               ghost: orig ? false : true,
               selected: orig ? orig.selected == true || orig.enabled == true : false
             };
+            
             Object.defineProperty(elem, "enabled", {
               set: function set(v) {
                 if (v) {
@@ -95,7 +228,10 @@
             });
             new_tracks.push(elem);
           });
-          if (parse_tracks.length) Lampa.PlayerPanel.setTracks(new_tracks);
+          
+          if (parse_tracks.length) {
+            Lampa.PlayerPanel.setTracks(new_tracks);
+          }
         }
       }
 
@@ -109,11 +245,15 @@
           var minus = inited_parse.streams.filter(function (a) {
             return a.codec_type == 'audio';
           }).length + 1;
+          
           log('Tracks', 'set subs:', video_subs.length);
+          
           parse_subs = parse_subs.filter(function (a) {
             return a.tags;
           });
-          log('Tracks', 'filtred subs:', parse_subs.length);
+          
+          log('Tracks', 'filtered subs:', parse_subs.length);
+          
           parse_subs.forEach(function (track) {
             var orig = video_subs[track.index - minus];
             var elem = {
@@ -123,6 +263,7 @@
               ghost: video_subs[track.index - minus] ? false : true,
               selected: orig ? orig.selected == true || orig.mode == 'showing' : false
             };
+            
             Object.defineProperty(elem, "mode", {
               set: function set(v) {
                 if (v) {
@@ -144,23 +285,57 @@
             });
             new_subs.push(elem);
           });
-          if (parse_subs.length) Lampa.PlayerPanel.setSubs(new_subs);
+          
+          if (parse_subs.length) {
+            Lampa.PlayerPanel.setSubs(new_subs);
+          }
+        }
+      }
+
+      // Слушаем изменения времени - при переключении серий время сбрасывается
+      function listenTimeUpdate() {
+        var video = Lampa.PlayerVideo.video();
+        if (video && video.currentTime < 0.5) {
+          // Если время близко к 0 - возможно новая серия
+          log('Tracks', 'time near 0, checking for series change');
+          if (inited_parse) {
+            setTimeout(function() {
+              forceUpdateTracks(inited_parse);
+              forceUpdateSubs(inited_parse);
+            }, 200);
+          }
         }
       }
 
       function listenTracks() {
+        log('Tracks', 'tracks video event');
         setTracks();
         Lampa.PlayerVideo.listener.remove('tracks', listenTracks);
       }
 
       function listenSubs() {
+        log('Tracks', 'subs video event');
         setSubs();
         Lampa.PlayerVideo.listener.remove('subs', listenSubs);
       }
 
       function canPlay() {
-        if (webos_replace.tracks) setWebosTracks(webos_replace.tracks);else setTracks();
-        if (webos_replace.subs) setWebosSubs(webos_replace.subs);else setSubs();
+        log('Tracks', 'canplay video event for', playerId);
+        
+        setTimeout(function() {
+          if (webos_replace.tracks) {
+            setWebosTracks(webos_replace.tracks);
+          } else {
+            setTracks();
+          }
+          
+          if (webos_replace.subs) {
+            setWebosSubs(webos_replace.subs);
+          } else {
+            setSubs();
+          }
+        }, 150);
+        
         Lampa.PlayerVideo.listener.remove('canplay', canPlay);
       }
 
@@ -169,19 +344,25 @@
           var parse_tracks = inited_parse.streams.filter(function (a) {
             return a.codec_type == 'audio';
           });
+          
+          log('Tracks', 'webos set tracks:', video_tracks.length);
+
           if (parse_tracks.length !== video_tracks.length) {
             parse_tracks = parse_tracks.filter(function (a) {
               return a.codec_name !== 'truehd';
             });
+
             if (parse_tracks.length !== video_tracks.length) {
               parse_tracks = parse_tracks.filter(function (a) {
                 return a.codec_name !== 'dts';
               });
             }
           }
+
           parse_tracks = parse_tracks.filter(function (a) {
             return a.tags;
           });
+          
           parse_tracks.forEach(function (track, i) {
             if (video_tracks[i]) {
               video_tracks[i].language = track.tags.language;
@@ -196,14 +377,22 @@
           var parse_subs = inited_parse.streams.filter(function (a) {
             return a.codec_type == 'subtitle';
           });
-          if (parse_subs.length !== video_subs.length - 1) parse_subs = parse_subs.filter(function (a) {
-            return a.codec_name !== 'hdmv_pgs_subtitle';
-          });
+          
+          log('Tracks', 'webos set subs:', video_subs.length);
+          
+          if (parse_subs.length !== video_subs.length - 1) {
+            parse_subs = parse_subs.filter(function (a) {
+              return a.codec_name !== 'hdmv_pgs_subtitle';
+            });
+          }
+          
           parse_subs = parse_subs.filter(function (a) {
             return a.tags;
           });
+          
           parse_subs.forEach(function (track, a) {
             var i = a + 1;
+
             if (video_subs[i]) {
               video_subs[i].language = track.tags.language;
               video_subs[i].label = track.tags.title || track.tags.handler_name;
@@ -213,89 +402,115 @@
       }
 
       function listenWebosSubs(_data) {
+        log('Tracks', 'webos subs event');
         webos_replace.subs = _data.subs;
         if (inited_parse) setWebosSubs(_data.subs);
       }
 
       function listenWebosTracks(_data) {
+        log('Tracks', 'webos tracks event');
         webos_replace.tracks = _data.tracks;
         if (inited_parse) setWebosTracks(_data.tracks);
       }
 
-      function listenStart(activeData) {
-        var targetData = activeData || data;
+      function listenStart() {
         inited = true;
-        inited_parse = false; 
         
-        reguest(targetData, function (result) {
+        // Проверяем, изменился ли плеер
+        if (currentPlayerId && currentPlayerId !== playerId) {
+          log('Tracks', 'player changed from', currentPlayerId, 'to', playerId);
+          // Принудительно обновляем при смене плеера
+          setTimeout(function() {
+            if (inited_parse) {
+              forceUpdateTracks(inited_parse);
+              forceUpdateSubs(inited_parse);
+            }
+          }, 300);
+        }
+        currentPlayerId = playerId;
+
+        reguest(data, function (result) {
+          log('Tracks', 'parsed for', playerId);
           inited_parse = result;
+
           if (inited) {
-            if (webos_replace.subs) setWebosSubs(webos_replace.subs);else setSubs();
-            if (webos_replace.tracks) setWebosTracks(webos_replace.tracks);else setTracks();
+            setTimeout(function() {
+              if (webos_replace.subs) setWebosSubs(webos_replace.subs);else setSubs();
+              if (webos_replace.tracks) setWebosTracks(webos_replace.tracks);else setTracks();
+            }, 150);
           }
         });
       }
 
-      // ХЕНДЛЕР РУЧНОГО И АВТОМАТИЧЕСКОГО ПЕРЕКЛЮЧЕНИЯ СЕРИЙ
-      function listenPlaylistIndex(e) {
-        log('Tracks', 'Playlist index changed to: ' + e.index);
-        
-        // Предотвращаем дублирование запросов для одной и той же серии
-        if (current_index === e.index) return;
-        current_index = e.index;
-
-        webos_replace = {};
-        
-        // Получаем свежие данные новой серии напрямую из плейлиста плеера
-        var playlist = Lampa.Player.playlist ? Lampa.Player.playlist() : null;
-        var current_item = playlist ? playlist[e.index] : null;
-
-        if (current_item) {
-          var freshData = {
-            torrent_hash: data.torrent_hash, // Хэш раздачи не меняется
-            id: current_item.id || e.index,  // ID новой серии
-            path: current_item.path || ''
-          };
-          
-          // Даем плееру 300мс на обновление аудиодорожек в DOM и делаем новый запрос
-          setTimeout(function() {
-            listenStart(freshData);
-            // Перевешиваем слушатели на дорожки для нового видеофайла
-            Lampa.PlayerVideo.listener.remove('tracks', listenTracks);
-            Lampa.PlayerVideo.listener.remove('subs', listenSubs);
-            Lampa.PlayerVideo.listener.follow('tracks', listenTracks);
-            Lampa.PlayerVideo.listener.follow('subs', listenSubs);
-          }, 300);
-        }
-      }
-
       function listenDestroy() {
+        log('Tracks', 'destroy for', playerId);
         inited = false;
+        currentPlayerId = null;
         Lampa.Player.listener.remove('destroy', listenDestroy);
-        Lampa.Player.listener.remove('playlist_index', listenPlaylistIndex);
         Lampa.PlayerVideo.listener.remove('tracks', listenTracks);
         Lampa.PlayerVideo.listener.remove('subs', listenSubs);
         Lampa.PlayerVideo.listener.remove('webos_subs', listenWebosSubs);
         Lampa.PlayerVideo.listener.remove('webos_tracks', listenWebosTracks);
         Lampa.PlayerVideo.listener.remove('canplay', canPlay);
-        log('Tracks', 'end');
-      }
-
-      // Запоминаем стартовый индекс серии при открытии плеера
-      if (Lampa.Player.index) {
-        current_index = Lampa.Player.index();
+        Lampa.PlayerVideo.listener.remove('timeupdate', listenTimeUpdate);
+        log('Tracks', 'end for', playerId);
       }
 
       Lampa.Player.listener.follow('destroy', listenDestroy);
-      Lampa.Player.listener.follow('playlist_index', listenPlaylistIndex);
       Lampa.PlayerVideo.listener.follow('tracks', listenTracks);
       Lampa.PlayerVideo.listener.follow('subs', listenSubs);
       Lampa.PlayerVideo.listener.follow('webos_subs', listenWebosSubs);
       Lampa.PlayerVideo.listener.follow('webos_tracks', listenWebosTracks);
       Lampa.PlayerVideo.listener.follow('canplay', canPlay);
+      Lampa.PlayerVideo.listener.follow('timeupdate', listenTimeUpdate);
       
       listenStart();
     }
+
+    // Добавляем глобальную функцию для принудительного обновления
+    window.forceUpdateTracks = function() {
+      if (lastData) {
+        reguest(lastData, function(result) {
+          forceUpdateTracks(result);
+          forceUpdateSubs(result);
+        });
+      }
+    };
+
+    // Слушаем событие смены серии в интерфейсе
+    Lampa.Listener.follow('series_change', function(data) {
+      console.log('Series change detected', data);
+      if (window.forceUpdateTracks) {
+        setTimeout(function() {
+          window.forceUpdateTracks();
+        }, 500);
+      }
+    });
+
+    // Перехватываем клик по сериям в списке
+    var originalSeriesClick = null;
+    Lampa.Listener.follow('torrent_file', function(data) {
+      if (data.type == 'render' && data.items && data.items.length > 0) {
+        // Добавляем обработчик на клик по элементам серий
+        setTimeout(function() {
+          $('.series-list .series-item, .torrent-item').off('click.series').on('click.series', function() {
+            console.log('Series item clicked');
+            setTimeout(function() {
+              if (window.forceUpdateTracks) {
+                window.forceUpdateTracks();
+              }
+            }, 600);
+          });
+        }, 100);
+      }
+
+      if (data.type == 'list_open') list_opened = true;
+      if (data.type == 'list_close') list_opened = false;
+
+      if (data.type == 'render' && data.items.length == 1 && list_opened) {
+        parseMetainfo(data);
+      }
+    });
 
     function parseMetainfo(data) {
       var loading = Lampa.Template.get('tracks_loading');
@@ -336,6 +551,7 @@
           var codec_subs = result.streams.filter(function (a) {
             return a.codec_type == 'subtitle';
           });
+          
           codec_video.slice(0, 1).forEach(function (v) {
             var line = {};
             if (v.width && v.height) line.video = v.width + 'х' + v.height;
@@ -358,6 +574,7 @@
             line.rate = bit == '--' ? bit : Math.round(bit / 1000000) + ' ' + Lampa.Lang.translate('speed_mb');
             if (Lampa.Arrays.getKeys(line).length) video.push(line);
           });
+          
           codec_audio.forEach(function (a, i) {
             var line = {
               num: i + 1
@@ -374,6 +591,7 @@
             line.rate = bit == '--' ? bit : Math.round(bit / 1000) + ' ' + Lampa.Lang.translate('speed_kb');
             if (Lampa.Arrays.getKeys(line).length) audio.push(line);
           });
+          
           codec_subs.forEach(function (a, i) {
             var line = {
               num: i + 1
@@ -387,6 +605,7 @@
             if (a.codec_name) line.codec = a.codec_name.toUpperCase().replace('SUBRIP', 'SRT').replace('HDMV_PGS_SUBTITLE', 'HDMV PGS').replace('MOV_TEXT', 'MOV TEXT');
             if (Lampa.Arrays.getKeys(line).length) subs.push(line);
           });
+          
           var html = Lampa.Template.get('tracks_metainfo', {});
           append('video', video);
           append('audio', audio);
@@ -403,16 +622,11 @@
     }
 
     Lampa.Player.listener.follow('start', function (data) {
-      if (data.torrent_hash) subscribeTracks(data);
-    });
-    Lampa.Listener.follow('torrent_file', function (data) {
-      if (data.type == 'list_open') list_opened = true;
-      if (data.type == 'list_close') list_opened = false;
-
-      if (data.type == 'render' && data.items.length == 1 && list_opened) {
-        parseMetainfo(data);
+      if (data.torrent_hash) {
+        subscribeTracks(data);
       }
     });
+    
     Lampa.Template.add('tracks_loading', "\n    <div class=\"tracks-loading\">\n        <span>#{loading}...</span>\n    </div>\n");
     Lampa.Template.add('tracks_metainfo', "\n    <div class=\"tracks-metainfo\"></div>\n");
     Lampa.Template.add('tracks_metainfo_block', "\n    <div class=\"tracks-metainfo__line\">\n        <div class=\"tracks-metainfo__label\"></div>\n        <div class=\"tracks-metainfo__info\"></div>\n    </div>\n");
