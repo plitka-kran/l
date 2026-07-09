@@ -8,8 +8,6 @@
             e.object.activity.render().find('.view--trailer').remove();
         }
     }); 
-
-    window.lampa_settings.torrents_use = true;
     
     function startsWith(str, searchString) {
       return str.lastIndexOf(searchString, 0) === 0;
