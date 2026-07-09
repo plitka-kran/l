@@ -1,6 +1,10 @@
 (function () {
     'use strict';
 
+	// 1. ВКЛЮЧАЕМ ТОРРЕНТЫ (Строго в самом начале!)
+    window.lampa_settings = window.lampa_settings || {};
+    window.lampa_settings.torrents_use = true;
+	
     // Базовый URL, где лежат ваши скрипты (чтобы не писать его каждый раз)
     var BASE_URL = 'https://plitka-kran.github.io/l/';
 
@@ -8,7 +12,7 @@
     var config = {
         'pubtorr.js': '1.0',
         'ss.js': '1.0',
-		'online.js': '1.0',
+        'online.js': '1.0',
         'audio.js': '1.0.1'
     };
 
