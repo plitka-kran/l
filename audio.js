@@ -9,6 +9,11 @@
     // переключении серии не плодить дублирующиеся подписки/сокеты.
     var active_teardown = null;
 
+    // NEW: ключи для запоминания выбранной пользователем озвучки/субтитров
+    // (по языку дорожки), чтобы не выбирать их заново на каждой серии.
+    var PREF_AUDIO_KEY = 'tracks_plugin_preferred_audio_lang';
+    var PREF_SUBS_KEY = 'tracks_plugin_preferred_subs_lang';
+
     function reguest(params, callback) {
       if (params.ffprobe && params.path.split('.').pop() !== 'mp4') {
         setTimeout(function () {
@@ -113,6 +118,11 @@
           parse_tracks = parse_tracks.filter(function (a) {
             return a.tags;
           });
+
+          // NEW: ранее сохранённый предпочитаемый язык озвучки
+          var preferred_audio_lang = Lampa.Storage.get(PREF_AUDIO_KEY, '');
+          var preferred_elem = null;
+
           parse_tracks.forEach(function (track) {
             var orig = video_tracks[track.index - minus];
             var elem = {
@@ -137,12 +147,29 @@
                     trk.enabled = true;
                     trk.selected = true;
                   }
+
+                  // NEW: запоминаем язык выбранной пользователем озвучки
+                  if (elem.language) Lampa.Storage.set(PREF_AUDIO_KEY, elem.language);
                 }
               },
               get: function get() {}
             });
             new_tracks.push(elem);
+
+            if (preferred_audio_lang && elem.language === preferred_audio_lang) {
+              preferred_elem = elem;
+            }
           });
+
+          // NEW: если нашлась дорожка с ранее выбранным языком и она ещё
+          // не выбрана по умолчанию — включаем её автоматически
+          if (preferred_elem && !preferred_elem.selected) {
+            new_tracks.forEach(function (e) {
+              e.selected = e === preferred_elem;
+            });
+            preferred_elem.enabled = true;
+          }
+
           if (parse_tracks.length) Lampa.PlayerPanel.setTracks(new_tracks);
         }
       }
@@ -160,6 +187,11 @@
           parse_subs = parse_subs.filter(function (a) {
             return a.tags;
           });
+
+          // NEW: ранее сохранённый предпочитаемый язык субтитров
+          var preferred_subs_lang = Lampa.Storage.get(PREF_SUBS_KEY, '');
+          var preferred_elem = null;
+
           parse_subs.forEach(function (track) {
             var orig = video_subs[track.index - minus];
             var elem = {
@@ -184,12 +216,29 @@
                     sub.mode = 'showing';
                     sub.selected = true;
                   }
+
+                  // NEW: запоминаем язык выбранных пользователем субтитров
+                  if (elem.language) Lampa.Storage.set(PREF_SUBS_KEY, elem.language);
                 }
               },
               get: function get() {}
             });
             new_subs.push(elem);
+
+            if (preferred_subs_lang && elem.language === preferred_subs_lang) {
+              preferred_elem = elem;
+            }
           });
+
+          // NEW: если нашлись субтитры с ранее выбранным языком и они ещё
+          // не выбраны по умолчанию — включаем их автоматически
+          if (preferred_elem && !preferred_elem.selected) {
+            new_subs.forEach(function (e) {
+              e.selected = e === preferred_elem;
+            });
+            preferred_elem.mode = 'showing';
+          }
+
           if (parse_subs.length) Lampa.PlayerPanel.setSubs(new_subs);
         }
       }
