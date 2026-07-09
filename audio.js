@@ -9,11 +9,6 @@
     // переключении серии не плодить дублирующиеся подписки/сокеты.
     var active_teardown = null;
 
-    // NEW: ключи для запоминания выбранной пользователем озвучки/субтитров
-    // (по языку дорожки), чтобы не выбирать их заново на каждой серии.
-    var PREF_AUDIO_KEY = 'tracks_plugin_preferred_audio_lang';
-    var PREF_SUBS_KEY = 'tracks_plugin_preferred_subs_lang';
-
     function reguest(params, callback) {
       if (params.ffprobe && params.path.split('.').pop() !== 'mp4') {
         setTimeout(function () {
@@ -119,24 +114,43 @@
             return a.tags;
           });
 
-          // NEW: ранее сохранённый предпочитаемый язык озвучки
-          var preferred_audio_lang = Lampa.Storage.get(PREF_AUDIO_KEY, '');
-          var preferred_elem = null;
+          // Читаем ранее сохраненное имя дорожки или язык
+          var savedTrackLabel = localStorage.getItem('lampa_last_audio_label');
+          var savedTrackLang = localStorage.getItem('lampa_last_audio_lang');
+          var hasSavedSelection = false;
 
           parse_tracks.forEach(function (track) {
             var orig = video_tracks[track.index - minus];
+            var label = track.tags.title || track.tags.handler_name || '';
+            var lang = track.tags.language || '';
+
+            // Проверяем, совпадает ли текущая дорожка с сохраненной
+            var isSavedOne = savedTrackLabel && label === savedTrackLabel;
+            if (!isSavedOne && !savedTrackLabel && savedTrackLang) {
+              isSavedOne = lang === savedTrackLang; // фолбэк на язык, если точного названия студии нет
+            }
+
             var elem = {
               index: track.index - minus,
-              language: track.tags.language,
-              label: track.tags.title || track.tags.handler_name,
+              language: lang,
+              label: label,
               ghost: orig ? false : true,
-              selected: orig ? orig.selected == true || orig.enabled == true : false
+              selected: isSavedOne ? true : (orig ? orig.selected == true || orig.enabled == true : false)
             };
+
+            if (isSavedOne) {
+              hasSavedSelection = true;
+            }
+
             Object.defineProperty(elem, "enabled", {
               set: function set(v) {
                 if (v) {
                   var aud = getTracks();
                   var trk = aud[elem.index];
+
+                  // Запоминаем выбор пользователя
+                  if (elem.label) localStorage.setItem('lampa_last_audio_label', elem.label);
+                  if (elem.language) localStorage.setItem('lampa_last_audio_lang', elem.language);
 
                   for (var i = 0; i < aud.length; i++) {
                     aud[i].enabled = false;
@@ -147,27 +161,20 @@
                     trk.enabled = true;
                     trk.selected = true;
                   }
-
-                  // NEW: запоминаем язык выбранной пользователем озвучки
-                  if (elem.language) Lampa.Storage.set(PREF_AUDIO_KEY, elem.language);
                 }
               },
               get: function get() {}
             });
             new_tracks.push(elem);
-
-            if (preferred_audio_lang && elem.language === preferred_audio_lang) {
-              preferred_elem = elem;
-            }
           });
 
-          // NEW: если нашлась дорожка с ранее выбранным языком и она ещё
-          // не выбрана по умолчанию — включаем её автоматически
-          if (preferred_elem && !preferred_elem.selected) {
-            new_tracks.forEach(function (e) {
-              e.selected = e === preferred_elem;
+          // Если мы нашли совпадение с сохраненной дорожкой, принудительно переключаем флаг активности в массиве
+          if (hasSavedSelection) {
+            new_tracks.forEach(function(t) {
+              var isSavedOne = savedTrackLabel && t.label === savedTrackLabel;
+              if (!isSavedOne && !savedTrackLabel && savedTrackLang) isSavedOne = t.language === savedTrackLang;
+              t.selected = isSavedOne;
             });
-            preferred_elem.enabled = true;
           }
 
           if (parse_tracks.length) Lampa.PlayerPanel.setTracks(new_tracks);
@@ -187,11 +194,6 @@
           parse_subs = parse_subs.filter(function (a) {
             return a.tags;
           });
-
-          // NEW: ранее сохранённый предпочитаемый язык субтитров
-          var preferred_subs_lang = Lampa.Storage.get(PREF_SUBS_KEY, '');
-          var preferred_elem = null;
-
           parse_subs.forEach(function (track) {
             var orig = video_subs[track.index - minus];
             var elem = {
@@ -216,29 +218,12 @@
                     sub.mode = 'showing';
                     sub.selected = true;
                   }
-
-                  // NEW: запоминаем язык выбранных пользователем субтитров
-                  if (elem.language) Lampa.Storage.set(PREF_SUBS_KEY, elem.language);
                 }
               },
               get: function get() {}
             });
             new_subs.push(elem);
-
-            if (preferred_subs_lang && elem.language === preferred_subs_lang) {
-              preferred_elem = elem;
-            }
           });
-
-          // NEW: если нашлись субтитры с ранее выбранным языком и они ещё
-          // не выбраны по умолчанию — включаем их автоматически
-          if (preferred_elem && !preferred_elem.selected) {
-            new_subs.forEach(function (e) {
-              e.selected = e === preferred_elem;
-            });
-            preferred_elem.mode = 'showing';
-          }
-
           if (parse_subs.length) Lampa.PlayerPanel.setSubs(new_subs);
         }
       }
