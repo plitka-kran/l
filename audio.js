@@ -114,11 +114,10 @@
             return a.tags;
           });
 
-          // Читаем ранее сохраненное имя дорожки или язык через надежный Lampa.Storage
-          var savedTrackLabel = Lampa.Storage.get('lampa_last_audio_label', '');
-          var savedTrackLang = Lampa.Storage.get('lampa_last_audio_lang', '');
+          // Читаем ранее сохраненное имя дорожки или язык
+          var savedTrackLabel = localStorage.getItem('lampa_last_audio_label');
+          var savedTrackLang = localStorage.getItem('lampa_last_audio_lang');
           var hasSavedSelection = false;
-          var matchedTrackIndex = -1;
 
           parse_tracks.forEach(function (track) {
             var orig = video_tracks[track.index - minus];
@@ -141,7 +140,6 @@
 
             if (isSavedOne) {
               hasSavedSelection = true;
-              matchedTrackIndex = elem.index;
             }
 
             Object.defineProperty(elem, "enabled", {
@@ -150,9 +148,9 @@
                   var aud = getTracks();
                   var trk = aud[elem.index];
 
-                  // Запоминаем выбор пользователя в Lampa.Storage
-                  if (elem.label) Lampa.Storage.set('lampa_last_audio_label', elem.label);
-                  if (elem.language) Lampa.Storage.set('lampa_last_audio_lang', elem.language);
+                  // Запоминаем выбор пользователя
+                  if (elem.label) localStorage.setItem('lampa_last_audio_label', elem.label);
+                  if (elem.language) localStorage.setItem('lampa_last_audio_lang', elem.language);
 
                   for (var i = 0; i < aud.length; i++) {
                     aud[i].enabled = false;
@@ -176,11 +174,6 @@
               var isSavedOne = savedTrackLabel && t.label === savedTrackLabel;
               if (!isSavedOne && !savedTrackLabel && savedTrackLang) isSavedOne = t.language === savedTrackLang;
               t.selected = isSavedOne;
-              
-              // КРИТИЧЕСКИЙ БАГ-ФИКС: вызываем сеттер .enabled для реального переключения аудиопотока в плеере
-              if (isSavedOne && t.index === matchedTrackIndex) {
-                t.enabled = true;
-              }
             });
           }
 
