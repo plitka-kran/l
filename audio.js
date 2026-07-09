@@ -114,10 +114,11 @@
             return a.tags;
           });
 
-          // Читаем ранее сохраненное имя дорожки или язык
+          // Читаем ранее сохраненное имя дорожки или язык из стабильного localStorage
           var savedTrackLabel = localStorage.getItem('lampa_last_audio_label');
           var savedTrackLang = localStorage.getItem('lampa_last_audio_lang');
           var hasSavedSelection = false;
+          var matchedTrackIndex = -1; // Переменная для фиксации индекса нужного трека
 
           parse_tracks.forEach(function (track) {
             var orig = video_tracks[track.index - minus];
@@ -140,6 +141,7 @@
 
             if (isSavedOne) {
               hasSavedSelection = true;
+              matchedTrackIndex = elem.index; // Запоминаем индекс трека, который совпал
             }
 
             Object.defineProperty(elem, "enabled", {
@@ -174,6 +176,11 @@
               var isSavedOne = savedTrackLabel && t.label === savedTrackLabel;
               if (!isSavedOne && !savedTrackLabel && savedTrackLang) isSavedOne = t.language === savedTrackLang;
               t.selected = isSavedOne;
+              
+              // ФИКС: Вызываем сеттер .enabled для реального переключения аудиопотока в самом плеере
+              if (isSavedOne && t.index === matchedTrackIndex) {
+                t.enabled = true;
+              }
             });
           }
 
@@ -455,13 +462,7 @@
     }
 
     Lampa.Player.listener.follow('start', function (data) {
-      // FIX: раньше это была цепочка if / else if / else if. Если у data.url
-      // не удавалось вытащить хэш регуляркой (например, при автопереходе
-      // на следующую серию ссылка формируется иначе), код НЕ проваливался
-      // к current_torrent_hash — data.torrent_hash так и оставался пустым,
-      // subscribeTracks вообще не вызывался, и дорожки не подтягивались.
-      // Теперь фолбэк на current_torrent_hash срабатывает во всех случаях,
-      // когда явного torrent_hash или извлекаемого из url хэша нет.
+      // FIX: цепочка фолбэков хэша теперь работает стабильно во всех сценариях автоперехода
       if (data.torrent_hash) {
         current_torrent_hash = data.torrent_hash;
       } else {
@@ -475,11 +476,7 @@
         }
       }
 
-      // FIX: если предыдущая сессия (прошлая серия) ещё не была закрыта
-      // событием destroy к моменту старта новой (гонка при быстром
-      // переключении/клике на "следующая серия"), принудительно чистим
-      // её слушатели, чтобы не плодить дублирующиеся подписки и запросы,
-      // из-за которых переключение серии могло тормозить/срабатывать не сразу.
+      // FIX: принудительная очистка гонок при быстром клике по сериям
       if (active_teardown) {
         var prev_teardown = active_teardown;
         active_teardown = null;
