@@ -5,8 +5,6 @@
     var list_opened = false;
     var current_torrent_hash = '';
     var tracks_cache = {};
-    // FIX: единая точка "текущая активная сессия" — чтобы при быстром
-    // переключении серии не плодить дублирующиеся подписки/сокеты.
     var active_teardown = null;
 
     function reguest(params, callback) {
@@ -29,9 +27,6 @@
       if (connect_host == '{localhost}') connect_host = '185.204.0.61';
       var socket = new WebSocket('ws://' + connect_host + ':8080/?' + params.torrent_hash + '&index=' + params.id);
 
-      // FIX: раньше не было ни таймаута, ни обработки ошибок сокета —
-      // если сервер не ответил (или порвалось соединение), callback
-      // не вызывался никогда и загрузка "висела" бесконечно.
       var finished = false;
       var timeout_id = setTimeout(function () {
         if (finished) return;
@@ -114,33 +109,22 @@
             return a.tags;
           });
 
-          // Читаем ранее сохраненное имя дорожки или язык
-          var savedTrackLabel = localStorage.getItem('lampa_last_audio_label');
-          var savedTrackLang = localStorage.getItem('lampa_last_audio_lang');
-          var hasSavedSelection = false;
+          var savedTrackLang = Lampa.Storage.get('lampa_last_audio_lang', '');
+          var savedTrackLabel = Lampa.Storage.get('lampa_last_audio_label', '');
+          var matchedTrack = null;
 
           parse_tracks.forEach(function (track) {
             var orig = video_tracks[track.index - minus];
             var label = track.tags.title || track.tags.handler_name || '';
             var lang = track.tags.language || '';
 
-            // Проверяем, совпадает ли текущая дорожка с сохраненной
-            var isSavedOne = savedTrackLabel && label === savedTrackLabel;
-            if (!isSavedOne && !savedTrackLabel && savedTrackLang) {
-              isSavedOne = lang === savedTrackLang; // фолбэк на язык, если точного названия студии нет
-            }
-
             var elem = {
               index: track.index - minus,
               language: lang,
               label: label,
               ghost: orig ? false : true,
-              selected: isSavedOne ? true : (orig ? orig.selected == true || orig.enabled == true : false)
+              selected: orig ? orig.selected == true || orig.enabled == true : false
             };
-
-            if (isSavedOne) {
-              hasSavedSelection = true;
-            }
 
             Object.defineProperty(elem, "enabled", {
               set: function set(v) {
@@ -148,9 +132,8 @@
                   var aud = getTracks();
                   var trk = aud[elem.index];
 
-                  // Запоминаем выбор пользователя
-                  if (elem.label) localStorage.setItem('lampa_last_audio_label', elem.label);
-                  if (elem.language) localStorage.setItem('lampa_last_audio_lang', elem.language);
+                  if (elem.language) Lampa.Storage.set('lampa_last_audio_lang', elem.language);
+                  if (elem.label) Lampa.Storage.set('lampa_last_audio_label', elem.label);
 
                   for (var i = 0; i < aud.length; i++) {
                     aud[i].enabled = false;
@@ -166,15 +149,22 @@
               get: function get() {}
             });
             new_tracks.push(elem);
+
+            if (savedTrackLang && lang === savedTrackLang) {
+              if (!matchedTrack) {
+                matchedTrack = elem;
+              }
+              if (savedTrackLabel && label === savedTrackLabel) {
+                matchedTrack = elem;
+              }
+            }
           });
 
-          // Если мы нашли совпадение с сохраненной дорожкой, принудительно переключаем флаг активности в массиве
-          if (hasSavedSelection) {
+          if (matchedTrack) {
             new_tracks.forEach(function(t) {
-              var isSavedOne = savedTrackLabel && t.label === savedTrackLabel;
-              if (!isSavedOne && !savedTrackLabel && savedTrackLang) isSavedOne = t.language === savedTrackLang;
-              t.selected = isSavedOne;
+              t.selected = (t.index === matchedTrack.index);
             });
+            matchedTrack.enabled = true;
           }
 
           if (parse_tracks.length) Lampa.PlayerPanel.setTracks(new_tracks);
@@ -326,8 +316,6 @@
         Lampa.PlayerVideo.listener.remove('webos_subs', listenWebosSubs);
         Lampa.PlayerVideo.listener.remove('webos_tracks', listenWebosTracks);
         Lampa.PlayerVideo.listener.remove('canplay', canPlay);
-        // FIX: сбрасываем "активную сессию", только если она всё ещё наша —
-        // чтобы не затереть teardown уже новой (следующей) сессии.
         if (active_teardown === listenDestroy) active_teardown = null;
       }
 
@@ -338,7 +326,6 @@
       Lampa.PlayerVideo.listener.follow('webos_tracks', listenWebosTracks);
       Lampa.PlayerVideo.listener.follow('canplay', canPlay);
 
-      // FIX: регистрируем teardown этой сессии как активный.
       active_teardown = listenDestroy;
 
       listenStart();
@@ -348,8 +335,6 @@
       var loading = Lampa.Template.get('tracks_loading');
       data.item.after(loading);
       reguest(data.element, function (result) {
-        // FIX: если список успели закрыть, пока ждали ответ —
-        // раньше индикатор загрузки так и оставался висеть в DOM навсегда.
         if (!list_opened) {
           loading.remove();
           return;
@@ -455,13 +440,6 @@
     }
 
     Lampa.Player.listener.follow('start', function (data) {
-      // FIX: раньше это была цепочка if / else if / else if. Если у data.url
-      // не удавалось вытащить хэш регуляркой (например, при автопереходе
-      // на следующую серию ссылка формируется иначе), код НЕ проваливался
-      // к current_torrent_hash — data.torrent_hash так и оставался пустым,
-      // subscribeTracks вообще не вызывался, и дорожки не подтягивались.
-      // Теперь фолбэк на current_torrent_hash срабатывает во всех случаях,
-      // когда явного torrent_hash или извлекаемого из url хэша нет.
       if (data.torrent_hash) {
         current_torrent_hash = data.torrent_hash;
       } else {
@@ -474,12 +452,7 @@
           data.torrent_hash = current_torrent_hash;
         }
       }
-
-      // FIX: если предыдущая сессия (прошлая серия) ещё не была закрыта
-      // событием destroy к моменту старта новой (гонка при быстром
-      // переключении/клике на "следующая серия"), принудительно чистим
-      // её слушатели, чтобы не плодить дублирующиеся подписки и запросы,
-      // из-за которых переключение серии могло тормозить/срабатывать не сразу.
+        
       if (active_teardown) {
         var prev_teardown = active_teardown;
         active_teardown = null;
