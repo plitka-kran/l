@@ -114,10 +114,13 @@
             return a.tags;
           });
 
-          // Читаем параметры сохраненного трека из localStorage
-          var savedTrackLabel = localStorage.getItem('lampa_last_audio_label');
-          var savedTrackLang = localStorage.getItem('lampa_last_audio_lang');
-          var savedTrackLocalIndex = parseInt(localStorage.getItem('lampa_last_audio_local_index') || '-1', 10);
+          // Хэш текущего торрента для изоляции настроек
+          var hashKey = current_torrent_hash || '';
+
+          // Читаем параметры сохраненного трека ИМЕННО для этого торрента
+          var savedTrackLabel = hashKey ? localStorage.getItem('lampa_audio_label_' + hashKey) : null;
+          var savedTrackLang = hashKey ? localStorage.getItem('lampa_audio_lang_' + hashKey) : null;
+          var savedTrackLocalIndex = parseInt(hashKey ? (localStorage.getItem('lampa_audio_lindex_' + hashKey) || '-1') : '-1', 10);
           
           var hasSavedSelection = false;
           var matchedTrackIndex = -1;
@@ -131,21 +134,20 @@
             var lang = (track.tags.language || '').toLowerCase();
 
             if (!langCounters[lang]) langCounters[lang] = 0;
-            var currentLocalIndex = langCounters[lang]++; // Внутренний индекс текущего трека в своем языке
+            var currentLocalIndex = langCounters[lang]++; 
 
             var isSavedOne = false;
 
-            // 1. Ищем идеальное совпадение, если есть имя студии (например, LostFilm)
-            if (savedTrackLabel && label === savedTrackLabel && lang === savedTrackLang) {
-              isSavedOne = true;
-            } 
-            // 2. Если имени студии не было, ищем по языку + локальному индексу (например, вторая русская дорожка)
-            else if (!savedTrackLabel && lang === savedTrackLang && currentLocalIndex === savedTrackLocalIndex) {
-              isSavedOne = true;
-            }
-            // 3. Фолбэк для обратной совместимости, если индекс еще не записан
-            else if (!savedTrackLabel && !hasSavedSelection && lang === savedTrackLang && savedTrackLocalIndex === -1) {
-              isSavedOne = true;
+            // Если для этого торрента есть история, сопоставляем треки
+            if (hashKey && (savedTrackLabel || savedTrackLang)) {
+              // 1. Ищем совпадение по имени студии
+              if (savedTrackLabel && label === savedTrackLabel && lang === savedTrackLang) {
+                isSavedOne = true;
+              } 
+              // 2. Ищем по языку + локальному индексу внутри языка
+              else if (!savedTrackLabel && lang === savedTrackLang && currentLocalIndex === savedTrackLocalIndex) {
+                isSavedOne = true;
+              }
             }
 
             var elem = {
@@ -168,15 +170,16 @@
                   var aud = getTracks();
                   var trk = aud[elem.index];
 
-                  // Сохраняем расширенные метаданные выбора
-                  if (elem.label) {
-                    localStorage.setItem('lampa_last_audio_label', elem.label);
-                  } else {
-                    localStorage.removeItem('lampa_last_audio_label'); // Стираем имя, если выбрана безымянная дорожка
+                  // Сохраняем настройки строго с привязкой к текущему хэшу торрента
+                  if (hashKey) {
+                    if (elem.label) {
+                      localStorage.setItem('lampa_audio_label_' + hashKey, elem.label);
+                    } else {
+                      localStorage.removeItem('lampa_audio_label_' + hashKey);
+                    }
+                    localStorage.setItem('lampa_audio_lang_' + hashKey, elem.language);
+                    localStorage.setItem('lampa_audio_lindex_' + hashKey, elem.localIndex);
                   }
-                  
-                  localStorage.setItem('lampa_last_audio_lang', elem.language);
-                  localStorage.setItem('lampa_last_audio_local_index', elem.localIndex);
 
                   for (var i = 0; i < aud.length; i++) {
                     aud[i].enabled = false;
@@ -194,15 +197,14 @@
             new_tracks.push(elem);
           });
 
-          // Если точное совпадение найдено, принудительно обновляем флаги и переключаем поток
-          if (hasSavedSelection) {
+          // Если точное совпадение найдено, принудительно активируем дорожку в плеере
+          if (hasSavedSelection && hashKey) {
             new_tracks.forEach(function(t) {
               var isSavedOne = savedTrackLabel && t.label === savedTrackLabel && t.language === savedTrackLang;
               if (!savedTrackLabel) isSavedOne = t.language === savedTrackLang && t.localIndex === savedTrackLocalIndex;
               
               t.selected = isSavedOne;
               
-              // ФИКС: Вызываем сеттер .enabled для физического переключения звука в плеере
               if (isSavedOne && t.index === matchedTrackIndex) {
                 t.enabled = true;
               }
@@ -359,7 +361,6 @@
         Lampa.PlayerVideo.listener.remove('webos_tracks', listenWebosTracks);
         Lampa.PlayerVideo.listener.remove('canplay', canPlay);
         
-        // FIX: корректный сброс активного таймаута сессии
         if (active_teardown === listenDestroy) active_teardown = null;
       }
 
