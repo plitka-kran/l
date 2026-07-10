@@ -114,34 +114,52 @@
             return a.tags;
           });
 
-          // Читаем ранее сохраненное имя дорожки или язык из стабильного localStorage
+          // Читаем параметры сохраненного трека из localStorage
           var savedTrackLabel = localStorage.getItem('lampa_last_audio_label');
           var savedTrackLang = localStorage.getItem('lampa_last_audio_lang');
+          var savedTrackLocalIndex = parseInt(localStorage.getItem('lampa_last_audio_local_index') || '-1', 10);
+          
           var hasSavedSelection = false;
-          var matchedTrackIndex = -1; // Переменная для фиксации индекса нужного трека
+          var matchedTrackIndex = -1;
+
+          // Счетчики порядкового номера дорожек отдельно для каждого языка
+          var langCounters = {};
 
           parse_tracks.forEach(function (track) {
             var orig = video_tracks[track.index - minus];
             var label = track.tags.title || track.tags.handler_name || '';
-            var lang = track.tags.language || '';
+            var lang = (track.tags.language || '').toLowerCase();
 
-            // Проверяем, совпадает ли текущая дорожка с сохраненной
-            var isSavedOne = savedTrackLabel && label === savedTrackLabel;
-            if (!isSavedOne && !savedTrackLabel && savedTrackLang) {
-              isSavedOne = lang === savedTrackLang; // фолбэк на язык, если точного названия студии нет
+            if (!langCounters[lang]) langCounters[lang] = 0;
+            var currentLocalIndex = langCounters[lang]++; // Внутренний индекс текущего трека в своем языке
+
+            var isSavedOne = false;
+
+            // 1. Ищем идеальное совпадение, если есть имя студии (например, LostFilm)
+            if (savedTrackLabel && label === savedTrackLabel && lang === savedTrackLang) {
+              isSavedOne = true;
+            } 
+            // 2. Если имени студии не было, ищем по языку + локальному индексу (например, вторая русская дорожка)
+            else if (!savedTrackLabel && lang === savedTrackLang && currentLocalIndex === savedTrackLocalIndex) {
+              isSavedOne = true;
+            }
+            // 3. Фолбэк для обратной совместимости, если индекс еще не записан
+            else if (!savedTrackLabel && !hasSavedSelection && lang === savedTrackLang && savedTrackLocalIndex === -1) {
+              isSavedOne = true;
             }
 
             var elem = {
               index: track.index - minus,
               language: lang,
               label: label,
+              localIndex: currentLocalIndex,
               ghost: orig ? false : true,
               selected: isSavedOne ? true : (orig ? orig.selected == true || orig.enabled == true : false)
             };
 
             if (isSavedOne) {
               hasSavedSelection = true;
-              matchedTrackIndex = elem.index; // Запоминаем индекс трека, который совпал
+              matchedTrackIndex = elem.index;
             }
 
             Object.defineProperty(elem, "enabled", {
@@ -150,9 +168,15 @@
                   var aud = getTracks();
                   var trk = aud[elem.index];
 
-                  // Запоминаем выбор пользователя
-                  if (elem.label) localStorage.setItem('lampa_last_audio_label', elem.label);
-                  if (elem.language) localStorage.setItem('lampa_last_audio_lang', elem.language);
+                  // Сохраняем расширенные метаданные выбора
+                  if (elem.label) {
+                    localStorage.setItem('lampa_last_audio_label', elem.label);
+                  } else {
+                    localStorage.removeItem('lampa_last_audio_label'); // Стираем имя, если выбрана безымянная дорожка
+                  }
+                  
+                  localStorage.setItem('lampa_last_audio_lang', elem.language);
+                  localStorage.setItem('lampa_last_audio_local_index', elem.localIndex);
 
                   for (var i = 0; i < aud.length; i++) {
                     aud[i].enabled = false;
@@ -170,14 +194,15 @@
             new_tracks.push(elem);
           });
 
-          // Если мы нашли совпадение с сохраненной дорожкой, принудительно переключаем флаг активности в массиве
+          // Если точное совпадение найдено, принудительно обновляем флаги и переключаем поток
           if (hasSavedSelection) {
             new_tracks.forEach(function(t) {
-              var isSavedOne = savedTrackLabel && t.label === savedTrackLabel;
-              if (!isSavedOne && !savedTrackLabel && savedTrackLang) isSavedOne = t.language === savedTrackLang;
+              var isSavedOne = savedTrackLabel && t.label === savedTrackLabel && t.language === savedTrackLang;
+              if (!savedTrackLabel) isSavedOne = t.language === savedTrackLang && t.localIndex === savedTrackLocalIndex;
+              
               t.selected = isSavedOne;
               
-              // ФИКС: Вызываем сеттер .enabled для реального переключения аудиопотока в самом плеере
+              // ФИКС: Вызываем сеттер .enabled для физического переключения звука в плеере
               if (isSavedOne && t.index === matchedTrackIndex) {
                 t.enabled = true;
               }
@@ -333,8 +358,8 @@
         Lampa.PlayerVideo.listener.remove('webos_subs', listenWebosSubs);
         Lampa.PlayerVideo.listener.remove('webos_tracks', listenWebosTracks);
         Lampa.PlayerVideo.listener.remove('canplay', canPlay);
-        // FIX: сбрасываем "активную сессию", только если она всё ещё наша —
-        // чтобы не затереть teardown уже новой (следующей) сессии.
+        
+        // FIX: корректный сброс активного таймаута сессии
         if (active_teardown === listenDestroy) active_teardown = null;
       }
 
@@ -345,7 +370,6 @@
       Lampa.PlayerVideo.listener.follow('webos_tracks', listenWebosTracks);
       Lampa.PlayerVideo.listener.follow('canplay', canPlay);
 
-      // FIX: регистрируем teardown этой сессии как активный.
       active_teardown = listenDestroy;
 
       listenStart();
@@ -355,8 +379,6 @@
       var loading = Lampa.Template.get('tracks_loading');
       data.item.after(loading);
       reguest(data.element, function (result) {
-        // FIX: если список успели закрыть, пока ждали ответ —
-        // раньше индикатор загрузки так и оставался висеть в DOM навсегда.
         if (!list_opened) {
           loading.remove();
           return;
@@ -462,7 +484,6 @@
     }
 
     Lampa.Player.listener.follow('start', function (data) {
-      // FIX: цепочка фолбэков хэша теперь работает стабильно во всех сценариях автоперехода
       if (data.torrent_hash) {
         current_torrent_hash = data.torrent_hash;
       } else {
@@ -476,7 +497,6 @@
         }
       }
 
-      // FIX: принудительная очистка гонок при быстром клике по сериям
       if (active_teardown) {
         var prev_teardown = active_teardown;
         active_teardown = null;
