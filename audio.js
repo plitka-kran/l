@@ -99,24 +99,23 @@
         return video.textTracks || [];
       }
 
-function setTracks() {
+      function setTracks() {
         // Хэш текущего торрента для изоляции настроек
         var hashKey = current_torrent_hash || '';
 
-        // ЕСЛИ ДАННЫЕ ЕЩЕ НЕ ПРИШЛИ (торрент долго думает)
+        // Новая логика: если торрент тяжелый и TorrServer еще не отдал данные ffprobe
         if (!inited_parse) {
-          // Показываем пользователю, что мы ищем дорожки, чтобы меню не было пустым
           Lampa.PlayerPanel.setTracks([{
             index: -1,
             language: '',
-            label: Lampa.Lang.translate('loading') + ' (audio)...',
+            label: Lampa.Lang.translate('loading') + ' (Voiceover)...',
             ghost: true,
             selected: false
           }]);
-          return; // Выходим и ждем, пока сработает колбэк из reguest
+          return; 
         }
 
-        // ЕСЛИ ДАННЫЕ ПРИШЛИ — РАБОТАЕМ КАК ОБЫЧНО
+        // Если данные успешно получены — запускаем стандартную логику
         if (inited_parse) {
           var new_tracks = [];
           var video_tracks = getTracks();
@@ -131,13 +130,15 @@ function setTracks() {
             return a.tags;
           });
 
-          // Читаем параметры сохраненного трека
+          // Читаем параметры сохраненного трека ИМЕННО для этого торрента
           var savedTrackLabel = hashKey ? localStorage.getItem('lampa_audio_label_' + hashKey) : null;
           var savedTrackLang = hashKey ? localStorage.getItem('lampa_audio_lang_' + hashKey) : null;
           var savedTrackLocalIndex = parseInt(hashKey ? (localStorage.getItem('lampa_audio_lindex_' + hashKey) || '-1') : '-1', 10);
           
           var hasSavedSelection = false;
           var matchedTrackIndex = -1;
+
+          // Счетчики порядкового номера дорожек отдельно для каждого языка
           var langCounters = {};
 
           parse_tracks.forEach(function (track) {
@@ -150,10 +151,14 @@ function setTracks() {
 
             var isSavedOne = false;
 
+            // Если для этого торрента есть история, сопоставляем треки
             if (hashKey && (savedTrackLabel || savedTrackLang)) {
+              // 1. Ищем совпадение по имени студии
               if (savedTrackLabel && label === savedTrackLabel && lang === savedTrackLang) {
                 isSavedOne = true;
-              } else if (!savedTrackLabel && lang === savedTrackLang && currentLocalIndex === savedTrackLocalIndex) {
+              } 
+              // 2. Ищем по языку + локальному индексу внутри языка
+              else if (!savedTrackLabel && lang === savedTrackLang && currentLocalIndex === savedTrackLocalIndex) {
                 isSavedOne = true;
               }
             }
@@ -178,6 +183,7 @@ function setTracks() {
                   var aud = getTracks();
                   var trk = aud[elem.index];
 
+                  // Сохраняем настройки строго с привязкой к текущему хэшу торрента
                   if (hashKey) {
                     if (elem.label) {
                       localStorage.setItem('lampa_audio_label_' + hashKey, elem.label);
@@ -204,12 +210,17 @@ function setTracks() {
             new_tracks.push(elem);
           });
 
+          // Если точное совпадение найдено, принудительно активируем дорожку в плеере
           if (hasSavedSelection && hashKey) {
             new_tracks.forEach(function(t) {
               var isSavedOne = savedTrackLabel && t.label === savedTrackLabel && t.language === savedTrackLang;
               if (!savedTrackLabel) isSavedOne = t.language === savedTrackLang && t.localIndex === savedTrackLocalIndex;
+              
               t.selected = isSavedOne;
-              if (isSavedOne && t.index === matchedTrackIndex) t.enabled = true;
+              
+              if (isSavedOne && t.index === matchedTrackIndex) {
+                t.enabled = true;
+              }
             });
           }
 
@@ -344,6 +355,9 @@ function setTracks() {
 
       function listenStart() {
         inited = true;
+        // Показываем плашку ожидания сразу при старте, до сетевого запроса
+        setTracks(); 
+        
         reguest(data, function (result) {
           inited_parse = result;
 
