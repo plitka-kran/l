@@ -4,6 +4,12 @@
 	// 1. ВКЛЮЧАЕМ ТОРРЕНТЫ (Строго в самом начале!)
     window.lampa_settings = window.lampa_settings || {};
     window.lampa_settings.torrents_use = true;
+
+    Lampa.Listener.follow('full', function (e) {
+        if (e.type == 'complite') {
+            e.object.activity.render().find('.view--trailer').remove();
+        }
+    }); 
 	
     // Базовый URL, где лежат ваши скрипты (чтобы не писать его каждый раз)
     var BASE_URL = 'https://plitka-kran.github.io/l/';
