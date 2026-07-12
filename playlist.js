@@ -1,106 +1,159 @@
+/**
+ * Lampa plugin: Playlist Auto-Select Fix
+ * Проблема: при просмотре через торрент URL текущей серии при повторном
+ * входе часто пересобирается (меняются служебные параметры), из-за чего
+ * встроенное сравнение url === current в Lampa.Player.playlist() перестаёт
+ * находить совпадение — плейлист не подсвечивает реально играющую серию,
+ * пока не переключить её вручную.
+ *
+ * Решение: перехватываем Playlist.url() и Playlist.set(), сравниваем ссылки
+ * "нормализованно" (без изменчивых параметров, либо по идентификатору
+ * файла торрента link/hash+index), и если находим совпадение — подставляем
+ * точную ссылку элемента плейлиста, чтобы штатная логика Lampa снова
+ * сработала верно.
+ *
+ * Установка:
+ * 1. Разместите этот файл там, где Lampa сможет его скачать по прямой
+ *    ссылке (raw-ссылка на GitHub/Gist, свой хостинг, папка плагинов
+ *    самохостед-сборки Lampa/Lampac и т.п.).
+ * 2. В Lampa: Настройки -> Расширения -> Добавить -> вставьте URL файла.
+ * 3. Включите плагин и перезапустите Lampa.
+ */
 (function () {
     'use strict';
 
-    // Функция для генерации чистого ключа в localStorage на основе названия сериала
-    function getStorageKey(data) {
-        var name = 'unknown';
-        if (data.movie && data.movie.title) name = data.movie.title;
-        else if (data.object && data.object.title) name = data.object.title;
-        else if (data.title) name = data.title;
-        
-        // Делаем безопасный ключ без пробелов и спецсимволов
-        return 'lampa_playlist_track_' + name.replace(/[^a-zа-я0-9]/gi, '_').toLowerCase();
+    if (window.__lampa_playlist_autoselect_fix__) return;
+    window.__lampa_playlist_autoselect_fix__ = true;
+
+    // Параметры, которые часто меняются между запусками одного и того же
+    // файла и не влияют на то, какой это файл: сессии, преролл-флаги,
+    // таймкоды, случайные токены и т.п. Список можно расширять.
+    var VOLATILE_PARAMS = [
+        'preload', 'play', 'session', 'sid', 't', 'time', 'ts', '_',
+        'token', 'rnd', 'r', 'cache', 'stream_id', 'streamid'
+    ];
+
+    // Параметры, которые надёжнее всего идентифицируют конкретный файл
+    // внутри торрента у большинства балансеров/TorrServer-based ссылок.
+    var IDENTITY_PARAMS = ['link', 'hash', 'index', 'file_index', 'fi', 'id'];
+
+    function safeDecode(s) {
+        try { return decodeURIComponent(s); } catch (e) { return s; }
     }
 
-    // Ловим самый первый момент инициализации трека в плеере
-    Lampa.Player.listener.follow('start', function (data) {
-        if (!data || !data.playlist) return;
+    function parseQuery(url) {
+        var q = {};
+        var qIndex = url.indexOf('?');
+        if (qIndex === -1) return q;
+        var qs = url.slice(qIndex + 1).split('#')[0];
+        qs.split('&').forEach(function (pair) {
+            if (!pair) return;
+            var idx = pair.indexOf('=');
+            var k = idx === -1 ? pair : pair.slice(0, idx);
+            var v = idx === -1 ? '' : pair.slice(idx + 1);
+            q[safeDecode(k).toLowerCase()] = safeDecode(v);
+        });
+        return q;
+    }
 
-        var storageKey = getStorageKey(data);
-        var savedData = null;
+    function pathOf(url) {
+        var noProto = url.replace(/^https?:\/\//i, '');
+        var slashIndex = noProto.indexOf('/');
+        var host = slashIndex === -1 ? noProto : noProto.slice(0, slashIndex);
+        var path = slashIndex === -1 ? '' : noProto.slice(slashIndex);
+        path = path.split('?')[0].split('#')[0];
+        return host.toLowerCase() + path;
+    }
 
-        try {
-            savedData = JSON.parse(localStorage.getItem(storageKey));
-        } catch (e) {}
+    function identityKey(url) {
+        var q = parseQuery(url);
+        var parts = [];
+        IDENTITY_PARAMS.forEach(function (p) {
+            if (q[p] !== undefined) parts.push(p + '=' + q[p]);
+        });
+        if (!parts.length) return null;
+        return parts.join('&');
+    }
 
-        // Вычисляем, какой индекс у серии, которую юзер ткнул в файлах сейчас
-        var currentIndex = data.id !== undefined ? parseInt(data.id) : data.playlist.findIndex(function(item) { return item.url === data.url; });
+    function normalizedKey(url) {
+        var q = parseQuery(url);
+        var keys = Object.keys(q).filter(function (k) {
+            return VOLATILE_PARAMS.indexOf(k) === -1;
+        }).sort();
+        var qs = keys.map(function (k) { return k + '=' + q[k]; }).join('&');
+        return pathOf(url) + '?' + qs;
+    }
 
-        // Если в базе есть инфо о прошлой серии, и она НЕ совпадает с тем, что открывается сейчас
-        if (savedData && savedData.index !== undefined && currentIndex !== savedData.index) {
-            var targetIndex = savedData.index;
+    // Ищем в текущем плейлисте элемент, который "тот же файл", что и raw url.
+    function findMatch(rawUrl, items) {
+        if (!rawUrl || !items || !items.length) return null;
 
-            if (data.playlist[targetIndex]) {
-                var targetEpisode = data.playlist[targetIndex];
-                
-                // ПОДМЕНЯЕМ данные запуска для Lampa прямо на лету!
-                data.id = targetIndex;
-                data.url = targetEpisode.url;
-                data.title = targetEpisode.title || data.title;
-                if (targetEpisode.subtitle) data.subtitle = targetEpisode.subtitle;
-                
-                // Если было сохранено время внутри серии, подтягиваем и его
-                if (savedData.time) {
-                    data.timeline = { time: savedData.time };
-                    if (data.movie) data.movie.time = savedData.time;
-                }
-                
-                // Фиксируем в рендере Lampa актуальный индекс для галочки
-                if (Lampa.Player.render) {
-                    Lampa.Player.render.playlist_index = targetIndex;
-                }
-                return;
+        // 1) точное совпадение — тогда и патчить нечего
+        var exact = items.filter(function (it) { return it.url === rawUrl; })[0];
+        if (exact) return exact;
+
+        // 2) совпадение по идентификатору файла торрента (самое надёжное)
+        var rawId = identityKey(rawUrl);
+        if (rawId) {
+            var byId = items.filter(function (it) { return identityKey(it.url) === rawId; })[0];
+            if (byId) return byId;
+        }
+
+        // 3) совпадение по нормализованной ссылке без изменчивых параметров
+        var rawNorm = normalizedKey(rawUrl);
+        var byNorm = items.filter(function (it) { return normalizedKey(it.url) === rawNorm; })[0];
+        if (byNorm) return byNorm;
+
+        return null;
+    }
+
+    var lastRawUrl = null;
+
+    function patch() {
+        if (!window.Lampa || !Lampa.Player || typeof Lampa.Player.playlist !== 'function') {
+            return setTimeout(patch, 500);
+        }
+
+        var pl = Lampa.Player.playlist();
+        if (!pl || pl.__autoselect_patched__) return;
+        pl.__autoselect_patched__ = true;
+
+        var origUrl = pl.url;
+        var origSet = pl.set;
+
+        pl.url = function (u) {
+            lastRawUrl = u;
+            try {
+                var items = pl.get() || [];
+                var match = findMatch(u, items);
+                if (match) u = match.url;
+            } catch (e) {
+                // на всякий случай — не ломаем воспроизведение из-за ошибки в патче
             }
-        }
-
-        // Если открылась актуальная серия, просто фиксируем её индекс в рендере для правильной галочки
-        if (currentIndex !== -1 && Lampa.Player.render) {
-            Lampa.Player.render.playlist_index = currentIndex;
-        }
-    });
-
-    // Следим за изменением серии (когда ты кликаешь в плейлисте или срабатывает автопереключение)
-    Lampa.Player.listener.follow('change', function(data) {
-        if (!data || !data.playlist) return;
-        
-        var currentIndex = data.id !== undefined ? parseInt(data.id) : data.playlist.findIndex(function(item) { return item.url === data.url; });
-        
-        if (currentIndex !== -1) {
-            var storageKey = getStorageKey(data);
-            var state = {
-                index: currentIndex,
-                url: data.url,
-                time: 0,
-                updated: Date.now()
-            };
-            localStorage.setItem(storageKey, JSON.stringify(state));
-            
-            if (Lampa.Player.render) {
-                Lampa.Player.render.playlist_index = currentIndex;
-            }
-        }
-    });
-
-    // Запоминаем текущее время (секунды) внутри серии, обновляя запись в localStorage
-    Lampa.PlayerVideo.listener.follow('timeupdate', function(videoData) {
-        var currentData = Lampa.Player.data; // Получаем статичные данные плеера
-        if (!currentData || !currentData.playlist) return;
-
-        var videoElement = Lampa.PlayerVideo.video();
-        if (!videoElement || videoElement.currentTime < 5) return; // Начинаем писать после 5 сек просмотра
-
-        var currentIndex = currentData.id !== undefined ? parseInt(currentData.id) : currentData.playlist.findIndex(function(item) { return item.url === currentData.url; });
-        if (currentIndex === -1) return;
-
-        var storageKey = getStorageKey(currentData);
-        var state = {
-            index: currentIndex,
-            url: currentData.url,
-            time: videoElement.currentTime,
-            updated: Date.now()
+            return origUrl(u);
         };
 
-        localStorage.setItem(storageKey, JSON.stringify(state));
-    });
+        pl.set = function (p) {
+            var res = origSet(p);
+            try {
+                if (lastRawUrl) {
+                    var match = findMatch(lastRawUrl, p || []);
+                    if (match) {
+                        // пересчитываем current и позицию уже по правильной ссылке
+                        origUrl(match.url);
+                        origSet(p);
+                    }
+                }
+            } catch (e) {}
+            return res;
+        };
+    }
 
+    if (window.Lampa && Lampa.Listener && typeof Lampa.Listener.follow === 'function') {
+        Lampa.Listener.follow('app', function (e) {
+            if (e.type === 'ready') patch();
+        });
+    }
+
+    patch();
 })();
