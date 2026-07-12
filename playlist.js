@@ -1,9 +1,9 @@
 (function () {
     'use strict';
 
-    // Слушаем запуск плеера Lampa
-    Lampa.Player.listener.follow('start', function (data) {
-        if (!data || !data.id || data.method !== 'tv') return; // Работаем только с сериалами, у которых есть ID
+    // Функция для поиска и переключения на сохраненную серию при старте
+    function restoreLastEpisode(data) {
+        if (!data || !data.id || data.method !== 'tv') return;
 
         var storageKey = 'lampa_playlist_history_' + data.id;
         var savedHistory = null;
@@ -12,103 +12,137 @@
             savedHistory = JSON.parse(localStorage.getItem(storageKey));
         } catch (e) {}
 
-        // Если открыт плеер, но мы загрузили не то, что было сохранено, и у нас есть плейлист — делаем автопереключение
-        if (data.playlist && data.playlist.length > 1) {
-            
-            // Проверяем, нужно ли восстановить конкретную серию из истории
-            if (savedHistory && savedHistory.url && data.url !== savedHistory.url) {
-                // Ищем сохраненную серию в текущем плейлисте по URL или по названию
-                var targetIndex = data.playlist.findIndex(function(item) {
-                    return item.url === savedHistory.url || (item.title && item.title === savedHistory.title);
-                });
+        if (!savedHistory) return;
 
-                if (targetIndex !== -1) {
-                    var targetEpisode = data.playlist[targetIndex];
-                    
-                    // Переписываем текущие данные плеера на сохраненную серию
-                    data.url = targetEpisode.url;
-                    data.title = targetEpisode.title || data.title;
-                    if (targetEpisode.subtitle) data.subtitle = targetEpisode.subtitle;
-                    
-                    // Подставляем таймлайн для восстановления секунды просмотра
-                    if (savedHistory.time) {
-                        data.timeline = {
-                            time: savedHistory.time
-                        };
-                    }
+        // Ищем плейлист. Он может быть в data.playlist или в глобальном плеере
+        var playlist = data.playlist || (Lampa.Player && Lampa.Player.playlist ? Lampa.Player.playlist() : null);
+        if (!playlist || !playlist.length) return;
+
+        // Проверяем, играет ли сейчас НЕ та серия, что сохранена
+        if (data.url !== savedHistory.url) {
+            var targetIndex = playlist.findIndex(function(item) {
+                return item.url === savedHistory.url || (item.title && item.title === savedHistory.title);
+            });
+
+            // Если нашли сохраненную серию в плейлисте — принудительно переключаем индекс Lampa
+            if (targetIndex !== -1) {
+                data.url = playlist[targetIndex].url;
+                data.title = playlist[targetIndex].title || data.title;
+                if (playlist[targetIndex].subtitle) data.subtitle = playlist[targetIndex].subtitle;
+                
+                // Устанавливаем индекс для корректной навигации самой Lampa
+                if (typeof Lampa.Player.playlistIndex === 'function') {
+                    Lampa.Player.playlistIndex(targetIndex);
+                } else if (Lampa.Player.render && Lampa.Player.render.playlist_index !== undefined) {
+                    Lampa.Player.render.playlist_index = targetIndex;
                 }
-            } else if (savedHistory && savedHistory.time && data.url === savedHistory.url) {
-                // Если серия совпадает, но плеер еще не применил время
-                data.timeline = {
-                    time: savedHistory.time
-                };
             }
-
-            // Добавляем или перезаписываем функции ручного/автоматического переключения серий стрелками
-            injectNavigation(data);
         }
-    });
 
-    // Функция умной навигации по плейлисту (вперед / назад)
+        // Подсовываем время просмотра
+        if (savedHistory.time && data.url === savedHistory.url) {
+            data.timeline = {
+                time: savedHistory.time
+            };
+            // Дополнительно форсируем старт с нужной секунды через встроенный механизм Lampa
+            if (data.movie) {
+                data.movie.time = savedHistory.time;
+            }
+        }
+    }
+
+    // Умная кастомная навигация по кнопкам внутри плеера
     function injectNavigation(data) {
-        var playlist = data.playlist;
+        if (!data || !data.id) return;
         
-        // Находим индекс текущей серии в массиве
+        var playlist = data.playlist || (Lampa.Player && Lampa.Player.playlist ? Lampa.Player.playlist() : null);
+        if (!playlist || playlist.length <= 1) return;
+
         var currentIndex = playlist.findIndex(function(item) {
             return item.url === data.url;
         });
 
         if (currentIndex === -1) return;
 
-        // Если есть куда листать вперед (следующая серия)
+        // Переопределяем функцию перехода на СЛЕДУЮЩУЮ серию
         if (currentIndex < playlist.length - 1) {
             data.next = function() {
-                var nextEpisode = playlist[currentIndex + 1];
+                var nextIndex = currentIndex + 1;
+                var nextEpisode = playlist[nextIndex];
+                
+                // Обновляем индекс в плеере Lampa
+                if (typeof Lampa.Player.playlistIndex === 'function') Lampa.Player.playlistIndex(nextIndex);
+                
                 var nextData = Object.assign({}, data, {
                     url: nextEpisode.url,
                     title: nextEpisode.title || data.title,
                     subtitle: nextEpisode.subtitle || data.subtitle,
-                    timeline: { time: 0 } // Новая серия стартует с 0
+                    timeline: { time: 0 }
                 });
-                
+                if (nextData.movie) nextData.movie.time = 0;
+
                 Lampa.Player.play(nextData);
             };
         } else {
-            data.next = false; // Отключаем стрелку "вперед" на последней серии
+            data.next = false;
         }
 
-        // Если есть куда листать назад (предыдущая серия)
+        // Переопределяем функцию перехода на ПРЕДЫДУЩУЮ серию
         if (currentIndex > 0) {
             data.prev = function() {
-                var prevEpisode = playlist[currentIndex - 1];
+                var prevIndex = currentIndex - 1;
+                var prevEpisode = playlist[prevIndex];
+                
+                if (typeof Lampa.Player.playlistIndex === 'function') Lampa.Player.playlistIndex(prevIndex);
+                
                 var prevData = Object.assign({}, data, {
                     url: prevEpisode.url,
                     title: prevEpisode.title || data.title,
                     subtitle: prevEpisode.subtitle || data.subtitle,
                     timeline: { time: 0 }
                 });
-                
+                if (prevData.movie) prevData.movie.time = 0;
+
                 Lampa.Player.play(prevData);
             };
         } else {
-            data.prev = false; // Отключаем стрелку "назад" на первой серии
+            data.prev = false;
         }
     }
 
-    // Слушаем событие изменения прогресса или переключения внутри плеера для сохранения
-    Lampa.Player.listener.follow('change', function(data) {
-        if (!data || !data.id) return;
-        injectNavigation(data); // Пересчитываем навигацию при смене серии
+    // Хук на самый старт плеера (до рендеринга потока)
+    Lampa.Player.listener.follow('start', function (data) {
+        restoreLastEpisode(data);
+        injectNavigation(data);
     });
 
-    // Постоянно отслеживаем время просмотра и сохраняем в базу при выходе или переключении
-    Lampa.PlayerVideo.listener.follow('timeupdate', function(videoData) {
-        var currentData = Lampa.Player.data(); // Получаем метаданные того, что играет прямо сейчас
+    // Хук на переключение серий стрелками внутри плеера
+    Lampa.Player.listener.follow('change', function(data) {
+        injectNavigation(data);
         
+        // Принудительно сохраняем факт переключения на новую серию (сбрасываем время на 0)
+        if (data && data.id && data.method === 'tv') {
+            var storageKey = 'lampa_playlist_history_' + data.id;
+            var historyState = {
+                id: data.id,
+                url: data.url,
+                title: data.title,
+                subtitle: data.subtitle,
+                time: 0,
+                updated: Date.now()
+            };
+            localStorage.setItem(storageKey, JSON.stringify(historyState));
+        }
+    });
+
+    // Следим за временем воспроизведения и пишем в localStorage
+    Lampa.PlayerVideo.listener.follow('timeupdate', function(videoData) {
+        var currentData = Lampa.Player.data();
         if (!currentData || !currentData.id || currentData.method !== 'tv') return;
 
         var videoElement = Lampa.PlayerVideo.video();
-        if (!videoElement || videoElement.currentTime < 5) return; // Не сохраняем первые 5 секунд
+        // Начинаем запоминать время, если прошло больше 3 секунд просмотра
+        if (!videoElement || videoElement.currentTime < 3) return; 
 
         var storageKey = 'lampa_playlist_history_' + currentData.id;
         
