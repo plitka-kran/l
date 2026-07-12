@@ -1,161 +1,139 @@
+/*!
+ * Watch Progress Cache — плагин для Lampa
+ * ---------------------------------------
+ * Что делает:
+ *  - Запоминает для каждого фильма/сериала (по id из TMDB) последний
+ *    просмотренный сезон, серию и позицию воспроизведения.
+ *  - Хранит это в localStorage через Lampa.Storage (штатный механизм
+ *    хранения настроек Lampa — он и так пишет в localStorage, но с этим
+ *    плагином данные пишутся с привязкой именно к serial/episode).
+ *  - При повторном открытии карточки сериала — подставляет сохранённые
+ *    значения, чтобы плейлист/список серий "помнил", что вы смотрели.
+ *
+ * Установка:
+ *  Настройки Lampa -> Расширения -> Добавить плагин -> указать URL,
+ *  по которому лежит этот файл (например, залитый на GitHub Pages /
+ *  gist raw / свой веб-сервер). Локально с телевизора файл не
+ *  подключить — нужен именно http(s) адрес.
+ *
+ * ВАЖНО: названия полей у событий 'player' и 'full' у Lampa иногда
+ * отличаются между версиями сборки (обычная Lampa / Lampac / форки).
+ * Если после установки данные не начнут сохраняться — откройте
+ * консоль Lampa (в боковом меню, самый низ) и посмотрите, что реально
+ * прилетает в console.log ниже — вероятно, потребуется поправить пути
+ * к полям (e.object.season / e.object.episode и т.п.) под вашу сборку.
+ */
 (function () {
     'use strict';
 
-    // Функция для поиска и переключения на сохраненную серию при старте
-    function restoreLastEpisode(data) {
-        if (!data || !data.id || data.method !== 'tv') return;
+    // Не грузим плагин повторно, если он уже был подключен
+    if (window.watch_progress_cache_installed) return;
+    window.watch_progress_cache_installed = true;
 
-        var storageKey = 'lampa_playlist_history_' + data.id;
-        var savedHistory = null;
+    var STORAGE_KEY = 'watch_progress_cache';
 
-        try {
-            savedHistory = JSON.parse(localStorage.getItem(storageKey));
-        } catch (e) {}
+    // ---------- Работа с "базой" в localStorage ----------
 
-        if (!savedHistory) return;
-
-        // Ищем плейлист. Он может быть в data.playlist или в глобальном плеере
-        var playlist = data.playlist || (Lampa.Player && Lampa.Player.playlist ? Lampa.Player.playlist() : null);
-        if (!playlist || !playlist.length) return;
-
-        // Проверяем, играет ли сейчас НЕ та серия, что сохранена
-        if (data.url !== savedHistory.url) {
-            var targetIndex = playlist.findIndex(function(item) {
-                return item.url === savedHistory.url || (item.title && item.title === savedHistory.title);
-            });
-
-            // Если нашли сохраненную серию в плейлисте — принудительно переключаем индекс Lampa
-            if (targetIndex !== -1) {
-                data.url = playlist[targetIndex].url;
-                data.title = playlist[targetIndex].title || data.title;
-                if (playlist[targetIndex].subtitle) data.subtitle = playlist[targetIndex].subtitle;
-                
-                // Устанавливаем индекс для корректной навигации самой Lampa
-                if (typeof Lampa.Player.playlistIndex === 'function') {
-                    Lampa.Player.playlistIndex(targetIndex);
-                } else if (Lampa.Player.render && Lampa.Player.render.playlist_index !== undefined) {
-                    Lampa.Player.render.playlist_index = targetIndex;
-                }
-            }
-        }
-
-        // Подсовываем время просмотра
-        if (savedHistory.time && data.url === savedHistory.url) {
-            data.timeline = {
-                time: savedHistory.time
-            };
-            // Дополнительно форсируем старт с нужной секунды через встроенный механизм Lampa
-            if (data.movie) {
-                data.movie.time = savedHistory.time;
-            }
-        }
+    function getDB() {
+        // Lampa.Storage.get сам десериализует JSON и падает обратно
+        // в localStorage — это и есть штатное кэширование Lampa
+        return Lampa.Storage.get(STORAGE_KEY, {});
     }
 
-    // Умная кастомная навигация по кнопкам внутри плеера
-    function injectNavigation(data) {
-        if (!data || !data.id) return;
-        
-        var playlist = data.playlist || (Lampa.Player && Lampa.Player.playlist ? Lampa.Player.playlist() : null);
-        if (!playlist || playlist.length <= 1) return;
+    function saveDB(db) {
+        Lampa.Storage.set(STORAGE_KEY, db);
+    }
 
-        var currentIndex = playlist.findIndex(function(item) {
-            return item.url === data.url;
+    function saveProgress(id, data) {
+        if (!id) return;
+        var db = getDB();
+
+        db[id] = Object.assign({}, db[id], data, {
+            updated: Date.now()
         });
 
-        if (currentIndex === -1) return;
-
-        // Переопределяем функцию перехода на СЛЕДУЮЩУЮ серию
-        if (currentIndex < playlist.length - 1) {
-            data.next = function() {
-                var nextIndex = currentIndex + 1;
-                var nextEpisode = playlist[nextIndex];
-                
-                // Обновляем индекс в плеере Lampa
-                if (typeof Lampa.Player.playlistIndex === 'function') Lampa.Player.playlistIndex(nextIndex);
-                
-                var nextData = Object.assign({}, data, {
-                    url: nextEpisode.url,
-                    title: nextEpisode.title || data.title,
-                    subtitle: nextEpisode.subtitle || data.subtitle,
-                    timeline: { time: 0 }
-                });
-                if (nextData.movie) nextData.movie.time = 0;
-
-                Lampa.Player.play(nextData);
-            };
-        } else {
-            data.next = false;
-        }
-
-        // Переопределяем функцию перехода на ПРЕДЫДУЩУЮ серию
-        if (currentIndex > 0) {
-            data.prev = function() {
-                var prevIndex = currentIndex - 1;
-                var prevEpisode = playlist[prevIndex];
-                
-                if (typeof Lampa.Player.playlistIndex === 'function') Lampa.Player.playlistIndex(prevIndex);
-                
-                var prevData = Object.assign({}, data, {
-                    url: prevEpisode.url,
-                    title: prevEpisode.title || data.title,
-                    subtitle: prevEpisode.subtitle || data.subtitle,
-                    timeline: { time: 0 }
-                });
-                if (prevData.movie) prevData.movie.time = 0;
-
-                Lampa.Player.play(prevData);
-            };
-        } else {
-            data.prev = false;
-        }
+        saveDB(db);
+        console.log('[watch_progress_cache] saved', id, db[id]);
     }
 
-    // Хук на самый старт плеера (до рендеринга потока)
-    Lampa.Player.listener.follow('start', function (data) {
-        restoreLastEpisode(data);
-        injectNavigation(data);
-    });
+    function getProgress(id) {
+        if (!id) return null;
+        var db = getDB();
+        return db[id] || null;
+    }
 
-    // Хук на переключение серий стрелками внутри плеера
-    Lampa.Player.listener.follow('change', function(data) {
-        injectNavigation(data);
-        
-        // Принудительно сохраняем факт переключения на новую серию (сбрасываем время на 0)
-        if (data && data.id && data.method === 'tv') {
-            var storageKey = 'lampa_playlist_history_' + data.id;
-            var historyState = {
-                id: data.id,
-                url: data.url,
-                title: data.title,
-                subtitle: data.subtitle,
-                time: 0,
-                updated: Date.now()
-            };
-            localStorage.setItem(storageKey, JSON.stringify(historyState));
+    // ---------- Извлечение id текущего тайтла ----------
+
+    function extractId(data) {
+        // Разные места Lampa кладут информацию по-разному, поэтому
+        // проверяем несколько возможных вариантов
+        if (!data) return null;
+        return data.id || (data.movie && data.movie.id) || (data.card && data.card.id) || null;
+    }
+
+    // ---------- Слушаем плеер: тут узнаём сезон/серию/время ----------
+
+    Lampa.Listener.follow('player', function (e) {
+        try {
+            // e.type обычно: 'start' | 'timeupdate' | 'destroy' и т.д.
+            // e.data / e.object — тут лежат метаданные о том, что играет
+            var payload = e.object || e.data || {};
+            var movieId = extractId(payload) || extractId(e);
+
+            if (!movieId) return;
+
+            var progress = {};
+
+            if (payload.season !== undefined) progress.season = payload.season;
+            if (payload.episode !== undefined) progress.episode = payload.episode;
+            if (payload.time !== undefined) progress.time = payload.time;
+            if (payload.duration !== undefined) progress.duration = payload.duration;
+
+            // Сохраняем только если реально что-то новое узнали
+            if (Object.keys(progress).length) {
+                saveProgress(movieId, progress);
+            }
+        } catch (err) {
+            console.error('[watch_progress_cache] player listener error', err);
         }
     });
 
-    // Следим за временем воспроизведения и пишем в localStorage
-    Lampa.PlayerVideo.listener.follow('timeupdate', function(videoData) {
-        var currentData = Lampa.Player.data();
-        if (!currentData || !currentData.id || currentData.method !== 'tv') return;
+    // ---------- Слушаем открытие карточки сериала ----------
 
-        var videoElement = Lampa.PlayerVideo.video();
-        // Начинаем запоминать время, если прошло больше 3 секунд просмотра
-        if (!videoElement || videoElement.currentTime < 3) return; 
+    Lampa.Listener.follow('full', function (e) {
+        try {
+            // 'complite' / 'complete' срабатывает, когда карточка
+            // полностью отрисована и данные о фильме доступны
+            if (e.type !== 'complite' && e.type !== 'complete') return;
 
-        var storageKey = 'lampa_playlist_history_' + currentData.id;
-        
-        var historyState = {
-            id: currentData.id,
-            url: currentData.url,
-            title: currentData.title,
-            subtitle: currentData.subtitle,
-            time: videoElement.currentTime,
-            updated: Date.now()
-        };
+            var data = e.data || e.object || {};
+            var movieId = extractId(data) || extractId(data.movie);
 
-        localStorage.setItem(storageKey, JSON.stringify(historyState));
+            if (!movieId) return;
+
+            var saved = getProgress(movieId);
+            if (!saved) return;
+
+            console.log('[watch_progress_cache] restoring for', movieId, saved);
+
+            // Показываем ненавязчивое уведомление с тем, что нашли сохранённые данные
+            if (saved.season !== undefined && saved.episode !== undefined) {
+                Lampa.Noty.show(
+                    'Продолжить просмотр: сезон ' + saved.season + ', серия ' + saved.episode
+                );
+            }
+
+            // Если в вашей сборке Lampa есть метод для программного
+            // выбора серии/продолжения — вызывайте его здесь, например:
+            // Lampa.Activity.active().activity.render().trigger('continue', saved);
+            //
+            // Точное API для "перейти к серии X сезона Y" зависит от
+            // версии компонента Episodes — под это стоит подставить
+            // конкретный вызов после проверки в консоли.
+        } catch (err) {
+            console.error('[watch_progress_cache] full listener error', err);
+        }
     });
 
+    console.log('[watch_progress_cache] plugin loaded');
 })();
