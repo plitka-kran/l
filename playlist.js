@@ -1,63 +1,87 @@
 (function () {
     'use strict';
 
-    // Функция для поиска и синхронизации активной серии в меню плеера
-    function syncPlaylistSelection(data) {
-        if (!data) return;
-
-        // Ищем плейлист во всех возможных местах
-        var playlist = data.playlist;
-        if (!playlist && data.movie && data.movie.playlist) playlist = data.movie.playlist;
+    // Функция для поиска реального индекса серии в массиве
+    function getCurrentIndex(data) {
+        if (!data) return 0;
+        var playlist = data.playlist || (data.movie && data.movie.playlist);
         if (!playlist && Lampa.Player && typeof Lampa.Player.playlist === 'function') {
             try { playlist = Lampa.Player.playlist(); } catch(e){}
         }
+        if (!playlist || !playlist.length) return 0;
 
-        if (!playlist || !playlist.length) return;
-
-        // Определяем реальный индекс текущей серии (по переданному ID или по URL файла)
-        var currentIndex = -1;
         if (data.id !== undefined && playlist[data.id]) {
-            currentIndex = parseInt(data.id);
-        } else {
-            currentIndex = playlist.findIndex(function(item) {
-                return item.url === data.url;
-            });
+            return parseInt(data.id);
         }
-
-        // Если индекс успешно найден — жестко заставляем Lampa перевести маркер выделения на него
-        if (currentIndex !== -1) {
-            
-            // 1. Меняем индекс в ядре плеера
-            if (typeof Lampa.Player.playlistIndex === 'function') {
-                try { Lampa.Player.playlistIndex(currentIndex); } catch(e){}
-            }
-            
-            // 2. Меняем индекс в модуле отображения интерфейса (отвечает за синюю подсветку на фото)
-            if (Lampa.Player.render && Lampa.Player.render.playlist_index !== undefined) {
-                Lampa.Player.render.playlist_index = currentIndex;
-            }
-
-            // 3. Форсируем обновление UI, если меню уже открыто на экране
-            if (Lampa.Player.render && typeof Lampa.Player.render.playlistUpdate === 'function') {
-                try { Lampa.Player.render.playlistUpdate(); } catch(e){}
-            }
-        }
+        
+        var idx = playlist.findIndex(function(item) {
+            return item.url === data.url;
+        });
+        return idx !== -1 ? idx : 0;
     }
 
-    // Вешаем синхронизацию на старт плеера
+    // Глобальный перехватчик рендеринга интерфейса Lampa
     Lampa.Player.listener.follow('start', function (data) {
-        syncPlaylistSelection(data);
-        
-        // Даем микро-задержку в 200мс, так как меню серий может инициализироваться чуть позже самого видео
+        if (!data) return;
+
+        // Ключевой хак: Ждем, пока Lampa создаст объект рендера (интерфейса)
         setTimeout(function() {
-            var currentData = Lampa.Player.data || data;
-            syncPlaylistSelection(currentData);
-        }, 200);
+            if (Lampa.Player.render) {
+                
+                // Перехватываем стандартную функцию отрисовки плейлиста Lampa
+                var originalPlaylistRender = Lampa.Player.render.playlist;
+                
+                Lampa.Player.render.playlist = function() {
+                    // Перед тем как Lampa нарисует меню, принудительно вычисляем и подсовываем ей правильный индекс
+                    var currentData = Lampa.Player.data || data;
+                    var realIndex = getCurrentIndex(currentData);
+                    
+                    // Записываем индекс во все внутренние переменные отображения Lampa
+                    Lampa.Player.render.playlist_index = realIndex;
+                    if (typeof Lampa.Player.playlistIndex === 'function') {
+                        try { Lampa.Player.playlistIndex(realIndex); } catch(e){}
+                    }
+
+                    // Вызываем оригинальный рендер Lampa, но уже с нашей правильной позицией
+                    if (typeof originalPlaylistRender === 'function') {
+                        originalPlaylistRender.apply(Lampa.Player.render, arguments);
+                    }
+
+                    // Дополнительный визуальный хак: ищем строчки меню в DOM и вручную переключаем класс выделения (active)
+                    setTimeout(function() {
+                        var items = $('.player-playlist__item, .player-panel__playlist-item');
+                        if (items.length) {
+                            items.removeClass('active'); // Снимаем выделение с 1-й серии
+                            items.eq(realIndex).addClass('active'); // Вешаем на текущую (например, 3-ю)
+                            
+                            // Прокручиваем меню к активной серии, если список длинный
+                            var activeItem = items.eq(realIndex);
+                            if (activeItem.length && activeItem.parent().length) {
+                                activeItem.parent().scrollTop(activeItem.position().top + activeItem.parent().scrollTop() - 100);
+                            }
+                        }
+                    }, 50);
+                };
+
+                // Сразу же один раз принудительно вызываем наш обновленный рендер
+                var currentData = Lampa.Player.data || data;
+                Lampa.Player.render.playlist_index = getCurrentIndex(currentData);
+            }
+        }, 100);
     });
 
-    // Вешаем синхронизацию на переключение серий (когда включается следующая)
+    // Дублируем логику при смене серии (если включилась следующая)
     Lampa.Player.listener.follow('change', function(data) {
-        syncPlaylistSelection(data);
+        if (Lampa.Player.render) {
+            var realIndex = getCurrentIndex(Lampa.Player.data || data);
+            Lampa.Player.render.playlist_index = realIndex;
+            
+            var items = $('.player-playlist__item, .player-panel__playlist-item');
+            if (items.length) {
+                items.removeClass('active');
+                items.eq(realIndex).addClass('active');
+            }
+        }
     });
 
 })();
