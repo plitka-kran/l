@@ -19,7 +19,7 @@
     // 	'online.js': '1.1', покане рабоатет 
         'pubtorr.js': '1.0',
         'ss.js': '1.0.1',
-	'playlist.js': '1.0.12',
+	'playlist.js': '1.0.13',
         'audio.js': '1.0.11'
 	};
 
