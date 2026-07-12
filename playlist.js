@@ -1,5 +1,5 @@
 /**
- * Lampa plugin: Torrent Playlist Track via LocalStorage (Event-Based Version)
+ * Lampa plugin: Torrent Playlist Track via LocalStorage (Fixed Save)
  */
 (function () {
     'use strict';
@@ -7,8 +7,7 @@
     if (window.__lampa_torrent_track_event_fix__) return;
     window.__lampa_torrent_track_event_fix__ = true;
 
-    // Окно логов
-    var logDiv = $('<div id="lampa-plugin-logs" style="position:fixed; top:10px; left:10px; background:rgba(0,0,0,0.9); color:#00ff00; padding:10px; font-family:monospace; font-size:11px; z-index:99999; max-width:450px; max-height:350px; overflow-y:auto; border:1px solid #00ff00; line-height:1.4; pointer-events:none;">[Plugin Init] Старт плагина по событиям...</div>');
+    var logDiv = $('<div id="lampa-plugin-logs" style="position:fixed; top:10px; left:10px; background:rgba(0,0,0,0.9); color:#00ff00; padding:10px; font-family:monospace; font-size:11px; z-index:99999; max-width:450px; max-height:350px; overflow-y:auto; border:1px solid #00ff00; line-height:1.4; pointer-events:none;">[Plugin Init] Синхронизация истории...</div>');
     $('body').append(logDiv);
 
     function writeLog(text) {
@@ -61,13 +60,21 @@
         return -1;
     }
 
+    // Сохранение состояния серии в localStorage
+    function saveTrackState(hash, fileIdx, listIdx) {
+        if (!hash || fileIdx === -1) return;
+        var storageKey = 'lampa_torrent_track_' + hash;
+        var state = { index: fileIdx, updated: Date.now() };
+        localStorage.setItem(storageKey, JSON.stringify(state));
+        writeLog('Сохранение: Индекс файла ' + fileIdx + ' (Позиция: ' + listIdx + ') успешно записан в память.');
+    }
+
     writeLog('Система: Ожидание запуска плеера...');
 
-    // Перехватываем событие СТАРТА плеера (когда Lampa только получила объект для воспроизведения)
     Lampa.Player.listener.follow('start', function (data) {
         writeLog('--- СОБЫТИЕ START ---');
         if (!data || !data.playlist) {
-            writeLog('Предупреждение: Входящий плейлист пуст.');
+            writeLog('Предупреждение: Плейлист пуст.');
             return;
         }
 
@@ -79,80 +86,83 @@
             var savedTrack = JSON.parse(localStorage.getItem(storageKey));
             var items = data.playlist;
 
-            // Находим текущий индекс того, что было нажато в меню "Файлы"
             var currentIndex = data.id !== undefined ? parseInt(data.id) : getFileIndex(data.url, items);
             writeLog('Фактически нажатый индекс серии: ' + currentIndex);
 
-            // Если в localStorage есть сохраненный выбор, и он ОТЛИЧАЕТСЯ от нажатого
+            // Если в localStorage УЖЕ есть запись, и она отличается от того, что мы ткнули вручную
             if (savedTrack && savedTrack.index !== undefined && currentIndex !== savedTrack.index) {
-                writeLog('LocalStorage: Найдена сохраненная серия с индексом: ' + savedTrack.index);
+                writeLog('LocalStorage: Найдена сохраненная серия с индексом файла: ' + savedTrack.index);
                 
-                // Ищем эту серию в текущем плейлисте по ее внутреннему индексу файла торрента
                 var match = items.filter(function(it) {
                     return getFileIndex(it.url, items) === savedTrack.index;
                 })[0];
 
                 if (match) {
                     var listIdx = items.indexOf(match);
-                    writeLog('Подмена: Найдено совпадение! Подменяем старт на элемент №' + listIdx + ' (' + (match.title || '') + ')');
+                    writeLog('Подмена: Переключаем старт на сохраненную серию №' + listIdx);
                     
-                    // Переписываем данные запуска прямо внутри объекта Lampa
                     data.id = listIdx;
                     data.url = match.url;
                     if (match.title) data.title = match.title;
                     
-                    // Принудительно выставляем индекс для отображения галочки
                     if (Lampa.Player.render) {
                         Lampa.Player.render.playlist_index = listIdx;
                     }
-                } else {
-                    writeLog('Предупреждение: Сохраненный индекс файла не найден в плейлисте.');
-                }
-            } else {
-                writeLog('Подмена не требуется (либо история пуста, либо запущена та же серия).');
-                // На всякий случай фиксируем текущий индекс в UI для галочки
-                if (currentIndex !== -1 && Lampa.Player.render) {
-                    Lampa.Player.render.playlist_index = currentIndex;
+                    return; // Выходим, чтобы не перезаписать поверх новый ручной клик
                 }
             }
+
+            // ЕСЛИ записи в localStorage не было, или ты зашел в эту серию ПЕРВЫЙ раз:
+            // Сразу же принудительно сохраняем её, чтобы в следующий раз плагин знал, где ты остановился!
+            var currentFileIdx = getFileIndex(data.url, items);
+            saveTrackState(hash, currentFileIdx, currentIndex);
+
+            if (currentIndex !== -1 && Lampa.Player.render) {
+                Lampa.Player.render.playlist_index = currentIndex;
+            }
+
         } catch (e) {
-            writeLog('Ошибка в обработчике start: ' + e.message);
+            writeLog('Ошибка в START: ' + e.message);
         }
     });
 
-    // Ловим переключение серий (ручное или автоматическое), чтобы обновить localStorage
+    // Ловим переключение серий кнопками "вперед/назад" или автопереключением плеера
     Lampa.Player.listener.follow('change', function(data) {
         writeLog('--- СОБЫТИЕ CHANGE ---');
-        if (!data) return;
+        var currentData = Lampa.Player.data || data;
+        if (!currentData) return;
 
         try {
-            // Получаем актуальный плейлист из данных плеера
-            var currentData = Lampa.Player.data || data;
             var items = currentData.playlist || [];
-            
             var hash = getTorrentHash(currentData.url, currentData);
             var fileIdx = getFileIndex(currentData.url, items);
+            var listIdx = currentData.id !== undefined ? parseInt(currentData.id) : items.findIndex(function(it) { return it.url === currentData.url; });
 
-            if (hash && fileIdx !== -1) {
+            saveTrackState(hash, fileIdx, listIdx);
+
+            if (Lampa.Player.render && listIdx !== -1) {
+                Lampa.Player.render.playlist_index = listIdx;
+            }
+        } catch(e) {}
+    });
+
+    // Дополнительно обновляем запись во время воспроизведения (каждые пару секунд видео)
+    Lampa.PlayerVideo.listener.follow('timeupdate', function(videoData) {
+        var currentData = Lampa.Player.data;
+        if (!currentData || !currentData.url) return;
+
+        // Делаем запись раз в 15 секунд, чтобы не перегружать память устройства
+        var videoElement = Lampa.PlayerVideo.video();
+        if (videoElement && Math.round(videoElement.currentTime) % 15 === 0) {
+            try {
+                var items = currentData.playlist || [];
+                var hash = getTorrentHash(currentData.url, currentData);
+                var fileIdx = getFileIndex(currentData.url, items);
+                
                 var storageKey = 'lampa_torrent_track_' + hash;
                 var state = { index: fileIdx, updated: Date.now() };
-                
                 localStorage.setItem(storageKey, JSON.stringify(state));
-                writeLog('Сохранение: Записан индекс серии ' + fileIdx + ' для хэша ' + hash);
-
-                // Намертво синхронизируем UI, чтобы галочка перепрыгнула на фото
-                if (Lampa.Player.render) {
-                    var listIdx = items.findIndex(function(it) { return it.url === currentData.url; });
-                    if (listIdx === -1 && currentData.id !== undefined) listIdx = parseInt(currentData.id);
-                    
-                    if (listIdx !== -1) {
-                        Lampa.Player.render.playlist_index = listIdx;
-                        writeLog('UI Синхронизация галочки: playlist_index = ' + listIdx);
-                    }
-                }
-            }
-        } catch (e) {
-            writeLog('Ошибка в обработчике change: ' + e.message);
+            } catch(e) {}
         }
     });
 
