@@ -12,7 +12,7 @@
     var config = {
 	'online.js': '1.1',
         'pubtorr.js': '1.0',
-        'ss.js': '1.0',
+        'ss.js': '1.0.1',
         'audio.js': '1.0.11'
     };
 
