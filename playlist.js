@@ -1,60 +1,106 @@
 (function () {
     'use strict';
 
-    var targetIndexForClick = 0;
-    var clickDone = false;
+    // Функция для генерации чистого ключа в localStorage на основе названия сериала
+    function getStorageKey(data) {
+        var name = 'unknown';
+        if (data.movie && data.movie.title) name = data.movie.title;
+        else if (data.object && data.object.title) name = data.object.title;
+        else if (data.title) name = data.title;
+        
+        // Делаем безопасный ключ без пробелов и спецсимволов
+        return 'lampa_playlist_track_' + name.replace(/[^a-zа-я0-9]/gi, '_').toLowerCase();
+    }
 
-    // Ловим старт плеера и запоминаем, какая серия реально включилась
+    // Ловим самый первый момент инициализации трека в плеере
     Lampa.Player.listener.follow('start', function (data) {
         if (!data || !data.playlist) return;
 
-        clickDone = false; // Сбрасываем флаг для нового видео
-        
-        var realIndex = -1;
-        if (data.id !== undefined && data.playlist[data.id]) {
-            realIndex = parseInt(data.id);
-        } else {
-            realIndex = data.playlist.findIndex(function(item) { return item.url === data.url; });
+        var storageKey = getStorageKey(data);
+        var savedData = null;
+
+        try {
+            savedData = JSON.parse(localStorage.getItem(storageKey));
+        } catch (e) {}
+
+        // Вычисляем, какой индекс у серии, которую юзер ткнул в файлах сейчас
+        var currentIndex = data.id !== undefined ? parseInt(data.id) : data.playlist.findIndex(function(item) { return item.url === data.url; });
+
+        // Если в базе есть инфо о прошлой серии, и она НЕ совпадает с тем, что открывается сейчас
+        if (savedData && savedData.index !== undefined && currentIndex !== savedData.index) {
+            var targetIndex = savedData.index;
+
+            if (data.playlist[targetIndex]) {
+                var targetEpisode = data.playlist[targetIndex];
+                
+                // ПОДМЕНЯЕМ данные запуска для Lampa прямо на лету!
+                data.id = targetIndex;
+                data.url = targetEpisode.url;
+                data.title = targetEpisode.title || data.title;
+                if (targetEpisode.subtitle) data.subtitle = targetEpisode.subtitle;
+                
+                // Если было сохранено время внутри серии, подтягиваем и его
+                if (savedData.time) {
+                    data.timeline = { time: savedData.time };
+                    if (data.movie) data.movie.time = savedData.time;
+                }
+                
+                // Фиксируем в рендере Lampa актуальный индекс для галочки
+                if (Lampa.Player.render) {
+                    Lampa.Player.render.playlist_index = targetIndex;
+                }
+                return;
+            }
         }
 
-        // Если это не первая серия (индекс > 0), запоминаем её для автоклика
-        if (realIndex > 0) {
-            targetIndexForClick = realIndex;
-        } else {
-            clickDone = true; // Для первой серии кликать не нужно
+        // Если открылась актуальная серия, просто фиксируем её индекс в рендере для правильной галочки
+        if (currentIndex !== -1 && Lampa.Player.render) {
+            Lampa.Player.render.playlist_index = currentIndex;
         }
     });
 
-    // Следим за появлением меню на экране
-    setInterval(function() {
-        if (clickDone) return; // Если уже кликнули, ничего не делаем
-
-        // Ищем элементы списка серий на экране
-        var items = $('.player-playlist__item, .player-panel__playlist-item, [focusable]').filter(function() {
-            var txt = $(this).text().toLowerCase();
-            return txt.indexOf('эпизод') !== -1 || txt.indexOf('серия') !== -1;
-        });
-
-        // Как только меню появилось и отрендерилось
-        if (items.length > 0 && items.eq(targetIndexForClick).length) {
-            var targetItem = items.eq(targetIndexForClick);
-
-            // Проверяем, что галочка еще НЕ стоит на этой серии (чтобы не кликать бесконечно)
-            // Lampa отмечает активный пункт классом active или выбранным стилем
-            if (!targetItem.hasClass('active') && !targetItem.hasClass('selected')) {
-                
-                // Виртуально «кликаем» по нужной строчке, как будто ты сам нажал на неё пультом
-                targetItem.trigger('click');
-                
-                // Ставим флаг, что задача выполнена успешно
-                clickDone = true;
+    // Следим за изменением серии (когда ты кликаешь в плейлисте или срабатывает автопереключение)
+    Lampa.Player.listener.follow('change', function(data) {
+        if (!data || !data.playlist) return;
+        
+        var currentIndex = data.id !== undefined ? parseInt(data.id) : data.playlist.findIndex(function(item) { return item.url === data.url; });
+        
+        if (currentIndex !== -1) {
+            var storageKey = getStorageKey(data);
+            var state = {
+                index: currentIndex,
+                url: data.url,
+                time: 0,
+                updated: Date.now()
+            };
+            localStorage.setItem(storageKey, JSON.stringify(state));
+            
+            if (Lampa.Player.render) {
+                Lampa.Player.render.playlist_index = currentIndex;
             }
         }
-    }, 300); // Проверяем экран каждые 300мс
+    });
 
-    // Сбрасываем флаг при закрытии плеера
-    Lampa.Player.listener.follow('destroy', function () {
-        clickDone = false;
+    // Запоминаем текущее время (секунды) внутри серии, обновляя запись в localStorage
+    Lampa.PlayerVideo.listener.follow('timeupdate', function(videoData) {
+        var currentData = Lampa.Player.data; // Получаем статичные данные плеера
+        if (!currentData || !currentData.playlist) return;
+
+        var videoElement = Lampa.PlayerVideo.video();
+        if (!videoElement || videoElement.currentTime < 5) return; // Начинаем писать после 5 сек просмотра
+
+        var currentIndex = currentData.id !== undefined ? parseInt(currentData.id) : currentData.playlist.findIndex(function(item) { return item.url === currentData.url; });
+        if (currentIndex === -1) return;
+
+        var storageKey = getStorageKey(currentData);
+        var state = {
+            index: currentIndex,
+            url: currentData.url,
+            time: videoElement.currentTime,
+            updated: Date.now()
+        };
+
+        localStorage.setItem(storageKey, JSON.stringify(state));
     });
 
 })();
