@@ -19,9 +19,8 @@
     // 	'online.js': '1.1', покане рабоатет 
         'pubtorr.js': '1.0',
         'ss.js': '1.0.1',
-        'audio.js': '1.0.11',
-		'timecode.js': '1.0.1'
-    };
+        'audio.js': '1.0.11'
+	};
 
     // Собираем массив готовых ссылок с версиями
     var scriptsToLoad = Object.keys(config).map(function (fileName) {
