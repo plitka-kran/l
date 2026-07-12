@@ -1,98 +1,38 @@
 /**
- * Lampa plugin: Playlist Auto-Select Fix (DEBUG BUILD)
- *
- * Та же логика, что и в обычной версии, плюс:
- *  - подробный console.log() с префиксом [PL-FIX]
- *  - визуальный оверлей поверх плеера с последними событиями,
- *    чтобы можно было сфотографировать экран ТВ и прислать скриншот.
- *
- * Установка:
- * 1. Разместите файл там, откуда Lampa сможет скачать его по прямой
- *    ссылке (raw-ссылка GitHub/Gist, свой хостинг, папка плагинов
- *    самохостед-сборки Lampa/Lampac и т.п.).
- * 2. В Lampa: Настройки -> Расширения -> Добавить -> вставьте URL файла.
- * 3. Включите плагин, перезапустите Lampa.
- * 4. Запустите сериал через торрент, дождитесь начала воспроизведения,
- *    откройте плейлист (кнопка со списком серий в плеере) — в левом
- *    верхнем углу экрана появится чёрный блок с логами. Сфотографируйте
- *    его вместе с плейлистом справа.
- *
- * Чтобы вернуть обычный (не debug) режим — просто отключите/удалите
- * этот плагин и используйте версию без логирования.
+ * Lampa plugin: Playlist Auto-Select Fix v3.0
+ * Исправлена проблема с ожиданием создания playlist
  */
+
 (function () {
     'use strict';
 
-    if (window.__lampa_playlist_autoselect_fix_debug__) return;
-    window.__lampa_playlist_autoselect_fix_debug__ = true;
+    if (window.__lampa_playlist_autoselect_fix__) return;
+    window.__lampa_playlist_autoselect_fix__ = true;
 
-    var VOLATILE_PARAMS = [
-        'preload', 'play', 'session', 'sid', 't', 'time', 'ts', '_',
-        'token', 'rnd', 'r', 'cache', 'stream_id', 'streamid'
-    ];
-
-    var IDENTITY_PARAMS = ['link', 'hash', 'index', 'file_index', 'fi', 'id'];
-
-    // ---------- ЛОГИРОВАНИЕ / ОВЕРЛЕЙ ----------
-
-    var LOG_PREFIX = '[PL-FIX]';
-    var logLines = [];
-    var MAX_LINES = 16;
-    var overlayEl = null;
-
-    function ensureOverlay() {
-        if (overlayEl && document.body.contains(overlayEl)) return overlayEl;
-        overlayEl = document.createElement('div');
-        overlayEl.id = 'pl-fix-debug-overlay';
-        overlayEl.style.cssText = [
-            'position:fixed',
-            'top:8px',
-            'left:8px',
-            'max-width:46vw',
-            'max-height:80vh',
-            'overflow:hidden',
-            'background:rgba(0,0,0,0.82)',
-            'color:#00ff7f',
-            'font-family:monospace',
-            'font-size:14px',
-            'line-height:1.35',
-            'padding:10px 12px',
-            'border:1px solid #00ff7f',
-            'border-radius:6px',
-            'z-index:2147483647',
-            'white-space:pre-wrap',
-            'word-break:break-all',
-            'pointer-events:none'
-        ].join(';');
-        overlayEl.textContent = LOG_PREFIX + ' ожидание событий плейлиста...';
-        document.body.appendChild(overlayEl);
-        return overlayEl;
-    }
-
-    function render() {
-        var el = ensureOverlay();
-        el.textContent = logLines.join('\n');
-    }
+    var CONFIG = {
+        VOLATILE_PARAMS: [
+            'preload', 'play', 'session', 'sid', 't', 'time', 'ts', '_',
+            'token', 'rnd', 'r', 'cache', 'stream_id', 'streamid',
+            'rand', 'random', 'cb', 'callback', 'nocache', 'v'
+        ],
+        IDENTITY_PARAMS: ['link', 'hash', 'info_hash', 'index', 'file_index', 'fi', 'id'],
+        DEBUG: true,
+        MAX_WAIT_ATTEMPTS: 50,
+        CHECK_INTERVAL: 300
+    };
 
     function log() {
+        if (!CONFIG.DEBUG) return;
         var args = Array.prototype.slice.call(arguments);
-        var line = args.map(function (a) {
-            if (typeof a === 'object') {
-                try { return JSON.stringify(a); } catch (e) { return String(a); }
-            }
-            return String(a);
-        }).join(' ');
-
-        var ts = new Date().toISOString().slice(11, 19);
-        var full = '[' + ts + '] ' + line;
-
-        console.log(LOG_PREFIX, full);
-        logLines.push(full);
-        if (logLines.length > MAX_LINES) logLines.shift();
-        render();
+        args.unshift('🔧 [PlaylistFix]');
+        console.log.apply(console, args);
     }
 
-    // ---------- ЛОГИКА СОПОСТАВЛЕНИЯ ССЫЛОК ----------
+    function logError() {
+        var args = Array.prototype.slice.call(arguments);
+        args.unshift('❌ [PlaylistFix]');
+        console.error.apply(console, args);
+    }
 
     function safeDecode(s) {
         try { return decodeURIComponent(s); } catch (e) { return s; }
@@ -114,138 +54,406 @@
     }
 
     function pathOf(url) {
-        var noProto = url.replace(/^https?:\/\//i, '');
-        var slashIndex = noProto.indexOf('/');
-        var host = slashIndex === -1 ? noProto : noProto.slice(0, slashIndex);
-        var path = slashIndex === -1 ? '' : noProto.slice(slashIndex);
-        path = path.split('?')[0].split('#')[0];
-        return host.toLowerCase() + path;
+        try {
+            var noProto = url.replace(/^https?:\/\//i, '');
+            var slashIndex = noProto.indexOf('/');
+            var host = slashIndex === -1 ? noProto : noProto.slice(0, slashIndex);
+            var path = slashIndex === -1 ? '' : noProto.slice(slashIndex);
+            path = path.split('?')[0].split('#')[0];
+            return host.toLowerCase() + path;
+        } catch (e) {
+            return url;
+        }
     }
 
     function identityKey(url) {
-        var q = parseQuery(url);
-        var parts = [];
-        IDENTITY_PARAMS.forEach(function (p) {
-            if (q[p] !== undefined) parts.push(p + '=' + q[p]);
-        });
-        if (!parts.length) return null;
-        return parts.join('&');
+        try {
+            var q = parseQuery(url);
+            var parts = [];
+            CONFIG.IDENTITY_PARAMS.forEach(function (p) {
+                if (q[p] !== undefined) parts.push(p + '=' + q[p]);
+            });
+            if (!parts.length) return null;
+            return parts.join('&');
+        } catch (e) {
+            return null;
+        }
     }
 
     function normalizedKey(url) {
-        var q = parseQuery(url);
-        var keys = Object.keys(q).filter(function (k) {
-            return VOLATILE_PARAMS.indexOf(k) === -1;
-        }).sort();
-        var qs = keys.map(function (k) { return k + '=' + q[k]; }).join('&');
-        return pathOf(url) + '?' + qs;
+        try {
+            var q = parseQuery(url);
+            var keys = Object.keys(q).filter(function (k) {
+                return CONFIG.VOLATILE_PARAMS.indexOf(k) === -1;
+            }).sort();
+            var qs = keys.map(function (k) { return k + '=' + q[k]; }).join('&');
+            return pathOf(url) + '?' + qs;
+        } catch (e) {
+            return url;
+        }
     }
 
     function findMatch(rawUrl, items) {
-        if (!rawUrl || !items || !items.length) {
-            log('findMatch: нет rawUrl или пустой плейлист', 'items=' + (items ? items.length : 0));
-            return null;
-        }
+        if (!rawUrl || !items || !items.length) return null;
 
+        // 1) Точное совпадение
         var exact = items.filter(function (it) { return it.url === rawUrl; })[0];
-        if (exact) {
-            log('MATCH (exact) ->', exact.title || exact.url);
-            return exact;
-        }
+        if (exact) return exact;
 
+        // 2) По идентификатору файла
         var rawId = identityKey(rawUrl);
-        log('raw identityKey =', rawId);
         if (rawId) {
-            var byId = items.filter(function (it) { return identityKey(it.url) === rawId; })[0];
-            if (byId) {
-                log('MATCH (by identity) ->', byId.title || byId.url);
-                return byId;
-            }
+            var byId = items.filter(function (it) { 
+                return identityKey(it.url) === rawId;
+            })[0];
+            if (byId) return byId;
         }
 
+        // 3) По нормализованной ссылке
         var rawNorm = normalizedKey(rawUrl);
-        log('raw normalizedKey =', rawNorm);
-        var byNorm = items.filter(function (it) { return normalizedKey(it.url) === rawNorm; })[0];
-        if (byNorm) {
-            log('MATCH (by normalized) ->', byNorm.title || byNorm.url);
-            return byNorm;
-        }
+        var byNorm = items.filter(function (it) { 
+            return normalizedKey(it.url) === rawNorm;
+        })[0];
+        if (byNorm) return byNorm;
 
-        log('NO MATCH FOUND. Playlist keys:');
-        items.forEach(function (it, i) {
-            log('  #' + i, (it.title || ''), '| id=' + identityKey(it.url), '| norm=' + normalizedKey(it.url));
-        });
+        // 4) По пути
+        var rawPath = pathOf(rawUrl);
+        var byPath = items.filter(function (it) {
+            return pathOf(it.url) === rawPath;
+        })[0];
+        if (byPath) return byPath;
 
         return null;
     }
 
-    // ---------- ПАТЧ LAMPA ----------
-
+    // ========== ОСНОВНАЯ ЛОГИКА С УМНЫМ ОЖИДАНИЕМ ==========
     var lastRawUrl = null;
+    var lastPlaylist = null;
+    var isPatched = false;
+    var waitAttempts = 0;
+    var waitInterval = null;
 
-    function patch() {
-        if (!window.Lampa || !Lampa.Player || typeof Lampa.Player.playlist !== 'function') {
-            return setTimeout(patch, 500);
+    function tryPatch() {
+        waitAttempts++;
+
+        // Проверяем наличие Lampa
+        if (!window.Lampa) {
+            if (waitAttempts < CONFIG.MAX_WAIT_ATTEMPTS) {
+                log('⏳ Ожидание Lampa... попытка ' + waitAttempts);
+                return false;
+            } else {
+                logError('❌ Lampa не загружена');
+                clearInterval(waitInterval);
+                return false;
+            }
         }
 
-        var pl = Lampa.Player.playlist();
-        if (!pl || pl.__autoselect_patched_debug__) return;
-        pl.__autoselect_patched_debug__ = true;
-
-        log('Плагин подключён, жду вызовы Playlist.url()/set()...');
-
-        var origUrl = pl.url;
-        var origSet = pl.set;
-
-        pl.url = function (u) {
-            lastRawUrl = u;
-            log('Playlist.url() вызван с:', u);
-            try {
-                var items = pl.get() || [];
-                var match = findMatch(u, items);
-                if (match) {
-                    log('-> подставляю точный url элемента плейлиста');
-                    u = match.url;
-                } else {
-                    log('-> совпадение не найдено, использую url как есть');
-                }
-            } catch (e) {
-                log('ОШИБКА в url():', e && e.message);
+        // Проверяем Player
+        if (!Lampa.Player) {
+            if (waitAttempts < CONFIG.MAX_WAIT_ATTEMPTS) {
+                log('⏳ Ожидание Lampa.Player... попытка ' + waitAttempts);
+                return false;
+            } else {
+                logError('❌ Lampa.Player не найден');
+                clearInterval(waitInterval);
+                return false;
             }
-            return origUrl(u);
-        };
+        }
 
-        pl.set = function (p) {
-            log('Playlist.set() вызван, элементов:', (p || []).length);
-            var res = origSet(p);
-            try {
-                if (lastRawUrl) {
-                    var match = findMatch(lastRawUrl, p || []);
-                    if (match) {
-                        log('set(): пересчитываю position по найденному совпадению');
-                        origUrl(match.url);
-                        origSet(p);
-                    } else {
-                        log('set(): совпадение для lastRawUrl не найдено');
-                    }
-                }
-            } catch (e) {
-                log('ОШИБКА в set():', e && e.message);
+        // Пробуем получить playlist
+        var pl = null;
+        try {
+            pl = Lampa.Player.playlist();
+        } catch (e) {
+            // Игнорируем ошибку
+        }
+
+        // Если playlist еще не создан, ждем
+        if (!pl) {
+            if (waitAttempts < CONFIG.MAX_WAIT_ATTEMPTS) {
+                log('⏳ Ожидание создания playlist... попытка ' + waitAttempts);
+                return false;
+            } else {
+                logError('❌ Playlist не создан после ' + CONFIG.MAX_WAIT_ATTEMPTS + ' попыток');
+                clearInterval(waitInterval);
+                
+                // Последняя попытка: патчим через прототип
+                tryPatchPrototype();
+                return false;
             }
-            log('Текущая position после set():', pl.position ? pl.position() : '?');
-            return res;
-        };
+        }
+
+        // Если уже пропатчен
+        if (pl.__autoselect_patched__) {
+            log('ℹ️ Плейлист уже пропатчен');
+            clearInterval(waitInterval);
+            isPatched = true;
+            return true;
+        }
+
+        // Успешно получили playlist - патчим!
+        log('✅ Получен playlist! Начинаем патчинг...');
+        doPatch(pl);
+        clearInterval(waitInterval);
+        isPatched = true;
+        return true;
     }
 
+    // ========== ЗАПАСНОЙ ВАРИАНТ: ПАТЧИМ ПРОТОТИП ==========
+    function tryPatchPrototype() {
+        try {
+            if (Lampa.Player && Lampa.Player.prototype) {
+                var proto = Lampa.Player.prototype;
+                var origPlaylist = proto.playlist;
+                
+                if (origPlaylist && !origPlaylist.__patched__) {
+                    proto.playlist = function () {
+                        var result = origPlaylist.call(this);
+                        // Если playlist создался, пачуем его
+                        if (result && !result.__autoselect_patched__) {
+                            log('🔄 Патчим через прототип');
+                            doPatch(result);
+                        }
+                        return result;
+                    };
+                    proto.playlist.__patched__ = true;
+                    log('✅ Прототип пропатчен');
+                }
+            }
+        } catch (e) {
+            logError('Ошибка патча прототипа:', e);
+        }
+    }
+
+    // ========== НЕПОСРЕДСТВЕННО ПАТЧИНГ ==========
+    function doPatch(pl) {
+        try {
+            log('🔧 Патчинг playlist...');
+
+            var origUrl = pl.url;
+            var origSet = pl.set;
+            var origGet = pl.get;
+
+            pl.__orig_url = origUrl;
+            pl.__orig_set = origSet;
+            pl.__orig_get = origGet;
+
+            // Патчим url()
+            pl.url = function (u) {
+                if (u) {
+                    lastRawUrl = u;
+                    try {
+                        var items = this.get ? this.get() : (pl.get ? pl.get() : []);
+                        if (items && items.length) {
+                            var match = findMatch(u, items);
+                            if (match) {
+                                log('🔄 Подмена URL:', u, '→', match.url);
+                                u = match.url;
+                                lastPlaylist = items;
+                            }
+                        }
+                    } catch (e) {
+                        // Игнорируем
+                    }
+                }
+                return origUrl.call(this, u);
+            };
+
+            // Патчим set()
+            pl.set = function (p) {
+                try {
+                    if (lastRawUrl && p && p.length) {
+                        var match = findMatch(lastRawUrl, p);
+                        if (match) {
+                            var currentUrl = origUrl.call(this);
+                            if (currentUrl !== match.url) {
+                                origUrl.call(this, match.url);
+                            }
+                            lastPlaylist = p;
+                        }
+                    }
+                } catch (e) {}
+                return origSet.call(this, p);
+            };
+
+            // Патчим get() для мониторинга
+            pl.get = function () {
+                var result = origGet.call(this);
+                if (result && result.length) {
+                    lastPlaylist = result;
+                }
+                return result;
+            };
+
+            pl.__autoselect_patched__ = true;
+            log('✅ Плейлист успешно пропатчен!');
+
+            // Пытаемся восстановить текущую серию
+            tryRestoreCurrent();
+
+        } catch (e) {
+            logError('Ошибка патчинга:', e);
+        }
+    }
+
+    // ========== ВОССТАНОВЛЕНИЕ ТЕКУЩЕЙ СЕРИИ ==========
+    function tryRestoreCurrent() {
+        try {
+            var current = Lampa.Player.current();
+            if (current) {
+                var url = current.url ? current.url() : null;
+                if (url) {
+                    log('🎬 Текущее воспроизведение:', url);
+                    var pl = Lampa.Player.playlist();
+                    if (pl && pl.get) {
+                        var items = pl.get();
+                        var match = findMatch(url, items);
+                        if (match) {
+                            log('✅ Найдена активная серия в плейлисте');
+                            // Обновляем current
+                            if (current.set) {
+                                current.set({ url: match.url });
+                            }
+                            // Перерисовываем плейлист
+                            if (Lampa.Component && Lampa.Component.get) {
+                                var playlistComp = Lampa.Component.get('playlist');
+                                if (playlistComp && playlistComp.render) {
+                                    playlistComp.render();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            // Игнорируем
+        }
+    }
+
+    // ========== ХУК ДЛЯ ОБНОВЛЕНИЯ ПЛЕЙЛИСТА ==========
+    function setupPlaylistUpdateHook() {
+        try {
+            if (Lampa.Component) {
+                var origAdd = Lampa.Component.add;
+                if (origAdd && !origAdd.__hooked__) {
+                    Lampa.Component.add = function (name, component) {
+                        var result = origAdd.call(this, name, component);
+                        if (name === 'playlist' || name === 'torrent-playlist') {
+                            log('📦 Обнаружено создание компонента playlist');
+                            setTimeout(function() {
+                                // Пробуем перепатчить
+                                var pl = Lampa.Player.playlist();
+                                if (pl && !pl.__autoselect_patched__) {
+                                    doPatch(pl);
+                                }
+                            }, 500);
+                        }
+                        return result;
+                    };
+                    Lampa.Component.add.__hooked__ = true;
+                    log('✅ Хук на Component.add установлен');
+                }
+            }
+        } catch (e) {
+            // Игнорируем
+        }
+    }
+
+    // ========== ЗАПУСК ==========
+    log('🚀 Запуск Playlist Auto-Select Fix v3.0');
+
+    // Событие app:ready
     if (window.Lampa && Lampa.Listener && typeof Lampa.Listener.follow === 'function') {
         Lampa.Listener.follow('app', function (e) {
-            if (e.type === 'ready') patch();
+            if (e.type === 'ready') {
+                log('📢 Получено событие app:ready');
+                // Начинаем проверку с задержкой
+                setTimeout(function() {
+                    if (!isPatched) {
+                        waitInterval = setInterval(tryPatch, CONFIG.CHECK_INTERVAL);
+                    }
+                }, 1000);
+            }
         });
     }
 
-    patch();
+    // MutationObserver на случай динамической загрузки
+    var observer = new MutationObserver(function () {
+        if (window.Lampa && window.Lampa.Player && !isPatched) {
+            log('👀 Обнаружена загрузка Lampa через MutationObserver');
+            if (!waitInterval) {
+                waitInterval = setInterval(tryPatch, CONFIG.CHECK_INTERVAL);
+            }
+            // Отключаем observer после первого срабатывания
+            observer.disconnect();
+        }
+    });
+    observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true
+    });
 
-    // на случай, если оверлей не успел смонтироваться при старте
-    document.addEventListener('DOMContentLoaded', ensureOverlay);
-    setTimeout(ensureOverlay, 1000);
+    // Пробуем сразу
+    setTimeout(function() {
+        if (!isPatched && !waitInterval) {
+            log('🔄 Начинаем проверку...');
+            waitInterval = setInterval(tryPatch, CONFIG.CHECK_INTERVAL);
+        }
+    }, 500);
+
+    // Устанавливаем хук для обновления плейлиста
+    setTimeout(setupPlaylistUpdateHook, 1000);
+
+    // Хук на изменение плейлиста через Lampa.Storage
+    if (window.Lampa && Lampa.Storage) {
+        var origSet = Lampa.Storage.set;
+        if (origSet) {
+            Lampa.Storage.set = function (key, value) {
+                var result = origSet.call(this, key, value);
+                if (key === 'playlist' && !isPatched) {
+                    log('📦 Обнаружено изменение playlist в Storage');
+                    setTimeout(function() {
+                        var pl = Lampa.Player.playlist();
+                        if (pl && !pl.__autoselect_patched__) {
+                            doPatch(pl);
+                        }
+                    }, 100);
+                }
+                return result;
+            };
+        }
+    }
+
+    // API для ручного управления
+    window.PlaylistFix = {
+        version: '3.0',
+        patch: function() {
+            clearInterval(waitInterval);
+            return tryPatch();
+        },
+        findMatch: findMatch,
+        normalizedKey: normalizedKey,
+        identityKey: identityKey,
+        config: CONFIG,
+        debug: function (enabled) {
+            CONFIG.DEBUG = enabled;
+            log('🐞 Отладка ' + (enabled ? 'включена' : 'выключена'));
+        },
+        status: function () {
+            var pl = Lampa && Lampa.Player ? Lampa.Player.playlist() : null;
+            return {
+                patched: pl ? !!pl.__autoselect_patched__ : false,
+                isPatched: isPatched,
+                lastRawUrl: lastRawUrl,
+                lastPlaylistLength: lastPlaylist ? lastPlaylist.length : 0,
+                hasLampa: !!window.Lampa,
+                hasPlayer: !!(window.Lampa && Lampa.Player),
+                waitAttempts: waitAttempts
+            };
+        },
+        forceRestore: tryRestoreCurrent
+    };
+
+    log('💡 Для отладки используйте PlaylistFix.status()');
+    log('💡 Если плагин не сработал, выполните PlaylistFix.patch() вручную');
 })();
