@@ -2,13 +2,7 @@
 
 (function () {
     'use strict';
-    
-    Lampa.Listener.follow('full', function (e) {
-        if (e.type == 'complite') {
-            e.object.activity.render().find('.view--trailer').remove();
-        }
-    }); 
-    
+   
     function startsWith(str, searchString) {
       return str.lastIndexOf(searchString, 0) === 0;
     }
