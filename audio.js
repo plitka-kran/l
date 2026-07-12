@@ -108,7 +108,7 @@
           Lampa.PlayerPanel.setTracks([{
             index: -1,
             language: '',
-            label: Lampa.Lang.translate('loading') + ' (Voiceover)...',
+            label: Lampa.Lang.translate('loading'),
             ghost: true,
             selected: false
           }]);
