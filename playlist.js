@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var logDiv = $('<div id="lampa-plugin-logs" style="position:fixed; top:10px; left:10px; background:rgba(0,0,0,0.85); color:#00ff00; padding:10px; font-family:monospace; font-size:12px; z-index:99999; max-width:400px; max-height:300px; overflow-y:auto; border:1px solid #00ff00; pointer-events:none;">[Plugin Init] Поиск плейлиста...</div>');
+    var logDiv = $('<div id="lampa-plugin-logs" style="position:fixed; top:10px; left:10px; background:rgba(0,0,0,0.85); color:#00ff00; padding:10px; font-family:monospace; font-size:12px; z-index:99999; max-width:400px; max-height:300px; overflow-y:auto; border:1px solid #00ff00; pointer-events:none;">[Plugin Init] Мониторинг плейлиста...</div>');
     $('body').append(logDiv);
 
     function writeLog(text) {
@@ -11,27 +11,18 @@
         console.log('[Lampa Playlist Log]', text);
     }
 
-    // Ключ на основе базового названия контента
     function getStorageKey(data) {
         var name = 'unknown';
         if (data.movie && data.movie.title) name = data.movie.title;
         else if (data.object && data.object.title) name = data.object.title;
         else if (data.title) name = data.title;
-        
         return 'lampa_custom_pl_' + name.replace(/[^a-zа-я0-9]/gi, '_').toLowerCase();
     }
 
-    // Глубокий поиск массива плейлиста
     function findPlaylist(data) {
         if (data.playlist && data.playlist.length) return data.playlist;
         if (data.movie && data.movie.playlist && data.movie.playlist.length) return data.movie.playlist;
         if (data.object && data.object.playlist && data.object.playlist.length) return data.object.playlist;
-        
-        // Поиск внутри сезонов, если структура сложная
-        if (data.movie && data.movie.seasons) {
-            writeLog('Playlist: Найдена структура сезонов, ищем серии...');
-        }
-        
         if (Lampa.Player && typeof Lampa.Player.playlist === 'function') {
             var pl = Lampa.Player.playlist();
             if (pl && pl.length) return pl;
@@ -39,141 +30,136 @@
         return null;
     }
 
+    function findCurrentIndex(playlist, data) {
+        if (data.id !== undefined && playlist[data.id]) return parseInt(data.id);
+        return playlist.findIndex(function(item) {
+            return item.url === data.url;
+        });
+    }
+
+    // Функция для принудительного запуска выбранной серии
+    function playEpisodeAtIndex(playlist, index, oldData) {
+        if (!playlist || !playlist[index]) return;
+        writeLog('Переключение: Запуск серии под индексом ' + index);
+
+        var targetEpisode = playlist[index];
+        
+        // Формируем чистый объект данных для плеера Lampa
+        var newData = Object.assign({}, oldData, {
+            id: index,
+            url: targetEpisode.url,
+            title: targetEpisode.title || oldData.title,
+            subtitle: targetEpisode.subtitle || targetEpisode.title || '',
+            timeline: { time: 0 }
+        });
+        
+        if (newData.movie) newData.movie.time = 0;
+
+        // Перезапускаем плеер Lampa с новым файлом
+        Lampa.Player.play(newData);
+    }
+
+    // Перехват кнопок «Вперед» / «Назад» на уровне ядра плеера Lampa
+    function interceptPlayerControls(data) {
+        var playlist = findPlaylist(data);
+        if (!playlist || playlist.length <= 1) return;
+
+        var currentIndex = findCurrentIndex(playlist, data);
+        if (currentIndex === -1) return;
+
+        // Хак: Подменяем стандартные методы Lampa на наши кастомные переключатели
+        Lampa.Player.next = function() {
+            var nextIndex = currentIndex + 1;
+            if (nextIndex < playlist.length) {
+                writeLog('Клик: Вперед -> Серия ' + nextIndex);
+                playEpisodeAtIndex(playlist, nextIndex, data);
+            } else {
+                writeLog('Клик: Конец плейлиста, переключать некуда');
+            }
+        };
+
+        Lampa.Player.prev = function() {
+            var prevIndex = currentIndex - 1;
+            if (prevIndex >= 0) {
+                writeLog('Клик: Назад -> Серия ' + prevIndex);
+                playEpisodeAtIndex(playlist, prevIndex, data);
+            } else {
+                writeLog('Клик: Это первая серия');
+            }
+        };
+        
+        writeLog('Инъекция: Методы Lampa.Player.next/prev успешно перехвачены.');
+    }
+
     function restoreLastEpisode(data) {
         if (!data) return;
         
         var playlist = findPlaylist(data);
+        if (!playlist || playlist.length <= 1) return;
+
         var storageKey = getStorageKey(data);
-        
-        if (!playlist) {
-            writeLog('Start: Массив плейлиста не обнаружен в data.movie или data.object');
-            // Выведем ключи объекта для дебага, чтобы понять где прячутся серии
-            writeLog('Debug data keys: ' + Object.keys(data).join(', '));
-            if (data.movie) writeLog('Debug movie keys: ' + Object.keys(data.movie).join(', '));
-            return;
-        }
-
-        writeLog('Playlist: Успешно найден! Серий в списке: ' + playlist.length);
-
         var savedHistory = null;
         try {
             savedHistory = JSON.parse(localStorage.getItem(storageKey));
         } catch (e) {}
 
-        if (!savedHistory) {
-            writeLog('History: Локальная история для этого сериала пуста.');
+        if (!savedHistory) return;
+
+        var currentIdx = findCurrentIndex(playlist, data);
+        var savedIdx = savedHistory.savedId;
+
+        // Если открылась не та серия, которая сохранена в истории
+        if (savedIdx !== undefined && currentIdx !== savedIdx && playlist[savedIdx]) {
+            writeLog('Восстановление: Найдена прошлая серия ' + savedIdx + '. Подменяем старт...');
+            
+            var target = playlist[savedIdx];
+            data.id = savedIdx;
+            data.url = target.url;
+            data.title = target.title || data.title;
+            data.subtitle = target.subtitle || target.title || '';
+            
+            if (savedHistory.time) {
+                data.timeline = { time: savedHistory.time };
+                if (data.movie) data.movie.time = savedHistory.time;
+            }
             return;
         }
 
-        writeLog('History: Последняя просмотренная серия (индекс/id): ' + savedHistory.savedId + ' на ' + Math.round(savedHistory.time) + ' сек.');
-
-        // Вычисляем текущий индекс (раз id=3 это 3-я серия, проверим как соотносятся id или индексы)
-        var currentIdx = data.id !== undefined ? data.id : playlist.findIndex(function(i) { return i.url === data.url; });
-        var savedIdx = savedHistory.savedId;
-
-        if (savedIdx !== undefined && currentIdx !== savedIdx && playlist[savedIdx]) {
-            writeLog('Restore: Выполняем автопереключение на серию с индексом ' + savedIdx);
-            
-            var target = playlist[savedIdx];
-            data.id = savedIdx; // Подменяем ID на сохраненный
-            data.url = target.url;
-            data.title = target.title || data.title;
-            if (target.subtitle) data.subtitle = target.subtitle;
-        }
-
-        if (savedHistory.time && (data.id === savedIdx || playlist[savedIdx] && playlist[savedIdx].url === data.url)) {
+        // Если серия совпала, но нужно выставить время
+        if (savedHistory.time && currentIdx === savedIdx) {
             data.timeline = { time: savedHistory.time };
             if (data.movie) data.movie.time = savedHistory.time;
-            writeLog('Restore: Таймлайн восстановлен на ' + Math.round(savedHistory.time) + ' сек.');
+            writeLog('Восстановление: Время выставлено на ' + Math.round(savedHistory.time) + ' сек.');
         }
     }
 
-    function injectNavigation(data) {
-        if (!data) return;
-        var playlist = findPlaylist(data);
-        if (!playlist || playlist.length <= 1) return;
-
-        // Определяем текущий индекс на основе переданного id серии
-        var currentIndex = data.id !== undefined ? parseInt(data.id) : playlist.findIndex(function(item) {
-            return item.url === data.url;
-        });
-        
-        // Если индекс съехал (например серии начинаются с 1, а не с 0)
-        if (currentIndex !== -1 && !playlist[currentIndex]) {
-            currentIndex = playlist.findIndex(function(item) { return item.url === data.url; });
-        }
-
-        writeLog('Nav: Текущий вычисленный индекс серии = ' + currentIndex);
-        if (currentIndex === -1 || !playlist[currentIndex]) return;
-
-        // Навешиваем событие СЛЕДУЮЩАЯ СЕРИЯ
-        if (currentIndex < playlist.length - 1) {
-            data.next = function() {
-                var nextIndex = currentIndex + 1;
-                writeLog('Nav Клик: Запуск следующей серии -> Индекс: ' + nextIndex);
-                
-                var nextEpisode = playlist[nextIndex];
-                var nextData = Object.assign({}, data, {
-                    id: nextIndex,
-                    url: nextEpisode.url,
-                    title: nextEpisode.title || data.title,
-                    subtitle: nextEpisode.subtitle || data.subtitle,
-                    timeline: { time: 0 }
-                });
-                if (nextData.movie) nextData.movie.time = 0;
-
-                Lampa.Player.play(nextData);
-            };
-        } else {
-            data.next = false;
-        }
-
-        // Навешиваем событие ПРЕДЫДУЩАЯ СЕРИЯ
-        if (currentIndex > 0) {
-            data.prev = function() {
-                var prevIndex = currentIndex - 1;
-                writeLog('Nav Клик: Запуск предыдущей серии -> Индекс: ' + prevIndex);
-                
-                var prevEpisode = playlist[prevIndex];
-                var prevData = Object.assign({}, data, {
-                    id: prevIndex,
-                    url: prevEpisode.url,
-                    title: prevEpisode.title || data.title,
-                    subtitle: prevEpisode.subtitle || data.subtitle,
-                    timeline: { time: 0 }
-                });
-                if (prevData.movie) prevData.movie.time = 0;
-
-                Lampa.Player.play(prevData);
-            };
-        } else {
-            data.prev = false;
-        }
-    }
-
-    // Подписки на события Lampa
+    // Подписки на события
     Lampa.Player.listener.follow('start', function (data) {
         writeLog('--- СОБЫТИЕ START ---');
         restoreLastEpisode(data);
-        injectNavigation(data);
+        interceptPlayerControls(data);
     });
 
     Lampa.Player.listener.follow('change', function(data) {
         writeLog('--- СОБЫТИЕ CHANGE ---');
-        injectNavigation(data);
+        interceptPlayerControls(data);
     });
 
     Lampa.PlayerVideo.listener.follow('timeupdate', function(videoData) {
         var currentData = Lampa.Player.data();
         if (!currentData) return;
 
+        var playlist = findPlaylist(currentData);
+        if (!playlist || playlist.length <= 1) return;
+
         var videoElement = Lampa.PlayerVideo.video();
         if (!videoElement || videoElement.currentTime < 3) return;
 
         var storageKey = getStorageKey(currentData);
-        
+        var currentIdx = findCurrentIndex(playlist, currentData);
+
         var historyState = {
-            savedId: currentData.id, // Сохраняем тот самый ID (номер серии)
+            savedId: currentIdx !== -1 ? currentIdx : currentData.id,
             url: currentData.url,
             title: currentData.title,
             subtitle: currentData.subtitle,
@@ -184,7 +170,7 @@
         localStorage.setItem(storageKey, JSON.stringify(historyState));
         
         if (Math.round(videoElement.currentTime) % 15 === 0) {
-            writeLog('Save: Серия ID=' + currentData.id + ', Время=' + Math.round(videoElement.currentTime) + ' сек.');
+            writeLog('Сохранение: Индекс=' + historyState.savedId + ', Время=' + Math.round(videoElement.currentTime) + ' сек.');
         }
     });
 
