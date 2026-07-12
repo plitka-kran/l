@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var logDiv = $('<div id="lampa-plugin-logs" style="position:fixed; top:10px; left:10px; background:rgba(0,0,0,0.85); color:#00ff00; padding:10px; font-family:monospace; font-size:12px; z-index:99999; max-width:400px; max-height:300px; overflow-y:auto; border:1px solid #00ff00; pointer-events:none;">[Plugin Init] Мониторинг плейлиста...</div>');
+    var logDiv = $('<div id="lampa-plugin-logs" style="position:fixed; top:10px; left:10px; background:rgba(0,0,0,0.85); color:#00ff00; padding:10px; font-family:monospace; font-size:12px; z-index:99999; max-width:400px; max-height:300px; overflow-y:auto; border:1px solid #00ff00; pointer-events:none;">[Plugin Init] Низкоуровневый перехват...</div>');
     $('body').append(logDiv);
 
     function writeLog(text) {
@@ -37,14 +37,11 @@
         });
     }
 
-    // Функция для принудительного запуска выбранной серии
     function playEpisodeAtIndex(playlist, index, oldData) {
         if (!playlist || !playlist[index]) return;
-        writeLog('Переключение: Запуск серии под индексом ' + index);
+        writeLog('Запуск серии: Индекс ' + index + ' (' + (playlist[index].title || 'Без названия') + ')');
 
         var targetEpisode = playlist[index];
-        
-        // Формируем чистый объект данных для плеера Lampa
         var newData = Object.assign({}, oldData, {
             id: index,
             url: targetEpisode.url,
@@ -55,40 +52,62 @@
         
         if (newData.movie) newData.movie.time = 0;
 
-        // Перезапускаем плеер Lampa с новым файлом
+        // Полностью гасим текущий плеер перед перезапуском, чтобы избежать конфликтов запущенных инстансов
+        if (Lampa.PlayerVideo && typeof Lampa.PlayerVideo.destroy === 'function') {
+            Lampa.PlayerVideo.destroy();
+        }
+
         Lampa.Player.play(newData);
     }
 
-    // Перехват кнопок «Вперед» / «Назад» на уровне ядра плеера Lampa
-    function interceptPlayerControls(data) {
+    // Принудительное внедрение в UI-элементы интерфейса Lampa
+    function injectUIListeners(data) {
         var playlist = findPlaylist(data);
         if (!playlist || playlist.length <= 1) return;
 
-        var currentIndex = findCurrentIndex(playlist, data);
-        if (currentIndex === -1) return;
+        // Даем интерфейсу Lampa 300мс на отрисовку кнопок на экране
+        setTimeout(function() {
+            var currentIndex = findCurrentIndex(playlist, Lampa.Player.data() || data);
+            if (currentIndex === -1) return;
 
-        // Хак: Подменяем стандартные методы Lampa на наши кастомные переключатели
-        Lampa.Player.next = function() {
-            var nextIndex = currentIndex + 1;
-            if (nextIndex < playlist.length) {
-                writeLog('Клик: Вперед -> Серия ' + nextIndex);
-                playEpisodeAtIndex(playlist, nextIndex, data);
-            } else {
-                writeLog('Клик: Конец плейлиста, переключать некуда');
-            }
-        };
+            writeLog('UI Инъекция: Текущая серия в плеере: ' + currentIndex);
 
-        Lampa.Player.prev = function() {
-            var prevIndex = currentIndex - 1;
-            if (prevIndex >= 0) {
-                writeLog('Клик: Назад -> Серия ' + prevIndex);
-                playEpisodeAtIndex(playlist, prevIndex, data);
-            } else {
-                writeLog('Клик: Это первая серия');
+            // Отвязываем старые обработчики Lampa от кнопок "Вперед"/"Назад" на экране и вешаем свои
+            $('.player-next, .player-panel__next').off('click').on('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                var nextIndex = currentIndex + 1;
+                if (nextIndex < playlist.length) {
+                    writeLog('UI Клик: Нажата кнопка СЛЕДУЮЩАЯ -> Индекс: ' + nextIndex);
+                    playEpisodeAtIndex(playlist, nextIndex, data);
+                }
+            });
+
+            $('.player-prev, .player-panel__prev').off('click').on('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                var prevIndex = currentIndex - 1;
+                if (prevIndex >= 0) {
+                    writeLog('UI Клик: Нажата кнопка ПРЕДЫДУЩАЯ -> Индекс: ' + prevIndex);
+                    playEpisodeAtIndex(playlist, prevIndex, data);
+                }
+            });
+
+            // Перехватываем также события пульта/клавиатуры через внутренний контроллер Lampa
+            if (Lampa.Controller && Lampa.Controller.listener) {
+                Lampa.Controller.listener.follow('keydown', function(e) {
+                    // Коды клавиш переключения треков/серий на пультах (MediaNext / MediaPrevious)
+                    if (e.code === 'MediaTrackNext' || e.keyCode === 425) {
+                        $('.player-next').click();
+                    }
+                    if (e.code === 'MediaTrackPrevious' || e.keyCode === 424) {
+                        $('.player-prev').click();
+                    }
+                });
             }
-        };
-        
-        writeLog('Инъекция: Методы Lampa.Player.next/prev успешно перехвачены.');
+
+            writeLog('UI Инъекция: Кнопки на экране успешно перехвачены.');
+        }, 300);
     }
 
     function restoreLastEpisode(data) {
@@ -108,9 +127,8 @@
         var currentIdx = findCurrentIndex(playlist, data);
         var savedIdx = savedHistory.savedId;
 
-        // Если открылась не та серия, которая сохранена в истории
         if (savedIdx !== undefined && currentIdx !== savedIdx && playlist[savedIdx]) {
-            writeLog('Восстановление: Найдена прошлая серия ' + savedIdx + '. Подменяем старт...');
+            writeLog('История: Найдена серия ' + savedIdx + '. Подменяем ссылку старта...');
             
             var target = playlist[savedIdx];
             data.id = savedIdx;
@@ -125,24 +143,23 @@
             return;
         }
 
-        // Если серия совпала, но нужно выставить время
         if (savedHistory.time && currentIdx === savedIdx) {
             data.timeline = { time: savedHistory.time };
             if (data.movie) data.movie.time = savedHistory.time;
-            writeLog('Восстановление: Время выставлено на ' + Math.round(savedHistory.time) + ' сек.');
+            writeLog('История: Время восстановлено на ' + Math.round(savedHistory.time) + ' сек.');
         }
     }
 
-    // Подписки на события
+    // Подписки на системные события Lampa
     Lampa.Player.listener.follow('start', function (data) {
         writeLog('--- СОБЫТИЕ START ---');
         restoreLastEpisode(data);
-        interceptPlayerControls(data);
+        injectUIListeners(data);
     });
 
     Lampa.Player.listener.follow('change', function(data) {
         writeLog('--- СОБЫТИЕ CHANGE ---');
-        interceptPlayerControls(data);
+        injectUIListeners(data);
     });
 
     Lampa.PlayerVideo.listener.follow('timeupdate', function(videoData) {
@@ -170,7 +187,7 @@
         localStorage.setItem(storageKey, JSON.stringify(historyState));
         
         if (Math.round(videoElement.currentTime) % 15 === 0) {
-            writeLog('Сохранение: Индекс=' + historyState.savedId + ', Время=' + Math.round(videoElement.currentTime) + ' сек.');
+            writeLog('Прогресс: Серия=' + historyState.savedId + ', Время=' + Math.round(videoElement.currentTime) + ' сек.');
         }
     });
 
