@@ -1,87 +1,47 @@
 (function () {
     'use strict';
 
-    // Функция для поиска реального индекса серии в массиве
-    function getCurrentIndex(data) {
-        if (!data) return 0;
-        var playlist = data.playlist || (data.movie && data.movie.playlist);
-        if (!playlist && Lampa.Player && typeof Lampa.Player.playlist === 'function') {
-            try { playlist = Lampa.Player.playlist(); } catch(e){}
-        }
-        if (!playlist || !playlist.length) return 0;
-
-        if (data.id !== undefined && playlist[data.id]) {
-            return parseInt(data.id);
-        }
-        
-        var idx = playlist.findIndex(function(item) {
-            return item.url === data.url;
-        });
-        return idx !== -1 ? idx : 0;
-    }
-
-    // Глобальный перехватчик рендеринга интерфейса Lampa
     Lampa.Player.listener.follow('start', function (data) {
         if (!data) return;
 
-        // Ключевой хак: Ждем, пока Lampa создаст объект рендера (интерфейса)
+        // Даем плееру 300 миллисекунд полностью загрузиться и построить плейлист
         setTimeout(function() {
-            if (Lampa.Player.render) {
-                
-                // Перехватываем стандартную функцию отрисовки плейлиста Lampa
-                var originalPlaylistRender = Lampa.Player.render.playlist;
-                
-                Lampa.Player.render.playlist = function() {
-                    // Перед тем как Lampa нарисует меню, принудительно вычисляем и подсовываем ей правильный индекс
-                    var currentData = Lampa.Player.data || data;
-                    var realIndex = getCurrentIndex(currentData);
-                    
-                    // Записываем индекс во все внутренние переменные отображения Lampa
+            // 1. Находим массив серий
+            var playlist = data.playlist || (data.movie && data.movie.playlist);
+            if (!playlist || !playlist.length) return;
+
+            // 2. Вычисляем индекс серии, которая РЕАЛЬНО сейчас играет
+            var realIndex = -1;
+            if (data.id !== undefined && playlist[data.id]) {
+                realIndex = parseInt(data.id);
+            } else {
+                realIndex = playlist.findIndex(function(item) {
+                    return item.url === data.url;
+                });
+            }
+
+            // 3. Если индекс нашли, и он не равен 0 (ведь Lampa по дефолту ставит 0)
+            if (realIndex > 0) {
+                // Мягко меняем индекс в самом отображении интерфейса
+                if (Lampa.Player.render) {
                     Lampa.Player.render.playlist_index = realIndex;
-                    if (typeof Lampa.Player.playlistIndex === 'function') {
-                        try { Lampa.Player.playlistIndex(realIndex); } catch(e){}
-                    }
+                }
+                
+                // Внутренне перекликиваем указатель Lampa на эту серию
+                if (typeof Lampa.Player.playlistIndex === 'function') {
+                    try {
+                        // Передаем true вторым аргументом (если поддерживается), чтобы просто сдвинуть маркер без перезапуска видео
+                        Lampa.Player.playlistIndex(realIndex, true); 
+                    } catch(e) {}
+                }
 
-                    // Вызываем оригинальный рендер Lampa, но уже с нашей правильной позицией
-                    if (typeof originalPlaylistRender === 'function') {
-                        originalPlaylistRender.apply(Lampa.Player.render, arguments);
-                    }
-
-                    // Дополнительный визуальный хак: ищем строчки меню в DOM и вручную переключаем класс выделения (active)
-                    setTimeout(function() {
-                        var items = $('.player-playlist__item, .player-panel__playlist-item');
-                        if (items.length) {
-                            items.removeClass('active'); // Снимаем выделение с 1-й серии
-                            items.eq(realIndex).addClass('active'); // Вешаем на текущую (например, 3-ю)
-                            
-                            // Прокручиваем меню к активной серии, если список длинный
-                            var activeItem = items.eq(realIndex);
-                            if (activeItem.length && activeItem.parent().length) {
-                                activeItem.parent().scrollTop(activeItem.position().top + activeItem.parent().scrollTop() - 100);
-                            }
-                        }
-                    }, 50);
-                };
-
-                // Сразу же один раз принудительно вызываем наш обновленный рендер
-                var currentData = Lampa.Player.data || data;
-                Lampa.Player.render.playlist_index = getCurrentIndex(currentData);
+                // На всякий случай обновляем HTML-класс 'active' на плашке в меню, чтобы она посинела
+                var items = $('.player-playlist__item, .player-panel__playlist-item');
+                if (items.length) {
+                    items.removeClass('active');
+                    items.eq(realIndex).addClass('active');
+                }
             }
-        }, 100);
+        }, 300);
     });
-
-    // Дублируем логику при смене серии (если включилась следующая)
-    Lampa.Player.listener.follow('change', function(data) {
-        if (Lampa.Player.render) {
-            var realIndex = getCurrentIndex(Lampa.Player.data || data);
-            Lampa.Player.render.playlist_index = realIndex;
-            
-            var items = $('.player-playlist__item, .player-panel__playlist-item');
-            if (items.length) {
-                items.removeClass('active');
-                items.eq(realIndex).addClass('active');
-            }
-        }
-    });
-
 })();
