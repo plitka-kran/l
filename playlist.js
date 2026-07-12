@@ -69,6 +69,51 @@
         writeLog('Сохранение: Индекс файла ' + fileIdx + ' (Позиция: ' + listIdx + ') успешно записан в память.');
     }
 
+    // Вспомогательная функция для форсирования UI подсветки и галочки в HTML
+    function forceVisualHighlight(targetIndex) {
+        var checkCount = 0;
+        var interval = setInterval(function() {
+            checkCount++;
+            // Ищем любые строки меню плейлиста
+            var items = $('.player-playlist__item, .player-panel__playlist-item, [focusable]').filter(function() {
+                var txt = $(this).text().toLowerCase();
+                return txt.indexOf('эпизод') !== -1 || txt.indexOf('серия') !== -1;
+            });
+
+            if (items.length > 0) {
+                // Пытаемся определить реальный порядковый номер серии
+                // Так как прилетело '3', а серия 3-я, проверяем варианты совпадений
+                var exactItem = items.eq(targetIndex);
+                
+                // Если балансер прислал индекс 3 для 3-й серии (хотя должен быть 2),
+                // проверяем текст внутри плашки, чтобы не промахнуться
+                items.each(function(i) {
+                    var itemText = $(this).text().toLowerCase();
+                    // Ищем строчку, где написано именно "эпизод 3" или "серия 3"
+                    if (itemText.indexOf('эпизод ' + targetIndex) !== -1 || itemText.indexOf('серия ' + targetIndex) !== -1 || itemText.indexOf('эпизод: ' + targetIndex) !== -1) {
+                        exactItem = $(this);
+                    }
+                });
+
+                if (exactItem.length) {
+                    writeLog('Интерфейс: Найдена нужная строка в меню. Принудительно выставляем галочку/активность.');
+                    items.removeClass('active').removeClass('selected');
+                    exactItem.addClass('active').addClass('selected');
+                    
+                    // Симулируем клик, чтобы Lampa проставила свою внутреннюю белую галочку
+                    if (!exactItem.hasClass('has-check')) {
+                        exactItem.trigger('click');
+                        exactItem.addClass('has-check');
+                    }
+
+                    clearInterval(interval);
+                }
+            }
+
+            if (checkCount > 20) clearInterval(interval); // Прекращаем поиск через 6 секунд
+        }, 300);
+    }
+
     writeLog('Система: Ожидание запуска плеера...');
 
     Lampa.Player.listener.follow('start', function (data) {
@@ -89,7 +134,10 @@
             var currentIndex = data.id !== undefined ? parseInt(data.id) : getFileIndex(data.url, items);
             writeLog('Фактически нажатый индекс серии: ' + currentIndex);
 
-            // Если в localStorage УЖЕ есть запись, и она отличается от того, что мы ткнули вручную
+            // Запускаем умный визуальный поиск и переклик строки в меню
+            forceVisualHighlight(currentIndex);
+
+            // Если в localStorage УЖЕ есть запись, и она отличается от текущей
             if (savedTrack && savedTrack.index !== undefined && currentIndex !== savedTrack.index) {
                 writeLog('LocalStorage: Найдена сохраненная серия с индексом файла: ' + savedTrack.index);
                 
@@ -108,12 +156,11 @@
                     if (Lampa.Player.render) {
                         Lampa.Player.render.playlist_index = listIdx;
                     }
-                    return; // Выходим, чтобы не перезаписать поверх новый ручной клик
+                    forceVisualHighlight(listIdx);
+                    return;
                 }
             }
 
-            // ЕСЛИ записи в localStorage не было, или ты зашел в эту серию ПЕРВЫЙ раз:
-            // Сразу же принудительно сохраняем её, чтобы в следующий раз плагин знал, где ты остановился!
             var currentFileIdx = getFileIndex(data.url, items);
             saveTrackState(hash, currentFileIdx, currentIndex);
 
@@ -126,7 +173,6 @@
         }
     });
 
-    // Ловим переключение серий кнопками "вперед/назад" или автопереключением плеера
     Lampa.Player.listener.follow('change', function(data) {
         writeLog('--- СОБЫТИЕ CHANGE ---');
         var currentData = Lampa.Player.data || data;
@@ -143,27 +189,8 @@
             if (Lampa.Player.render && listIdx !== -1) {
                 Lampa.Player.render.playlist_index = listIdx;
             }
+            forceVisualHighlight(listIdx);
         } catch(e) {}
-    });
-
-    // Дополнительно обновляем запись во время воспроизведения (каждые пару секунд видео)
-    Lampa.PlayerVideo.listener.follow('timeupdate', function(videoData) {
-        var currentData = Lampa.Player.data;
-        if (!currentData || !currentData.url) return;
-
-        // Делаем запись раз в 15 секунд, чтобы не перегружать память устройства
-        var videoElement = Lampa.PlayerVideo.video();
-        if (videoElement && Math.round(videoElement.currentTime) % 15 === 0) {
-            try {
-                var items = currentData.playlist || [];
-                var hash = getTorrentHash(currentData.url, currentData);
-                var fileIdx = getFileIndex(currentData.url, items);
-                
-                var storageKey = 'lampa_torrent_track_' + hash;
-                var state = { index: fileIdx, updated: Date.now() };
-                localStorage.setItem(storageKey, JSON.stringify(state));
-            } catch(e) {}
-        }
     });
 
 })();
