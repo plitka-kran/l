@@ -6,6 +6,8 @@
 
     var VOLATILE_PARAMS = ['preload', 'play', 'session', 'sid', 't', 'time', 'ts', '_', 'token', 'rnd', 'r', 'cache', 'stream_id', 'streamid'];
     var IDENTITY_PARAMS = ['link', 'hash', 'index', 'file_index', 'fi', 'id'];
+    
+    var isPatching = false; // Флаг-защита от зацикливания плеера
 
     function safeDecode(s) { try { return decodeURIComponent(s); } catch (e) { return s; } }
 
@@ -61,7 +63,6 @@
         return items.filter(function (it) { return normalizedKey(it.url) === rawNorm; })[0] || null;
     }
 
-    // если плеер подменяет url на конкретное качество, чиним playlist заранее
     function reimplementGetUrlQuality(quality) {
         if (!quality || typeof quality !== 'object') return '';
         var def = null;
@@ -114,25 +115,31 @@
         var origSet = pl.set;
 
         pl.url = function (u) {
+            if (isPatching) return origUrl.apply(this, arguments); // Защита контекста при внутренних вызовах
+            
             lastRawUrl = u;
             try {
                 var match = findMatch(u, pl.get() || []);
                 if (match) u = match.url;
             } catch (e) {}
-            return origUrl(u);
+            return origUrl.call(this, u); // Чиним контекст (this) ядра Lampa
         };
 
         pl.set = function (p) {
-            var res = origSet(p);
+            if (isPatching) return origSet.apply(this, arguments);
+
+            isPatching = true;
+            var res = origSet.call(this, p); // Чиним контекст (this) ядра Lampa
             try {
                 if (lastRawUrl) {
                     var match = findMatch(lastRawUrl, p || []);
                     if (match) {
-                        origUrl(match.url);
-                        origSet(p);
+                        origUrl.call(this, match.url);
+                        origSet.call(this, p);
                     }
                 }
             } catch (e) {}
+            isPatching = false;
             return res;
         };
 
