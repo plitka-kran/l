@@ -4,35 +4,138 @@
     if (window.__skipIntroLoaded) return;
     window.__skipIntroLoaded = !0;
 
-    // ===== КОНФИГУРАЦИЯ =====
-    const CONFIG = {
-        INTRO_MAX_START: 180, // Максимальное время в секундах от начала для интро
-        MIN_SUBTITLES: 5,     // Минимальное кол-во субтитров для анализа
+    // ===== КОНФИГ =====
+    const C = {
+        API_URL: 'https://api.introdb.app',
+        THEINTRODB_URL: 'https://api.theintrodb.org/v2/media',
+        CACHE_TTL: 7 * 24 * 60 * 60 * 1000,
+        INTRO_MAX_START: 150,
+        INTRO_MAX_END: 300,
+        CREDITS_MIN_GAP: 30,
+        MIN_SUBTITLES: 5,
         NOTIFICATION_DURATION: 3000
     };
 
-    // ===== ОТОБРАЖЕНИЕ МАРКЕРА НА ТАЙМЛАЙНЕ =====
-    const ProgressMarker = {
-        _container: null,
-        _markersContainer: null,
-        _markerElement: null,
+    // ===== УТИЛИТЫ =====
+    const U = {
+        get(key, def) {
+            try {
+                const v = Lampa.Storage.get(key, def);
+                if (typeof v === 'string' && (v.startsWith('{') || v.startsWith('['))) {
+                    try { return JSON.parse(v); } catch(e) {}
+                }
+                return v;
+            } catch(e) { return def; }
+        },
+        set(key, val) {
+            try {
+                Lampa.Storage.set(key, typeof val === 'string' ? val : JSON.stringify(val));
+            } catch(e) {}
+        },
+        findSegment(segments, time) {
+            for (let i = 0; i < segments.length; i++) {
+                const s = segments[i];
+                if (time >= s.start && time < s.end) return s;
+                if (s.start > time) break;
+            }
+            return null;
+        },
+        getVideo() {
+            try {
+                const v = Lampa.PlayerVideo.video();
+                if (v && v.tagName === 'VIDEO') return v;
+            } catch(e) {}
+            const el = document.querySelector('video');
+            return el && el.tagName === 'VIDEO' ? el : null;
+        }
+    };
+
+    // ===== НАСТРОЙКИ =====
+    const Settings = {
+        isEnabled() { return U.get('skip_intro_enabled', true) !== false; },
+        isAutoSkip() { return U.get('skip_intro_auto', true) !== false; },
+        isTypeEnabled(type) { return U.get(`skip_intro_type_${type}`, true) !== false; },
 
         init() {
-            const el = document.querySelector('.player-progress, .video-progress, .progress-bar, .seek-bar');
-            if (el) {
-                this._container = el;
-                this._container.style.position = 'relative';
-                
-                let mc = this._container.querySelector('.skip-intro-markers');
-                if (!mc) {
-                    mc = document.createElement('div');
-                    mc.className = 'skip-intro-markers';
-                    mc.style.cssText = 'position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:10;';
-                    this._container.appendChild(mc);
-                }
-                this._markersContainer = mc;
-                this._injectStyles();
+            Lampa.SettingsApi.addComponent({
+                component: 'skip_intro',
+                name: 'Пропуск заставок',
+                icon: '<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>'
+            });
+
+            [
+                { name: 'skip_intro_enabled', default: true, label: 'Включить плагин' },
+                { name: 'skip_intro_auto', default: true, label: 'Автопропуск' },
+                { name: 'skip_intro_type_intro', default: true, label: 'Пропускать заставку' },
+                { name: 'skip_intro_type_recap', default: true, label: 'Пропускать рекап' },
+                { name: 'skip_intro_type_credits', default: true, label: 'Пропускать титры' },
+                { name: 'skip_intro_type_preview', default: false, label: 'Пропускать превью' }
+            ].forEach(p => {
+                Lampa.SettingsApi.addParam({
+                    component: 'skip_intro',
+                    param: { name: p.name, type: 'trigger', default: p.default },
+                    field: { name: p.label }
+                });
+            });
+        }
+    };
+
+    // ===== КЭШ =====
+    const Cache = {
+        _data: null,
+        _load() {
+            if (this._data) return this._data;
+            try {
+                this._data = JSON.parse(Lampa.Storage.get('skip_intro_cache', '{}'));
+            } catch(e) { this._data = {}; }
+            return this._data;
+        },
+        _save() {
+            try { Lampa.Storage.set('skip_intro_cache', JSON.stringify(this._data || {})); } catch(e) {}
+        },
+        get(tmdbId, season, episode) {
+            const key = `${tmdbId}_s${season}_e${episode}`;
+            const data = this._load();
+            const entry = data[key];
+            if (entry && entry._ts && Date.now() - entry._ts < C.CACHE_TTL) {
+                return entry.segments || null;
             }
+            if (entry) {
+                delete data[key];
+                this._save();
+            }
+            return null;
+        },
+        set(tmdbId, season, episode, segments) {
+            const key = `${tmdbId}_s${season}_e${episode}`;
+            const data = this._load();
+            data[key] = { segments, _ts: Date.now() };
+            this._save();
+        }
+    };
+
+    // ===== МАРКЕРЫ =====
+    const Marker = {
+        _container: null,
+        _markers: null,
+
+        init() {
+            const selectors = ['.player-progress', '.video-progress', '.progress-bar', '.seek-bar', '.timeline'];
+            for (const s of selectors) {
+                const el = document.querySelector(s);
+                if (el) { this._container = el; break; }
+            }
+            if (!this._container) return;
+
+            this._markers = this._container.querySelector('.skip-intro-markers');
+            if (!this._markers) {
+                this._markers = document.createElement('div');
+                this._markers.className = 'skip-intro-markers';
+                this._markers.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10';
+                this._container.style.position = 'relative';
+                this._container.appendChild(this._markers);
+            }
+            this._injectStyles();
         },
 
         _injectStyles() {
@@ -41,229 +144,335 @@
             style.id = 'skip-intro-styles';
             style.textContent = `
                 .skip-intro-marker {
-                    position: absolute; top: 50%; transform: translateY(-50%); height: 70%;
-                    border-radius: 3px; min-width: 4px; opacity: 0.6; transition: all 0.3s ease;
-                    background: rgba(76, 175, 80, 0.8); border: 1px solid rgba(76, 175, 80, 0.5);
+                    position:absolute;top:50%;transform:translateY(-50%);
+                    height:70%;border-radius:3px;min-width:4px;opacity:0.6;
+                    pointer-events:none;z-index:5;transition:all .3s;
                 }
-                .skip-intro-marker.active { opacity: 0.95; height: 100%; box-shadow: 0 0 8px #fff; }
-                
-                .skip-intro-notification {
-                    position: fixed; top: 30px; left: 50%; transform: translateX(-50%) translateY(-20px);
-                    background: rgba(0, 0, 0, 0.9); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-                    color: #fff; padding: 12px 30px; border-radius: 8px; font-size: 16px; font-weight: 500;
-                    z-index: 99999; opacity: 0; pointer-events: none; transition: all 0.3s ease;
-                    border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 5px 20px rgba(0,0,0,0.5);
+                .skip-intro-marker-intro { background:rgba(76,175,80,0.8); border:1px solid #4CAF50; }
+                .skip-intro-marker-recap { background:rgba(255,152,0,0.8); border:1px solid #FF9800; }
+                .skip-intro-marker-credits { background:rgba(33,150,243,0.8); border:1px solid #2196F3; }
+                .skip-intro-marker-preview { background:rgba(156,39,176,0.8); border:1px solid #9C27B0; }
+                .skip-intro-marker.active {
+                    opacity:0.9 !important;height:100% !important;
+                    animation:pulse 1s infinite;
                 }
-                .skip-intro-notification.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+                @keyframes pulse { 0%,100%{opacity:0.6} 50%{opacity:1} }
             `;
             document.head.appendChild(style);
         },
 
-        draw(endSec, duration) {
-            this.clear();
-            if (!this._markersContainer) this.init();
-            if (!this._markersContainer || !duration || !endSec) return;
-
-            const widthPct = (endSec / duration) * 100;
-            if (widthPct > 100 || widthPct <= 0) return;
-
-            const marker = document.createElement('div');
-            marker.className = 'skip-intro-marker active';
-            marker.style.left = '0%';
-            marker.style.width = `${Math.min(widthPct, 100)}%`;
-            
-            this._markersContainer.appendChild(marker);
-            this._markerElement = marker;
+        update(segments, duration) {
+            if (!this._markers || !segments || !duration) return;
+            this._markers.innerHTML = '';
+            segments.forEach(s => {
+                const l = (s.start / duration) * 100;
+                const w = Math.max(((s.end - s.start) / duration) * 100, 0.5);
+                const el = document.createElement('div');
+                el.className = `skip-intro-marker skip-intro-marker-${s.type}`;
+                el.style.cssText = `left:${Math.min(l,100)}%;width:${Math.min(w,100-l)}%;`;
+                this._markers.appendChild(el);
+            });
         },
 
-        highlight(isActive) {
-            if (this._markerElement) {
-                if (isActive) {
-                    this._markerElement.classList.add('active');
-                } else {
-                    this._markerElement.classList.remove('active');
+        highlight(segment) {
+            if (!this._markers) return;
+            const els = this._markers.querySelectorAll('.skip-intro-marker');
+            els.forEach(el => el.classList.remove('active'));
+            if (segment) {
+                const idx = this._markers.children.length - 1;
+                for (let i = 0; i < this._markers.children.length; i++) {
+                    const el = this._markers.children[i];
+                    const type = el.className.match(/skip-intro-marker-(\w+)/);
+                    if (type && type[1] === segment.type) {
+                        el.classList.add('active');
+                        break;
+                    }
                 }
             }
         },
 
-        clear() {
-            if (this._markersContainer) this._markersContainer.innerHTML = '';
-            this._markerElement = null;
+        destroy() {
+            if (this._markers) this._markers.innerHTML = '';
+            this._container = null;
+            this._markers = null;
         }
     };
 
-    // ===== УВЕДОМЛЕНИЯ =====
-    const Notification = {
+    // ===== УВЕДОМЛЕНИЕ =====
+    const Notify = {
         _el: null,
         _timer: null,
 
         show(text, badge) {
             this.hide();
             const el = document.createElement('div');
-            el.className = 'skip-intro-notification';
-            el.innerHTML = `⏭ <b>${text}</b> <span style="opacity:0.6;font-size:12px;margin-left:8px;">${badge}</span>`;
+            el.style.cssText = `
+                position:fixed;top:30px;left:50%;transform:translateX(-50%) translateY(-20px);
+                background:rgba(0,0,0,0.85);backdrop-filter:blur(12px);color:#fff;
+                padding:14px 32px;border-radius:12px;font-size:17px;font-weight:500;
+                z-index:99999;opacity:0;transition:all .4s;font-family:system-ui,sans-serif;
+                border:1px solid rgba(255,255,255,0.15);box-shadow:0 8px 32px rgba(0,0,0,0.6);
+                display:flex;align-items:center;gap:10px;
+            `;
+            el.innerHTML = `<span>⏭</span><span>${text}</span>${badge ? `<span style="font-size:13px;opacity:0.7;background:rgba(255,255,255,0.1);padding:2px 10px;border-radius:20px">${badge}</span>` : ''}`;
             document.body.appendChild(el);
             this._el = el;
-
-            requestAnimationFrame(() => el.classList.add('show'));
-            this._timer = setTimeout(() => this.hide(), CONFIG.NOTIFICATION_DURATION);
+            requestAnimationFrame(() => { el.style.opacity = '1'; el.style.transform = 'translateX(-50%) translateY(0)'; });
+            this._timer = setTimeout(() => this.hide(), C.NOTIFICATION_DURATION);
         },
 
         hide() {
-            if (this._timer) clearTimeout(this._timer);
+            if (this._timer) { clearTimeout(this._timer); this._timer = null; }
             if (this._el) {
-                const temp = this._el;
-                temp.classList.remove('show');
-                setTimeout(() => temp.parentNode && temp.parentNode.removeChild(temp), 300);
-                this._el = null;
+                this._el.style.opacity = '0';
+                this._el.style.transform = 'translateX(-50%) translateY(-20px)';
+                setTimeout(() => { if (this._el && this._el.parentNode) this._el.parentNode.removeChild(this._el); this._el = null; }, 400);
             }
-        }
+        },
+
+        destroy() { this.hide(); }
     };
 
-    // ===== ДЕТЕКТОР СУБТИТРОВ =====
-    const SubtitleDetector = {
-        analyze(video) {
-            try {
-                if (video.textTracks && video.textTracks.length) {
-                    for (let i = 0; i < video.textTracks.length; i++) {
-                        const track = video.textTracks[i];
-                        if (track.cues && track.cues.length > CONFIG.MIN_SUBTITLES) {
-                            const firstCueStart = track.cues[0].startTime;
-                            if (firstCueStart >= 15 && firstCueStart <= CONFIG.INTRO_MAX_START) {
-                                return Math.round(firstCueStart);
-                            }
-                        }
+    // ===== API =====
+    const Api = {
+        _fetch(url) {
+            return new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                let done = false;
+                const timer = setTimeout(() => { if (!done) { done = true; xhr.abort(); reject('timeout'); } }, 5000);
+                xhr.open('GET', url, true);
+                xhr.setRequestHeader('Accept', 'application/json');
+                xhr.onreadystatechange = () => {
+                    if (xhr.readyState === 4 && !done) {
+                        done = true;
+                        clearTimeout(timer);
+                        if (xhr.status >= 200 && xhr.status < 300) {
+                            try { resolve(JSON.parse(xhr.responseText)); } catch(e) { reject(e); }
+                        } else { resolve(null); }
                     }
+                };
+                xhr.onerror = () => { if (!done) { done = true; clearTimeout(timer); reject('network'); } };
+                xhr.send();
+            });
+        },
+
+        async load(tmdbId, imdbId, season, episode) {
+            if (!tmdbId || season == null || episode == null) return [];
+            const cached = Cache.get(tmdbId, season, episode);
+            if (cached) return cached;
+
+            let segments = [];
+
+            try {
+                const data = await this._fetch(`${C.THEINTRODB_URL}?tmdb_id=${tmdbId}&season=${season}&episode=${episode}`);
+                if (data) {
+                    ['intro', 'recap', 'credits', 'preview'].forEach(type => {
+                        if (Array.isArray(data[type])) {
+                            data[type].forEach(item => {
+                                const s = item.start_ms ? item.start_ms / 1000 : (item.start || 0);
+                                const e = item.end_ms ? item.end_ms / 1000 : (item.end || 0);
+                                if (e > s && s >= 0) segments.push({ type, start: Math.round(s), end: Math.round(e) });
+                            });
+                        }
+                    });
                 }
             } catch(e) {}
-            return null;
+
+            if (!segments.length) {
+                try {
+                    const [intro, credits] = await Promise.all([
+                        this._fetch(`${C.API_URL}/get_intros?tmdb=${tmdbId}&season=${season}&episode=${episode}`).catch(() => null),
+                        this._fetch(`${C.API_URL}/get_credits?tmdb=${tmdbId}&season=${season}&episode=${episode}`).catch(() => null)
+                    ]);
+                    if (intro && intro.start && intro.end) segments.push({ type: 'intro', start: Math.round(intro.start), end: Math.round(intro.end) });
+                    if (credits && credits.start && credits.end) segments.push({ type: 'credits', start: Math.round(credits.start), end: Math.round(credits.end) });
+                } catch(e) {}
+            }
+
+            if (!segments.length && imdbId) {
+                try {
+                    const data = await this._fetch(`https://introhater.com/api/segments/${imdbId}:${season}:${episode}`);
+                    if (Array.isArray(data)) {
+                        data.forEach(item => {
+                            if (item.start != null && item.end != null && item.end > item.start) {
+                                let type = 'intro';
+                                const label = (item.label || '').toLowerCase();
+                                if (label.includes('credit') || label === 'ed') type = 'credits';
+                                else if (label.includes('recap')) type = 'recap';
+                                else if (label.includes('preview')) type = 'preview';
+                                segments.push({ type, start: Math.round(item.start), end: Math.round(item.end) });
+                            }
+                        });
+                    }
+                } catch(e) {}
+            }
+
+            if (segments.length) {
+                Cache.set(tmdbId, season, episode, segments);
+                return segments;
+            }
+            return [];
         }
     };
 
-    // ===== ЯДРО ПЛАГИНА =====
-    const SkipIntroPlugin = {
-        _introEnd: null,
-        _isSkipped: false,
-        _currentData: null,
-        _initialized: false,
+    // ===== ОСНОВНОЙ ПЛАГИН =====
+    const Plugin = {
+        _segments: [],
+        _active: null,
+        _last: null,
+        _data: null,
+        _init: false,
 
         init() {
-            if (this._initialized) return;
-            this._initialized = true;
+            if (this._init) return;
+            this._init = true;
+            Settings.init();
+            Marker.init();
 
             Lampa.Player.listener.follow('start', (data) => this._onStart(data));
-            Lampa.Player.listener.follow('destroy', () => this._cleanup());
-            
+            Lampa.Player.listener.follow('destroy', () => this._onDestroy());
+
             if (Lampa.PlayerVideo && Lampa.PlayerVideo.listener) {
-                Lampa.PlayerVideo.listener.follow('timeupdate', (data) => this._onTimeUpdate(data));
+                Lampa.PlayerVideo.listener.follow('timeupdate', (data) => {
+                    if (!Settings.isEnabled() || !this._segments.length) return;
+                    const current = data.current;
+                    if (!current && current !== 0) return;
+                    const seg = U.findSegment(this._segments, current);
+                    Marker.highlight(seg);
+                    if (seg && Settings.isAutoSkip() && Settings.isTypeEnabled(seg.type) && this._last !== seg) {
+                        this._skip(seg);
+                    }
+                });
             }
+
+            console.log('[SkipIntro] Torrent-only version loaded');
         },
 
         _onStart(data) {
             this._cleanup();
+            if (!Settings.isEnabled()) return;
 
-            const isTorrent = data.torrent || data.hash || 
-                (data.url && (
-                    data.url.includes('127.0.0.1') || 
-                    data.url.includes('localhost') || 
-                    data.url.includes(':8090') || 
-                    (data.url.includes('play') && data.url.includes('index='))
-                ));
+            const meta = this._getMeta(data);
+            if (!meta.tmdb_id || meta.season == null || meta.episode == null) {
+                console.log('[SkipIntro] Not a series or missing data');
+                return;
+            }
 
-            if (!isTorrent) return;
+            this._data = data;
+            console.log(`[SkipIntro] Loading S${meta.season}E${meta.episode}`);
 
-            this._currentData = data;
-            this._scanSubtitles();
+            Api.load(meta.tmdb_id, meta.imdb_id, meta.season, meta.episode)
+                .then(segments => {
+                    if (this._data === data) {
+                        this._segments = segments;
+                        this._updateMarkers(segments);
+                        console.log(`[SkipIntro] Loaded ${segments.length} segments`);
+                    }
+                })
+                .catch(err => console.log('[SkipIntro] API error:', err));
         },
 
-        _scanSubtitles() {
-            let attempts = 0;
-            const check = () => {
-                if (this._isSkipped || !this._currentData) return;
-                
-                attempts++;
-                let video = null;
-                try { video = Lampa.PlayerVideo.video(); } catch(e) {}
-                
-                if (video) {
-                    const detectTime = SubtitleDetector.analyze(video);
-                    if (detectTime) {
-                        this._introEnd = detectTime;
-                        console.log(`[SkipIntro] Intro detected ending at: ${detectTime}s`);
-                        
-                        // Динамически рисуем маркер, как только получили данные о длительности
-                        if (video.duration) {
-                            ProgressMarker.draw(this._introEnd, video.duration);
-                        } else {
-                            // Если длительность еще не определена, ждем секунду и рисуем
-                            setTimeout(() => {
-                                if (video.duration) ProgressMarker.draw(this._introEnd, video.duration);
-                            }, 1000);
-                        }
-                        return;
+        _getMeta(data) {
+            const meta = { tmdb_id: null, imdb_id: null, season: null, episode: null };
+
+            if (data.tmdb_id) meta.tmdb_id = data.tmdb_id;
+            if (data.imdb_id) meta.imdb_id = data.imdb_id;
+            if (data.season != null) meta.season = parseInt(data.season);
+            if (data.episode != null) meta.episode = parseInt(data.episode);
+
+            if (!meta.tmdb_id || meta.season == null || meta.episode == null) {
+                try {
+                    const card = Lampa.Activity.active()?.card || null;
+                    if (card) {
+                        if (!meta.tmdb_id) meta.tmdb_id = card.id;
+                        if (!meta.imdb_id) meta.imdb_id = card.imdb_id;
+                    }
+                } catch(e) {}
+            }
+
+            if (data.playlist && Array.isArray(data.playlist)) {
+                const url = data.url || '';
+                for (const item of data.playlist) {
+                    if (item.url === url || !url) {
+                        if (item.season != null && meta.season == null) meta.season = parseInt(item.season);
+                        if (item.episode != null && meta.episode == null) meta.episode = parseInt(item.episode);
+                        if (item.s != null && meta.season == null) meta.season = parseInt(item.s);
+                        if (item.e != null && meta.episode == null) meta.episode = parseInt(item.e);
+                        break;
                     }
                 }
-                
-                if (attempts < 20) {
-                    setTimeout(check, 500);
-                }
-            };
-            check();
+            }
+
+            return meta;
         },
 
-        _onTimeUpdate(data) {
-            if (!this._introEnd) return;
-
-            let current = data.current;
+        _updateMarkers(segments) {
+            let duration = 0;
             try {
-                const nativeVideo = Lampa.PlayerVideo.video();
-                if (nativeVideo && typeof nativeVideo.currentTime === 'number') {
-                    current = nativeVideo.currentTime;
-                }
+                const v = U.getVideo();
+                if (v) duration = v.duration;
             } catch(e) {}
-
-            const inZone = (current >= 0 && current < this._introEnd);
-            ProgressMarker.highlight(inZone);
-
-            if (inZone && !this._isSkipped) {
-                this._doSkip(this._introEnd);
+            if (duration > 0) {
+                Marker.update(segments, duration);
+            } else {
+                let attempts = 0;
+                const check = () => {
+                    attempts++;
+                    try {
+                        const v = U.getVideo();
+                        if (v && v.duration) {
+                            Marker.update(segments, v.duration);
+                        } else if (attempts < 20) {
+                            setTimeout(check, 500);
+                        }
+                    } catch(e) { if (attempts < 20) setTimeout(check, 500); }
+                };
+                check();
             }
         },
 
-        _doSkip(toTime) {
-            this._isSkipped = true;
-            Notification.show('Начало серии пропущено', `${toTime}с ⚡`);
+        _skip(seg) {
+            this._last = seg;
+            this._active = null;
 
+            const labels = { intro: 'Заставка', recap: 'Рекап', credits: 'Титры', preview: 'Превью' };
+            const label = labels[seg.type] || seg.type;
+            Notify.show(`⏭ ${label} пропущена`, `${Math.round(seg.end - seg.start)}с ⚡`);
+
+            const target = Math.min(seg.end, U.getVideo()?.duration || seg.end);
             try {
-                const video = Lampa.PlayerVideo.video();
-                if (video) {
-                    video.currentTime = toTime;
-                }
+                const v = U.getVideo();
+                if (v) v.currentTime = target;
             } catch(e) {}
         },
 
         _cleanup() {
-            this._introEnd = null;
-            this._isSkipped = false;
-            this._currentData = null;
-            Notification.hide();
-            ProgressMarker.clear();
+            this._segments = [];
+            this._active = null;
+            this._last = null;
+            this._data = null;
+            Notify.destroy();
+        },
+
+        _onDestroy() {
+            this._cleanup();
+            Marker.destroy();
         }
     };
 
-    // ===== ЗАПУСК =====
-    function initPlugin() {
-        if (window.Lampa && Lampa.Player) {
-            SkipIntroPlugin.init();
+    // ===== СТАРТ =====
+    function init() {
+        if (window.Lampa && Lampa.SettingsApi && Lampa.Player && Lampa.Storage) {
+            Plugin.init();
         } else {
-            setTimeout(initPlugin, 500);
+            setTimeout(init, 500);
         }
     }
 
-    if (window.Lampa && Lampa.Listener) {
-        Lampa.Listener.follow('app', (data) => {
-            if (data.type === 'ready') initPlugin();
-        });
+    if (window.Lampa?.Listener) {
+        Lampa.Listener.follow('app', (data) => { if (data.type === 'ready') init(); });
     }
-    setTimeout(initPlugin, 1000);
+
+    setTimeout(init, 1000);
+
 }();
