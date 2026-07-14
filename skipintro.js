@@ -81,9 +81,10 @@
             return null;
         },
 
-        // Дополнительный парсинг для HDrezka
+        // Расширенный парсинг для HDrezka
         parseHDrezkaTitle(title) {
             if (!title) return null;
+            
             // 1 сезон 1 серия
             let match = title.match(/(\d+)\s*сезон\s*(\d+)\s*серия/i);
             if (match) {
@@ -104,6 +105,11 @@
             if (match) {
                 return { season: parseInt(match[1]), episode: parseInt(match[2]) };
             }
+            // Season 1 Episode 1
+            match = title.match(/Season\s*(\d+)\s*Episode\s*(\d+)/i);
+            if (match) {
+                return { season: parseInt(match[1]), episode: parseInt(match[2]) };
+            }
             return null;
         },
 
@@ -114,12 +120,173 @@
                 if (url.includes('torrent') || url.includes('.torrent') || url.includes('magnet')) {
                     return 'torrent';
                 }
-                if (url.includes('hdrezka') || url.includes('rezka') || url.includes('hd.rezka')) {
+                if (url.includes('hdrezka') || url.includes('rezka') || url.includes('hd.rezka') || url.includes('kinobase')) {
+                    return 'hdrezka';
+                }
+                // Проверяем по наличию плеера
+                if (document.querySelector('.hdrezka-player, .rezka-player')) {
                     return 'hdrezka';
                 }
                 return 'other';
             } catch(e) {
                 return 'unknown';
+            }
+        },
+
+        // Получение TMDB ID разными способами
+        getTMDBId() {
+            try {
+                // 1. Из Activity
+                const activity = Lampa.Activity.active();
+                if (activity) {
+                    if (activity.card && activity.card.id) return activity.card.id;
+                    if (activity.movie && activity.movie.id) return activity.movie.id;
+                }
+                
+                // 2. Из Storage
+                const current = Lampa.Storage.get('current', null);
+                if (current && current.id) return current.id;
+                
+                // 3. Из URL
+                const url = window.location.href;
+                const match = url.match(/[?&]id=(\d+)/);
+                if (match) return match[1];
+                
+                // 4. Из meta тегов
+                const meta = document.querySelector('meta[property="og:url"]');
+                if (meta) {
+                    const m = meta.content.match(/\/(\d+)(?:-|$)/);
+                    if (m) return m[1];
+                }
+                
+                return null;
+            } catch(e) {
+                return null;
+            }
+        },
+
+        // Получение сезона и серии разными способами
+        getSeasonEpisode(data) {
+            let season = null;
+            let episode = null;
+            
+            try {
+                // 1. Из data напрямую
+                if (data.season != null) season = parseInt(data.season);
+                if (data.episode != null) episode = parseInt(data.episode);
+                
+                // 2. Из playlist
+                if (data.playlist && Array.isArray(data.playlist)) {
+                    const url = data.url;
+                    for (let i = 0; i < data.playlist.length; i++) {
+                        const item = data.playlist[i];
+                        if (item.url === url || i === 0) {
+                            if (item.season != null && season == null) season = parseInt(item.season);
+                            if (item.episode != null && episode == null) episode = parseInt(item.episode);
+                            if (item.s != null && season == null) season = parseInt(item.s);
+                            if (item.e != null && episode == null) episode = parseInt(item.e);
+                            if (item.season_num != null && season == null) season = parseInt(item.season_num);
+                            if (item.episode_num != null && episode == null) episode = parseInt(item.episode_num);
+                            if (item.season_number != null && season == null) season = parseInt(item.season_number);
+                            if (item.episode_number != null && episode == null) episode = parseInt(item.episode_number);
+                        }
+                        if (item.url === url) break;
+                    }
+                }
+                
+                // 3. Из title
+                if (data.title) {
+                    const parsed = this.parseHDrezkaTitle(data.title);
+                    if (parsed) {
+                        if (season == null) season = parsed.season;
+                        if (episode == null) episode = parsed.episode;
+                    }
+                }
+                
+                // 4. Из file.title
+                if (data.file && data.file.title) {
+                    const parsed = this.parseHDrezkaTitle(data.file.title);
+                    if (parsed) {
+                        if (season == null) season = parsed.season;
+                        if (episode == null) episode = parsed.episode;
+                    }
+                }
+                
+                // 5. Из URL
+                if (season == null || episode == null) {
+                    const url = Lampa.Player.getUrl ? Lampa.Player.getUrl() : '';
+                    const match = url.match(/[Ss](\d+)[Ee](\d+)/i);
+                    if (match) {
+                        if (season == null) season = parseInt(match[1]);
+                        if (episode == null) episode = parseInt(match[2]);
+                    }
+                }
+                
+                // 6. Из Lampa Storage
+                if (season == null || episode == null) {
+                    try {
+                        const last = Lampa.Storage.get('last_watch', null);
+                        if (last && last.season != null && last.episode != null) {
+                            if (season == null) season = parseInt(last.season);
+                            if (episode == null) episode = parseInt(last.episode);
+                        }
+                    } catch(e) {}
+                }
+                
+                // 7. Из Activity (для HDrezka)
+                if (season == null || episode == null) {
+                    try {
+                        const activity = Lampa.Activity.active();
+                        if (activity && activity.movie) {
+                            const movie = activity.movie;
+                            if (movie.season != null && season == null) season = parseInt(movie.season);
+                            if (movie.episode != null && episode == null) episode = parseInt(movie.episode);
+                            if (movie.s != null && season == null) season = parseInt(movie.s);
+                            if (movie.e != null && episode == null) episode = parseInt(movie.e);
+                        }
+                    } catch(e) {}
+                }
+                
+                return { season, episode };
+            } catch(e) {
+                return { season: null, episode: null };
+            }
+        },
+
+        // Проверка является ли сериалом
+        isSeries(data) {
+            try {
+                // 1. Проверяем data
+                if (data.is_series === true) return true;
+                if (data.series === true) return true;
+                
+                // 2. Проверяем card
+                const card = data.card || null;
+                if (card) {
+                    if (card.name && !card.title) return true;
+                    if (card.number_of_seasons) return true;
+                    if (card.first_air_date) return true;
+                    if (card.seasons) return true;
+                }
+                
+                // 3. Проверяем Activity
+                const activity = Lampa.Activity.active();
+                if (activity) {
+                    const movie = activity.movie || activity.card;
+                    if (movie) {
+                        if (movie.name && !movie.title) return true;
+                        if (movie.number_of_seasons) return true;
+                        if (movie.seasons) return true;
+                    }
+                }
+                
+                // 4. Проверяем наличие сезона и серии
+                const se = this.getSeasonEpisode(data);
+                if (se.season != null && se.episode != null) return true;
+                
+                return false;
+            } catch(e) {
+                return false;
             }
         }
     };
@@ -1118,19 +1285,35 @@
 
             if (!PluginSettings.isEnabled()) return;
 
+            // Получаем метаданные
             const meta = this._extractMeta(data);
             
-            console.log('[SkipIntro] Extracted meta:', meta);
+            // Детальное логирование для отладки
+            console.log('[SkipIntro] ===== МЕТАДАННЫЕ =====');
+            console.log('[SkipIntro] Источник:', Utils.getSourceType());
+            console.log('[SkipIntro] TMDB ID:', meta.tmdb_id);
+            console.log('[SkipIntro] IMDB ID:', meta.imdb_id);
+            console.log('[SkipIntro] Сезон:', meta.season);
+            console.log('[SkipIntro] Серия:', meta.episode);
+            console.log('[SkipIntro] Это сериал?:', meta.is_series);
+            console.log('[SkipIntro] Данные плеера:', data);
+            
+            // Пробуем получить данные из Activity
+            try {
+                const activity = Lampa.Activity.active();
+                console.log('[SkipIntro] Activity:', activity);
+            } catch(e) {}
             
             if (!meta.tmdb_id || !meta.is_series || meta.season == null || meta.episode == null) {
-                console.log('[SkipIntro] Not a series or missing metadata');
+                console.log('[SkipIntro] ❌ Не удалось определить метаданные для HDrezka');
+                console.log('[SkipIntro] Попробуйте вручную указать ID в настройках');
                 return;
             }
 
             this._currentData = data;
             this._currentTmdb = meta.tmdb_id;
             
-            console.log(`[SkipIntro] Loading segments for S${meta.season}E${meta.episode} (TMDB: ${meta.tmdb_id})`);
+            console.log(`[SkipIntro] ✅ Загружаем сегменты для S${meta.season}E${meta.episode} (TMDB: ${meta.tmdb_id})`);
             
             let apiDone = false;
             let detectDone = false;
@@ -1158,7 +1341,7 @@
 
                 this._segments = merged;
                 this._updateProgressMarkers(merged);
-                console.log(`[SkipIntro] Loaded ${merged.length} segments`);
+                console.log(`[SkipIntro] ✅ Загружено ${merged.length} сегментов`);
             };
 
             ApiClient.load(meta.tmdb_id, meta.imdb_id, meta.season, meta.episode)
@@ -1173,7 +1356,7 @@
                     }
                 })
                 .catch((err) => {
-                    console.log('[SkipIntro] API error:', err);
+                    console.log('[SkipIntro] ❌ Ошибка API:', err);
                     apiDone = true;
                     mergeSegments();
                 });
@@ -1204,13 +1387,13 @@
                 is_series: false
             };
 
-            // 1. Пробуем получить из data напрямую
+            // 1. Прямые данные
             if (data.tmdb_id) meta.tmdb_id = data.tmdb_id;
             if (data.imdb_id) meta.imdb_id = data.imdb_id;
             if (data.season != null) meta.season = parseInt(data.season);
             if (data.episode != null) meta.episode = parseInt(data.episode);
 
-            // 2. Из карточки
+            // 2. Из card
             let card = data.card || null;
             if (!card) {
                 try {
@@ -1224,100 +1407,134 @@
             if (card) {
                 if (!meta.tmdb_id) meta.tmdb_id = card.id || null;
                 if (!meta.imdb_id) meta.imdb_id = card.imdb_id || null;
-                if (card.name || card.title || card.number_of_seasons || card.first_air_date) {
-                    meta.is_series = true;
-                }
+                
+                // Определяем сериал
+                if (card.name && !card.title) meta.is_series = true;
+                if (card.number_of_seasons) meta.is_series = true;
+                if (card.first_air_date) meta.is_series = true;
+                if (card.seasons) meta.is_series = true;
+                
+                // Из карточки
+                if (meta.season == null && card.season != null) meta.season = parseInt(card.season);
+                if (meta.episode == null && card.episode != null) meta.episode = parseInt(card.episode);
+                if (meta.season == null && card.s != null) meta.season = parseInt(card.s);
+                if (meta.episode == null && card.e != null) meta.episode = parseInt(card.e);
             }
 
-            // 3. Для HDrezka - пытаемся найти в playlist
+            // 3. Из playlist (важно для HDrezka)
             if (data.playlist && Array.isArray(data.playlist)) {
                 const url = data.url;
                 for (let i = 0; i < data.playlist.length; i++) {
                     const item = data.playlist[i];
                     const itemUrl = typeof item.url === 'string' ? item.url : '';
                     
-                    if (itemUrl === url || i === 0) {
-                        if (item.season != null && meta.season == null) {
-                            meta.season = parseInt(item.season);
-                        }
-                        if (item.episode != null && meta.episode == null) {
-                            meta.episode = parseInt(item.episode);
-                        }
-                        if (item.s != null && meta.season == null) {
-                            meta.season = parseInt(item.s);
-                        }
-                        if (item.e != null && meta.episode == null) {
-                            meta.episode = parseInt(item.e);
-                        }
-                        // HDrezka часто использует season_num и episode_num
-                        if (item.season_num != null && meta.season == null) {
-                            meta.season = parseInt(item.season_num);
-                        }
-                        if (item.episode_num != null && meta.episode == null) {
-                            meta.episode = parseInt(item.episode_num);
+                    if (itemUrl === url || i === 0 || !url) {
+                        // Все возможные поля
+                        const fields = ['season', 'episode', 's', 'e', 'season_num', 'episode_num', 'season_number', 'episode_number', 'season_index', 'episode_index'];
+                        fields.forEach(f => {
+                            if (item[f] != null) {
+                                if (f.includes('season') && meta.season == null) {
+                                    meta.season = parseInt(item[f]);
+                                }
+                                if (f.includes('episode') && meta.episode == null) {
+                                    meta.episode = parseInt(item[f]);
+                                }
+                            }
+                        });
+                        
+                        // Помечаем как сериал если есть сезон и серия
+                        if (meta.season != null && meta.episode != null) {
+                            meta.is_series = true;
                         }
                     }
-                    if (itemUrl === url) break;
                 }
             }
 
-            // 4. Из названия (для HDrezka)
+            // 4. Из title
             if ((meta.season == null || meta.episode == null) && data.title) {
                 const parsed = Utils.parseHDrezkaTitle(data.title);
                 if (parsed) {
                     if (meta.season == null) meta.season = parsed.season;
                     if (meta.episode == null) meta.episode = parsed.episode;
+                    if (meta.season != null && meta.episode != null) meta.is_series = true;
                 }
             }
 
-            // 5. Из названия файла (для HDrezka)
+            // 5. Из file.title
             if ((meta.season == null || meta.episode == null) && data.file && data.file.title) {
                 const parsed = Utils.parseHDrezkaTitle(data.file.title);
                 if (parsed) {
                     if (meta.season == null) meta.season = parsed.season;
                     if (meta.episode == null) meta.episode = parsed.episode;
+                    if (meta.season != null && meta.episode != null) meta.is_series = true;
                 }
             }
 
-            // 6. Пробуем получить TMDB ID через Lampa API для HDrezka
-            if (!meta.tmdb_id && meta.is_series) {
+            // 6. Из Activity
+            if (!meta.tmdb_id || !meta.is_series) {
                 try {
                     const activity = Lampa.Activity.active();
-                    if (activity && activity.movie && activity.movie.id) {
-                        meta.tmdb_id = activity.movie.id;
+                    if (activity && activity.movie) {
+                        const movie = activity.movie;
+                        if (!meta.tmdb_id && movie.id) meta.tmdb_id = movie.id;
+                        if (meta.season == null && movie.season != null) meta.season = parseInt(movie.season);
+                        if (meta.episode == null && movie.episode != null) meta.episode = parseInt(movie.episode);
+                        if (meta.season == null && movie.s != null) meta.season = parseInt(movie.s);
+                        if (meta.episode == null && movie.e != null) meta.episode = parseInt(movie.e);
+                        if (movie.name && !movie.title) meta.is_series = true;
                     }
                 } catch(e) {}
             }
 
-            // 7. Если есть ID, это сериал
-            if (meta.tmdb_id && meta.season != null && meta.episode != null) {
+            // 7. Universal TMDB ID
+            if (!meta.tmdb_id) {
+                meta.tmdb_id = Utils.getTMDBId();
+                if (meta.tmdb_id) meta.is_series = true;
+            }
+
+            // 8. Из URL (для HDrezka)
+            if ((meta.season == null || meta.episode == null) || !meta.tmdb_id) {
+                try {
+                    const url = Lampa.Player.getUrl ? Lampa.Player.getUrl() : '';
+                    
+                    // Извлекаем TMDB ID из URL
+                    if (!meta.tmdb_id) {
+                        const tmdbMatch = url.match(/[?&]tmdb_id=(\d+)/) || url.match(/\/tmdb\/(\d+)/);
+                        if (tmdbMatch) meta.tmdb_id = tmdbMatch[1];
+                    }
+                    
+                    // Извлекаем сезон/серию из URL
+                    const seMatch = url.match(/[Ss](\d+)[Ee](\d+)/i);
+                    if (seMatch) {
+                        if (meta.season == null) meta.season = parseInt(seMatch[1]);
+                        if (meta.episode == null) meta.episode = parseInt(seMatch[2]);
+                        meta.is_series = true;
+                    }
+                    
+                    // HDrezka специфичный паттерн
+                    const hdMatch = url.match(/\/\d+-(\d+)-(\d+)/);
+                    if (hdMatch && (meta.season == null || meta.episode == null)) {
+                        if (meta.season == null) meta.season = parseInt(hdMatch[1]);
+                        if (meta.episode == null) meta.episode = parseInt(hdMatch[2]);
+                        meta.is_series = true;
+                    }
+                } catch(e) {}
+            }
+
+            // 9. Если есть сезон и серия - это сериал
+            if (meta.season != null && meta.episode != null) {
                 meta.is_series = true;
             }
 
-            // 8. Если это HDrezka и есть ссылка - пробуем извлечь из URL
-            if (!meta.tmdb_id || !meta.is_series) {
-                const source = Utils.getSourceType();
-                if (source === 'hdrezka') {
-                    try {
-                        const url = Lampa.Player.getUrl ? Lampa.Player.getUrl() : '';
-                        // Пробуем извлечь из URL
-                        const match = url.match(/\/\d+-(\d+)-(\d+)/);
-                        if (match) {
-                            if (meta.season == null) meta.season = parseInt(match[1]);
-                            if (meta.episode == null) meta.episode = parseInt(match[2]);
-                            meta.is_series = true;
-                        }
-                    } catch(e) {}
-                }
-            }
-
-            // Дополнительный fallback для HDrezka
-            if (!meta.tmdb_id && meta.is_series) {
+            // 10. Fallback - пробуем получить из Storage
+            if (!meta.tmdb_id || meta.season == null || meta.episode == null) {
                 try {
-                    // Пробуем найти через Lampa Storage
                     const current = Lampa.Storage.get('current', null);
-                    if (current && current.id) {
-                        meta.tmdb_id = current.id;
+                    if (current) {
+                        if (!meta.tmdb_id && current.id) meta.tmdb_id = current.id;
+                        if (meta.season == null && current.season != null) meta.season = parseInt(current.season);
+                        if (meta.episode == null && current.episode != null) meta.episode = parseInt(current.episode);
+                        if (meta.season != null && meta.episode != null) meta.is_series = true;
                     }
                 } catch(e) {}
             }
@@ -1484,7 +1701,7 @@
             const time = Math.round(segment.end - segment.start);
             
             Notification.show(
-                `${label} пропущена`,
+                `⏭ ${label} пропущена`,
                 `${time}с${auto ? ' ⚡' : ''}`,
                 false
             );
