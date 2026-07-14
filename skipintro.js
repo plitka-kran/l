@@ -8,9 +8,8 @@
     const CONFIG = {
         API_URL: 'https://api.introdb.app',
         THEINTRODB_URL: 'https://api.theintrodb.org/v2/media',
-        CACHE_TTL: 7 * 24 * 60 * 60 * 1000, // 7 дней
+        CACHE_TTL: 7 * 24 * 60 * 60 * 1000,
         DETECTION_TIMEOUT: 5000,
-        MAX_EPISODE_DURATION: 3600,
         INTRO_MAX_START: 150,
         INTRO_MAX_END: 300,
         CREDITS_MIN_GAP: 30,
@@ -57,17 +56,6 @@
             } catch(e) {}
         },
 
-        debounce(fn, delay) {
-            let timer = null;
-            return function(...args) {
-                if (timer) clearTimeout(timer);
-                timer = setTimeout(() => {
-                    fn.apply(this, args);
-                    timer = null;
-                }, delay);
-            };
-        },
-
         throttle(fn, delay) {
             let lastCall = 0;
             return function(...args) {
@@ -79,26 +67,15 @@
             };
         },
 
-        formatTime(sec) {
-            const m = Math.floor(sec / 60);
-            const s = Math.floor(sec % 60);
-            return `${m}:${s.toString().padStart(2, '0')}`;
-        },
-
         isNumeric(val) {
             return typeof val === 'number' && !isNaN(val) && isFinite(val);
         },
 
-        clamp(val, min, max) {
-            return Math.max(min, Math.min(max, val));
-        },
-
-        // Оптимизированная проверка вхождения в отрезок
         findSegment(segments, time) {
             for (let i = 0, len = segments.length; i < len; i++) {
                 const seg = segments[i];
                 if (time >= seg.start && time < seg.end) return seg;
-                if (seg.start > time) break; // segments отсортированы
+                if (seg.start > time) break;
             }
             return null;
         }
@@ -248,7 +225,6 @@
             this._save();
         },
 
-        // Для "умных" пропусков
         _smartKey: 'skip_intro_smart',
         hasSkipped(tmdbId, type) {
             try {
@@ -279,12 +255,254 @@
         }
     };
 
+    // ===== ВИЗУАЛЬНАЯ РАЗМЕТКА ПРОГРЕСС-БАРА =====
+    const ProgressMarker = {
+        _container: null,
+        _markersContainer: null,
+        _markers: [],
+        _colors: {
+            intro: '#4CAF50',
+            recap: '#FF9800',
+            credits: '#2196F3',
+            preview: '#9C27B0'
+        },
+        _typeNames: {
+            intro: 'Заставка',
+            recap: 'Рекап',
+            credits: 'Титры',
+            preview: 'Превью'
+        },
+
+        init() {
+            this._container = document.querySelector('.player-progress, .video-progress, .progress-bar, [class*="progress"]');
+            if (!this._container) return;
+
+            let markersContainer = this._container.querySelector('.skip-intro-markers');
+            if (!markersContainer) {
+                markersContainer = document.createElement('div');
+                markersContainer.className = 'skip-intro-markers';
+                markersContainer.style.cssText = `
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    pointer-events: none;
+                    z-index: 5;
+                    overflow: hidden;
+                `;
+                this._container.style.position = 'relative';
+                this._container.appendChild(markersContainer);
+            }
+            this._markersContainer = markersContainer;
+            
+            this._injectStyles();
+        },
+
+        _injectStyles() {
+            if (document.getElementById('skip-intro-marker-styles')) return;
+            
+            const style = document.createElement('style');
+            style.id = 'skip-intro-marker-styles';
+            style.textContent = `
+                .skip-intro-marker {
+                    position: absolute;
+                    top: 0;
+                    height: 100%;
+                    border-radius: 2px;
+                    transition: all 0.3s ease;
+                    pointer-events: auto;
+                    min-width: 3px;
+                    cursor: pointer;
+                }
+                .skip-intro-marker:hover {
+                    opacity: 0.8 !important;
+                    transform: scaleY(1.5) !important;
+                    z-index: 10;
+                }
+                .skip-intro-marker-intro {
+                    background: linear-gradient(90deg, rgba(76, 175, 80, 0.3), rgba(76, 175, 80, 0.6));
+                    border: 1px solid rgba(76, 175, 80, 0.4);
+                }
+                .skip-intro-marker-recap {
+                    background: linear-gradient(90deg, rgba(255, 152, 0, 0.3), rgba(255, 152, 0, 0.6));
+                    border: 1px solid rgba(255, 152, 0, 0.4);
+                }
+                .skip-intro-marker-credits {
+                    background: linear-gradient(90deg, rgba(33, 150, 243, 0.3), rgba(33, 150, 243, 0.6));
+                    border: 1px solid rgba(33, 150, 243, 0.4);
+                }
+                .skip-intro-marker-preview {
+                    background: linear-gradient(90deg, rgba(156, 39, 176, 0.3), rgba(156, 39, 176, 0.6));
+                    border: 1px solid rgba(156, 39, 176, 0.4);
+                }
+                .skip-intro-marker-label {
+                    position: absolute;
+                    bottom: 100%;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    background: rgba(0, 0, 0, 0.85);
+                    color: #fff;
+                    padding: 3px 10px;
+                    border-radius: 4px;
+                    font-size: 10px;
+                    white-space: nowrap;
+                    opacity: 0;
+                    transition: opacity 0.3s ease;
+                    pointer-events: none;
+                    font-family: system-ui, sans-serif;
+                    box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+                }
+                .skip-intro-marker:hover .skip-intro-marker-label {
+                    opacity: 1;
+                }
+                .skip-intro-marker.active {
+                    opacity: 0.7 !important;
+                    transform: scaleY(1.5) !important;
+                    animation: skip-intro-pulse 1s ease-in-out infinite;
+                    box-shadow: 0 0 20px rgba(255,255,255,0.3);
+                }
+                .skip-intro-marker.skipped {
+                    opacity: 0.2 !important;
+                    transform: scaleY(0.6) !important;
+                }
+                .skip-intro-marker.skipped::after {
+                    content: '✓';
+                    position: absolute;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    color: #fff;
+                    font-size: 12px;
+                    font-weight: bold;
+                    text-shadow: 0 0 10px rgba(0,0,0,0.8);
+                }
+                @keyframes skip-intro-pulse {
+                    0%, 100% { opacity: 0.5; transform: scaleY(1.3); }
+                    50% { opacity: 0.9; transform: scaleY(1.8); }
+                }
+            `;
+            document.head.appendChild(style);
+        },
+
+        clear() {
+            if (this._markersContainer) {
+                this._markersContainer.innerHTML = '';
+            }
+            this._markers = [];
+        },
+
+        addMarker(start, end, type, duration) {
+            if (!this._markersContainer || !duration) return;
+            
+            const color = this._colors[type] || '#FFFFFF';
+            const startPercent = (start / duration) * 100;
+            const endPercent = (end / duration) * 100;
+            const width = Math.max(endPercent - startPercent, 0.3);
+            
+            if (width <= 0) return;
+            
+            const marker = document.createElement('div');
+            marker.className = `skip-intro-marker skip-intro-marker-${type}`;
+            marker.dataset.type = type;
+            marker.dataset.start = start;
+            marker.dataset.end = end;
+            
+            marker.style.cssText = `
+                position: absolute;
+                top: 0;
+                left: ${startPercent}%;
+                width: ${width}%;
+                height: 100%;
+                opacity: 0.35;
+                border-radius: 2px;
+                transition: all 0.3s ease;
+                pointer-events: auto;
+                min-width: 3px;
+            `;
+            
+            const label = document.createElement('div');
+            label.className = 'skip-intro-marker-label';
+            label.textContent = this._typeNames[type] || type;
+            marker.appendChild(label);
+            
+            // Клик для перемотки
+            marker.addEventListener('click', (e) => {
+                e.stopPropagation();
+                try {
+                    const video = Lampa.PlayerVideo.video();
+                    if (video) {
+                        video.currentTime = start;
+                    }
+                } catch(err) {}
+            });
+            
+            this._markersContainer.appendChild(marker);
+            this._markers.push({ start, end, type, element: marker });
+            
+            // Анимация появления
+            requestAnimationFrame(() => {
+                marker.style.transform = 'scaleY(0)';
+                setTimeout(() => {
+                    marker.style.transform = 'scaleY(1)';
+                }, 50);
+            });
+        },
+
+        updateMarkers(segments, duration) {
+            this.clear();
+            if (!segments || !segments.length || !duration) return;
+            
+            const sorted = [...segments].sort((a, b) => a.start - b.start);
+            sorted.forEach(seg => {
+                this.addMarker(seg.start, seg.end, seg.type, duration);
+            });
+        },
+
+        highlightActive(segment) {
+            if (!this._markersContainer) return;
+            
+            const markers = this._markersContainer.querySelectorAll('.skip-intro-marker');
+            markers.forEach((marker) => {
+                const data = this._markers.find(m => m.element === marker);
+                if (data && segment && data.type === segment.type && 
+                    data.start === segment.start && data.end === segment.end) {
+                    marker.classList.add('active');
+                } else {
+                    marker.classList.remove('active');
+                }
+            });
+        },
+
+        markSkipped(segment) {
+            const markers = this._markersContainer?.querySelectorAll('.skip-intro-marker') || [];
+            markers.forEach(marker => {
+                const data = this._markers.find(m => m.element === marker);
+                if (data && segment && data.type === segment.type && 
+                    data.start === segment.start && data.end === segment.end) {
+                    marker.classList.add('skipped');
+                    setTimeout(() => {
+                        marker.classList.remove('skipped');
+                        marker.style.opacity = '0.15';
+                    }, 3000);
+                }
+            });
+        },
+
+        resetHighlights() {
+            const markers = this._markersContainer?.querySelectorAll('.skip-intro-marker') || [];
+            markers.forEach(m => {
+                m.classList.remove('active', 'skipped');
+                m.style.opacity = '';
+            });
+        }
+    };
+
     // ===== ДЕТЕКЦИЯ ПО СУБТИТРАМ =====
     const SubtitleDetector = {
         detect(video, duration) {
             return new Promise((resolve) => {
                 try {
-                    // Проверяем textTracks
                     if (video.textTracks && video.textTracks.length) {
                         for (let i = 0; i < video.textTracks.length; i++) {
                             const track = video.textTracks[i];
@@ -298,11 +516,9 @@
                         }
                     }
 
-                    // Ищем встроенные субтитры
                     const subs = Lampa.PlayerVideo && Lampa.PlayerVideo.subtitles ? 
                         Lampa.PlayerVideo.subtitles() : null;
                     if (subs && subs.length) {
-                        // Берем первый доступный
                         for (let i = 0; i < subs.length; i++) {
                             if (subs[i].url) {
                                 this._fetchSubtitle(subs[i].url, duration)
@@ -341,7 +557,6 @@
         _parseSrt(text, duration) {
             const cues = [];
             const lines = text.replace(/\r\n/g, '\n').split('\n');
-            let current = null;
             
             for (let i = 0; i < lines.length; i++) {
                 const line = lines[i].trim();
@@ -370,12 +585,9 @@
         _analyzeCues(cues, duration) {
             if (cues.length < CONFIG.MIN_SUBTITLES) return [];
 
-            // Сортируем по времени
             cues.sort((a, b) => a.start - b.start);
-
             const segments = [];
             
-            // Ищем intro (большой гэп в начале)
             if (cues[0].start >= 15 && cues[0].start <= CONFIG.INTRO_MAX_START) {
                 segments.push({
                     type: 'intro',
@@ -385,7 +597,6 @@
                 });
             }
 
-            // Ищем intro по гэпам между субтитрами
             let maxGap = 0;
             let introStart = 0;
             let introEnd = 0;
@@ -408,7 +619,6 @@
                 });
             }
 
-            // Ищем credits (большой гэп в конце)
             if (duration > 600 && cues.length > 0) {
                 const lastCue = cues[cues.length - 1];
                 const gap = duration - lastCue.end;
@@ -422,7 +632,6 @@
                     });
                 }
 
-                // Ищем гэп в последних 10 минутах
                 const threshold = Math.max(0, duration - 600);
                 let maxGap2 = 0;
                 let creditsStart = 0;
@@ -452,7 +661,7 @@
         }
     };
 
-    // ===== ДЕТЕКЦИЯ ПО ЗВУКУ (упрощено для Tizen) =====
+    // ===== ДЕТЕКЦИЯ ПО ЗВУКУ =====
     const AudioDetector = {
         _context: null,
         _analyser: null,
@@ -478,7 +687,7 @@
                     if (!this._connected || !this._analyser) {
                         this._source = this._context.createMediaElementSource(video);
                         this._analyser = this._context.createAnalyser();
-                        this._analyser.fftSize = 1024; // Меньше для Tizen
+                        this._analyser.fftSize = 1024;
                         this._source.connect(this._analyser);
                         this._analyser.connect(this._context.destination);
                         this._connected = true;
@@ -532,7 +741,6 @@
         _analyze(samples) {
             if (samples.length < CONFIG.AUDIO_MIN_SAMPLES) return null;
 
-            // Сглаживание
             const smoothed = [];
             for (let i = 2; i < samples.length - 2; i++) {
                 const avg = (samples[i-2].energy + samples[i-1].energy + samples[i].energy + 
@@ -545,7 +753,6 @@
 
             if (smoothed.length < CONFIG.MIN_ENERGY_SAMPLES) return null;
 
-            // Находим медиану
             const energies = smoothed.map(s => s.energy).sort((a, b) => a - b);
             const median = energies[Math.floor(energies.length / 2)];
             const threshold = median * CONFIG.ENERGY_THRESHOLD_MULTIPLIER;
@@ -670,12 +877,10 @@
         },
 
         async load(tmdbId, imdbId, season, episode) {
-            // Проверяем кэш
             const cached = Cache.get(tmdbId, season, episode);
             if (cached) return cached;
 
             try {
-                // Пробуем TheIntroDB
                 const url = `${CONFIG.THEINTRODB_URL}?tmdb_id=${tmdbId}&season=${season}&episode=${episode}`;
                 const data = await this._fetch(url);
                 const segments = this._parseTheIntroDB(data);
@@ -686,7 +891,6 @@
             } catch(e) {}
 
             try {
-                // Пробуем IntroDB
                 const url1 = `${CONFIG.API_URL}/get_intros?tmdb=${tmdbId}&season=${season}&episode=${episode}`;
                 const url2 = `${CONFIG.API_URL}/get_credits?tmdb=${tmdbId}&season=${season}&episode=${episode}`;
                 const [intro, credits] = await Promise.all([
@@ -715,7 +919,6 @@
                 }
             } catch(e) {}
 
-            // Пробуем IntroHater
             if (imdbId) {
                 try {
                     const url = `https://introhater.com/api/segments/${imdbId}:${season}:${episode}`;
@@ -774,7 +977,7 @@
         }
     };
 
-    // ===== UI КНОПКА (оптимизировано для Tizen) =====
+    // ===== UI КНОПКА =====
     const SkipButton = {
         _element: null,
         _progressBar: null,
@@ -907,13 +1110,11 @@
             const content = document.createElement('div');
             content.className = 'skip-intro-content';
 
-            // Текст
             const textSpan = document.createElement('span');
             textSpan.className = 'skip-intro-label';
             textSpan.textContent = label;
             content.appendChild(textSpan);
 
-            // Бейдж
             if (badge) {
                 const badgeSpan = document.createElement('span');
                 badgeSpan.className = 'skip-intro-hint';
@@ -921,7 +1122,6 @@
                 content.appendChild(badgeSpan);
             }
 
-            // Иконка
             const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
             svg.setAttribute('class', 'skip-intro-icon');
             svg.setAttribute('viewBox', '0 0 24 24');
@@ -934,7 +1134,6 @@
             svg.appendChild(path2);
             content.appendChild(svg);
 
-            // Подсказка
             const hintSpan = document.createElement('span');
             hintSpan.className = 'skip-intro-hint';
             const hintText = isCountdown ? 
@@ -945,7 +1144,6 @@
 
             btn.appendChild(content);
 
-            // Прогресс бар
             const progressContainer = document.createElement('div');
             progressContainer.className = 'skip-intro-progress';
             const progressBar = document.createElement('div');
@@ -955,14 +1153,12 @@
 
             this._progressBar = progressBar;
             
-            // Обработчики
             content.addEventListener('click', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
                 if (btn._skipCallback) btn._skipCallback();
             });
 
-            // Клавиатура
             this._lampaKeyHandler = (event) => {
                 if (!btn.classList.contains('visible')) return;
                 const code = event.code || event.keyCode;
@@ -1007,7 +1203,6 @@
             }
             document.addEventListener('keydown', this._domKeyHandler, true);
 
-            // Добавляем в DOM
             const player = document.querySelector('.player');
             (player || document.body).appendChild(btn);
             this._element = btn;
@@ -1078,7 +1273,6 @@
             this._cleanup();
             if (this._element) {
                 this._setVisible(false);
-                // Удаляем обработчики
                 if (this._lampaKeyHandler && Lampa.Keypad && Lampa.Keypad.listener) {
                     Lampa.Keypad.listener.remove('keydown', this._lampaKeyHandler);
                 }
@@ -1138,6 +1332,7 @@
             this._initialized = true;
 
             PluginSettings.initSettings();
+            ProgressMarker.init();
 
             Lampa.Player.listener.follow('start', (data) => this._onStart(data));
             Lampa.Player.listener.follow('destroy', () => this._onDestroy());
@@ -1191,10 +1386,10 @@
                 });
 
                 this._segments = merged;
+                this._updateProgressMarkers(merged);
                 console.log(`[SkipIntro] Loaded ${merged.length} segments`);
             };
 
-            // API запрос
             ApiClient.load(meta.tmdb_id, meta.imdb_id, meta.season, meta.episode)
                 .then(segments => {
                     if (this._currentData === data) {
@@ -1211,7 +1406,6 @@
                     mergeSegments();
                 });
 
-            // Детекция
             if (PluginSettings.isDetectEnabled()) {
                 this._runDetection(data, meta, (segments) => {
                     if (this._currentData === data && segments && segments.length) {
@@ -1238,7 +1432,6 @@
                 is_series: false
             };
 
-            // Из карточки
             let card = data.card || null;
             if (!card) {
                 try {
@@ -1257,11 +1450,9 @@
                 }
             }
 
-            // Из данных плеера
             if (data.season != null) meta.season = parseInt(data.season);
             if (data.episode != null) meta.episode = parseInt(data.episode);
 
-            // Из названия
             if ((meta.season == null || meta.episode == null) && data.title) {
                 const match = data.title.match(/[Ss](\d+)[Ee](\d+)/);
                 if (match) {
@@ -1270,7 +1461,6 @@
                 }
             }
 
-            // Из плейлиста
             if (data.playlist && Array.isArray(data.playlist)) {
                 const url = data.url;
                 for (let i = 0; i < data.playlist.length; i++) {
@@ -1305,7 +1495,6 @@
             if (this._detecting) return;
             this._detecting = true;
 
-            // Проверяем кэш детекции
             const cached = Cache.get(meta.tmdb_id, meta.season, meta.episode);
             if (cached && cached.length) {
                 this._detecting = false;
@@ -1319,7 +1508,6 @@
             } catch(e) {}
 
             if (!video || !video.duration) {
-                // Ждем загрузки видео
                 let attempts = 0;
                 const checkVideo = () => {
                     attempts++;
@@ -1345,7 +1533,6 @@
         _runDetectionInternal(video, meta, callback) {
             const duration = video.duration;
             
-            // Сначала субтитры
             SubtitleDetector.detect(video, duration)
                 .then(subSegments => {
                     if (subSegments && subSegments.length) {
@@ -1355,7 +1542,6 @@
                         return;
                     }
 
-                    // Затем аудио
                     AudioDetector.detect(video)
                         .then(audioSegment => {
                             this._detecting = false;
@@ -1378,27 +1564,64 @@
                 });
         },
 
+        _updateProgressMarkers(segments) {
+            let duration = 0;
+            try {
+                const video = Lampa.PlayerVideo.video();
+                if (video) duration = video.duration;
+            } catch(e) {}
+            
+            if (duration > 0 && segments && segments.length) {
+                ProgressMarker.updateMarkers(segments, duration);
+                return;
+            }
+            
+            if (!duration) {
+                let attempts = 0;
+                const checkDuration = () => {
+                    attempts++;
+                    try {
+                        const video = Lampa.PlayerVideo.video();
+                        if (video && video.duration) {
+                            ProgressMarker.updateMarkers(segments, video.duration);
+                        } else if (attempts < 20) {
+                            setTimeout(checkDuration, 500);
+                        }
+                    } catch(e) {
+                        if (attempts < 20) setTimeout(checkDuration, 500);
+                    }
+                };
+                checkDuration();
+            }
+        },
+
         _onTimeUpdate(data) {
             if (!PluginSettings.isEnabled() || !this._segments.length) return;
-
+            
             const current = data.current;
             if (!Utils.isNumeric(current)) return;
-
+            
             const segment = Utils.findSegment(this._segments, current);
+            
+            if (segment) {
+                ProgressMarker.highlightActive(segment);
+            } else {
+                ProgressMarker.resetHighlights();
+            }
             
             if (segment) {
                 if (!PluginSettings.isTypeEnabled(segment.type)) {
                     if (this._activeSegment) this._hideButton();
                     return;
                 }
-
+                
                 if (this._lastSkipped === segment) return;
-
+                
                 if (PluginSettings.isAutoSkip()) {
                     this._doSkip(segment, true);
                     return;
                 }
-
+                
                 if (this._activeSegment !== segment) {
                     this._activeSegment = segment;
                     const label = {
@@ -1407,13 +1630,13 @@
                         credits: 'Пропустить титры',
                         preview: 'Пропустить превью'
                     }[segment.type] || 'Пропустить';
-
+                    
                     const badge = segment._source === 'subs' ? '(субтитры)' :
                                  segment._source === 'audio' ? '(звук)' : null;
-
+                    
                     const tmdb = this._currentTmdb;
                     const hasSkipped = tmdb && Cache.hasSkipped(tmdb, segment.type);
-
+                    
                     if (hasSkipped) {
                         this._showCountdown(label, segment, badge);
                     } else {
@@ -1467,7 +1690,9 @@
             this._lastSkipped = segment;
             this._activeSegment = null;
             SkipButton.destroy();
-
+            
+            ProgressMarker.markSkipped(segment);
+            
             try {
                 const video = Lampa.PlayerVideo.video();
                 if (video) {
@@ -1475,7 +1700,6 @@
                     video.currentTime = target;
                     console.log(`[SkipIntro] Skipped ${segment.type} to ${target}s${auto ? ' (auto)' : ''}`);
                     
-                    // Возобновляем воспроизведение если остановлено
                     setTimeout(() => {
                         try {
                             if (video.paused) video.play();
@@ -1496,10 +1720,12 @@
             this._detecting = false;
             SkipButton.destroy();
             AudioDetector.destroy();
+            ProgressMarker.clear();
         },
 
         _onDestroy() {
             this._cleanup();
+            ProgressMarker.clear();
         }
     };
 
@@ -1512,7 +1738,6 @@
         }
     }
 
-    // Ждем готовности Lampa
     if (window.Lampa && Lampa.Listener) {
         Lampa.Listener.follow('app', (data) => {
             if (data.type === 'ready') initPlugin();
