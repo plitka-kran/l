@@ -23,7 +23,8 @@
         MIN_ENERGY_PEAK_DURATION: 15,
         MAX_ENERGY_PEAK_DURATION: 150,
         MIN_ENERGY_SAMPLES: 10,
-        NOTIFICATION_DURATION: 3000
+        NOTIFICATION_DURATION: 3000,
+        DEBUG_MODE: true // Включен режим отладки
     };
 
     // ===== УТИЛИТЫ =====
@@ -81,31 +82,25 @@
             return null;
         },
 
-        // Расширенный парсинг для HDrezka
         parseHDrezkaTitle(title) {
             if (!title) return null;
             
-            // 1 сезон 1 серия
             let match = title.match(/(\d+)\s*сезон\s*(\d+)\s*серия/i);
             if (match) {
                 return { season: parseInt(match[1]), episode: parseInt(match[2]) };
             }
-            // Сезон 1 Серия 1
             match = title.match(/Сезон\s*(\d+)\s*Серия\s*(\d+)/i);
             if (match) {
                 return { season: parseInt(match[1]), episode: parseInt(match[2]) };
             }
-            // S01E01
             match = title.match(/[Ss](\d+)[Ee](\d+)/);
             if (match) {
                 return { season: parseInt(match[1]), episode: parseInt(match[2]) };
             }
-            // 1x01
             match = title.match(/(\d+)x(\d+)/);
             if (match) {
                 return { season: parseInt(match[1]), episode: parseInt(match[2]) };
             }
-            // Season 1 Episode 1
             match = title.match(/Season\s*(\d+)\s*Episode\s*(\d+)/i);
             if (match) {
                 return { season: parseInt(match[1]), episode: parseInt(match[2]) };
@@ -113,7 +108,6 @@
             return null;
         },
 
-        // Определение источника
         getSourceType() {
             try {
                 const url = Lampa.Player.getUrl ? Lampa.Player.getUrl() : '';
@@ -123,7 +117,6 @@
                 if (url.includes('hdrezka') || url.includes('rezka') || url.includes('hd.rezka') || url.includes('kinobase')) {
                     return 'hdrezka';
                 }
-                // Проверяем по наличию плеера
                 if (document.querySelector('.hdrezka-player, .rezka-player')) {
                     return 'hdrezka';
                 }
@@ -133,26 +126,21 @@
             }
         },
 
-        // Получение TMDB ID разными способами
         getTMDBId() {
             try {
-                // 1. Из Activity
                 const activity = Lampa.Activity.active();
                 if (activity) {
                     if (activity.card && activity.card.id) return activity.card.id;
                     if (activity.movie && activity.movie.id) return activity.movie.id;
                 }
                 
-                // 2. Из Storage
                 const current = Lampa.Storage.get('current', null);
                 if (current && current.id) return current.id;
                 
-                // 3. Из URL
                 const url = window.location.href;
                 const match = url.match(/[?&]id=(\d+)/);
                 if (match) return match[1];
                 
-                // 4. Из meta тегов
                 const meta = document.querySelector('meta[property="og:url"]');
                 if (meta) {
                     const m = meta.content.match(/\/(\d+)(?:-|$)/);
@@ -165,36 +153,31 @@
             }
         },
 
-        // Получение сезона и серии разными способами
         getSeasonEpisode(data) {
             let season = null;
             let episode = null;
             
             try {
-                // 1. Из data напрямую
                 if (data.season != null) season = parseInt(data.season);
                 if (data.episode != null) episode = parseInt(data.episode);
                 
-                // 2. Из playlist
                 if (data.playlist && Array.isArray(data.playlist)) {
                     const url = data.url;
                     for (let i = 0; i < data.playlist.length; i++) {
                         const item = data.playlist[i];
                         if (item.url === url || i === 0) {
-                            if (item.season != null && season == null) season = parseInt(item.season);
-                            if (item.episode != null && episode == null) episode = parseInt(item.episode);
-                            if (item.s != null && season == null) season = parseInt(item.s);
-                            if (item.e != null && episode == null) episode = parseInt(item.e);
-                            if (item.season_num != null && season == null) season = parseInt(item.season_num);
-                            if (item.episode_num != null && episode == null) episode = parseInt(item.episode_num);
-                            if (item.season_number != null && season == null) season = parseInt(item.season_number);
-                            if (item.episode_number != null && episode == null) episode = parseInt(item.episode_number);
+                            const fields = ['season', 'episode', 's', 'e', 'season_num', 'episode_num', 'season_number', 'episode_number', 'season_index', 'episode_index'];
+                            fields.forEach(f => {
+                                if (item[f] != null) {
+                                    if (f.includes('season') && season == null) season = parseInt(item[f]);
+                                    if (f.includes('episode') && episode == null) episode = parseInt(item[f]);
+                                }
+                            });
                         }
                         if (item.url === url) break;
                     }
                 }
                 
-                // 3. Из title
                 if (data.title) {
                     const parsed = this.parseHDrezkaTitle(data.title);
                     if (parsed) {
@@ -203,7 +186,6 @@
                     }
                 }
                 
-                // 4. Из file.title
                 if (data.file && data.file.title) {
                     const parsed = this.parseHDrezkaTitle(data.file.title);
                     if (parsed) {
@@ -212,7 +194,6 @@
                     }
                 }
                 
-                // 5. Из URL
                 if (season == null || episode == null) {
                     const url = Lampa.Player.getUrl ? Lampa.Player.getUrl() : '';
                     const match = url.match(/[Ss](\d+)[Ee](\d+)/i);
@@ -222,18 +203,6 @@
                     }
                 }
                 
-                // 6. Из Lampa Storage
-                if (season == null || episode == null) {
-                    try {
-                        const last = Lampa.Storage.get('last_watch', null);
-                        if (last && last.season != null && last.episode != null) {
-                            if (season == null) season = parseInt(last.season);
-                            if (episode == null) episode = parseInt(last.episode);
-                        }
-                    } catch(e) {}
-                }
-                
-                // 7. Из Activity (для HDrezka)
                 if (season == null || episode == null) {
                     try {
                         const activity = Lampa.Activity.active();
@@ -241,8 +210,6 @@
                             const movie = activity.movie;
                             if (movie.season != null && season == null) season = parseInt(movie.season);
                             if (movie.episode != null && episode == null) episode = parseInt(movie.episode);
-                            if (movie.s != null && season == null) season = parseInt(movie.s);
-                            if (movie.e != null && episode == null) episode = parseInt(movie.e);
                         }
                     } catch(e) {}
                 }
@@ -253,14 +220,11 @@
             }
         },
 
-        // Проверка является ли сериалом
         isSeries(data) {
             try {
-                // 1. Проверяем data
                 if (data.is_series === true) return true;
                 if (data.series === true) return true;
                 
-                // 2. Проверяем card
                 const card = data.card || null;
                 if (card) {
                     if (card.name && !card.title) return true;
@@ -269,7 +233,6 @@
                     if (card.seasons) return true;
                 }
                 
-                // 3. Проверяем Activity
                 const activity = Lampa.Activity.active();
                 if (activity) {
                     const movie = activity.movie || activity.card;
@@ -280,13 +243,265 @@
                     }
                 }
                 
-                // 4. Проверяем наличие сезона и серии
                 const se = this.getSeasonEpisode(data);
                 if (se.season != null && se.episode != null) return true;
                 
                 return false;
             } catch(e) {
                 return false;
+            }
+        }
+    };
+
+    // ===== ДЕБАГ ЛОГГЕР В ПЛЕЕРЕ =====
+    const DebugLogger = {
+        _element: null,
+        _lines: [],
+        _maxLines: 8,
+        _visible: false,
+
+        init() {
+            if (!CONFIG.DEBUG_MODE) return;
+            
+            this._injectStyles();
+            this._createElement();
+            
+            // Показываем/скрываем по двойному нажатию
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'd' || e.key === 'D') {
+                    this.toggle();
+                }
+            });
+            
+            this.log('🐛 Режим отладки включен');
+            this.log('Нажмите D для показа/скрытия');
+        },
+
+        _injectStyles() {
+            if (document.getElementById('skip-intro-debug-styles')) return;
+            
+            const style = document.createElement('style');
+            style.id = 'skip-intro-debug-styles';
+            style.textContent = `
+                .skip-intro-debug {
+                    position: fixed;
+                    bottom: 20px;
+                    left: 20px;
+                    right: 20px;
+                    max-width: 600px;
+                    background: rgba(0, 0, 0, 0.92);
+                    backdrop-filter: blur(12px);
+                    -webkit-backdrop-filter: blur(12px);
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    border-radius: 12px;
+                    padding: 12px 16px;
+                    z-index: 999999;
+                    font-family: 'Consolas', 'Monaco', monospace;
+                    font-size: 12px;
+                    line-height: 1.6;
+                    color: #00ff88;
+                    opacity: 0;
+                    transform: translateY(20px);
+                    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                    pointer-events: none;
+                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
+                    max-height: 300px;
+                    overflow: hidden;
+                }
+                .skip-intro-debug.show {
+                    opacity: 1;
+                    transform: translateY(0);
+                    pointer-events: auto;
+                }
+                .skip-intro-debug .header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 6px;
+                    padding-bottom: 6px;
+                    border-bottom: 1px solid rgba(255,255,255,0.05);
+                    font-size: 10px;
+                    color: rgba(255,255,255,0.4);
+                    text-transform: uppercase;
+                    letter-spacing: 1px;
+                }
+                .skip-intro-debug .header .close {
+                    cursor: pointer;
+                    color: rgba(255,255,255,0.3);
+                    transition: color 0.2s;
+                    font-size: 14px;
+                }
+                .skip-intro-debug .header .close:hover {
+                    color: #ff6b6b;
+                }
+                .skip-intro-debug .log-line {
+                    padding: 2px 0;
+                    opacity: 0;
+                    animation: skip-intro-log-fade 0.3s ease forwards;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+                .skip-intro-debug .log-line .time {
+                    color: rgba(255,255,255,0.3);
+                    margin-right: 8px;
+                    font-size: 10px;
+                }
+                .skip-intro-debug .log-line.error {
+                    color: #ff6b6b;
+                }
+                .skip-intro-debug .log-line.warn {
+                    color: #ffd93d;
+                }
+                .skip-intro-debug .log-line.success {
+                    color: #6bcb6b;
+                }
+                .skip-intro-debug .log-line.info {
+                    color: #6bc5ff;
+                }
+                .skip-intro-debug .log-line.highlight {
+                    color: #ff6bff;
+                    font-weight: bold;
+                }
+                .skip-intro-debug .scroll-area {
+                    max-height: 240px;
+                    overflow-y: auto;
+                    scrollbar-width: thin;
+                    scrollbar-color: rgba(255,255,255,0.1) transparent;
+                }
+                .skip-intro-debug .scroll-area::-webkit-scrollbar {
+                    width: 4px;
+                }
+                .skip-intro-debug .scroll-area::-webkit-scrollbar-thumb {
+                    background: rgba(255,255,255,0.2);
+                    border-radius: 2px;
+                }
+                .skip-intro-debug .hint {
+                    position: fixed;
+                    bottom: 10px;
+                    right: 10px;
+                    color: rgba(255,255,255,0.15);
+                    font-size: 10px;
+                    font-family: monospace;
+                    z-index: 999998;
+                    opacity: 0;
+                    transition: opacity 0.5s;
+                }
+                .skip-intro-debug .hint.show {
+                    opacity: 1;
+                }
+                @keyframes skip-intro-log-fade {
+                    from { opacity: 0; transform: translateX(-10px); }
+                    to { opacity: 1; transform: translateX(0); }
+                }
+                @media (max-width: 720px) {
+                    .skip-intro-debug {
+                        left: 10px;
+                        right: 10px;
+                        bottom: 10px;
+                        font-size: 11px;
+                        padding: 10px 12px;
+                    }
+                }
+            `;
+            document.head.appendChild(style);
+        },
+
+        _createElement() {
+            const el = document.createElement('div');
+            el.className = 'skip-intro-debug';
+            el.innerHTML = `
+                <div class="header">
+                    <span>🐛 SkipIntro Debug</span>
+                    <span class="close" id="skip-intro-debug-close">✕</span>
+                </div>
+                <div class="scroll-area" id="skip-intro-debug-logs"></div>
+            `;
+            document.body.appendChild(el);
+            this._element = el;
+            
+            // Закрытие
+            const closeBtn = el.querySelector('#skip-intro-debug-close');
+            if (closeBtn) {
+                closeBtn.addEventListener('click', () => this.hide());
+            }
+            
+            // Хинт
+            const hint = document.createElement('div');
+            hint.className = 'skip-intro-debug hint';
+            hint.textContent = 'Нажмите D для отладки';
+            document.body.appendChild(hint);
+            setTimeout(() => hint.classList.add('show'), 2000);
+            setTimeout(() => hint.classList.remove('show'), 6000);
+            
+            this._hint = hint;
+        },
+
+        log(message, type = 'info') {
+            if (!CONFIG.DEBUG_MODE) return;
+            
+            const time = new Date().toLocaleTimeString();
+            const line = { message, type, time };
+            
+            this._lines.push(line);
+            if (this._lines.length > this._maxLines * 2) {
+                this._lines = this._lines.slice(-this._maxLines * 2);
+            }
+            
+            this._render();
+        },
+
+        _render() {
+            if (!this._element) return;
+            
+            const container = this._element.querySelector('#skip-intro-debug-logs');
+            if (!container) return;
+            
+            const visibleLines = this._lines.slice(-this._maxLines);
+            container.innerHTML = visibleLines.map(line => `
+                <div class="log-line ${line.type}">
+                    <span class="time">${line.time}</span>
+                    ${line.message}
+                </div>
+            `).join('');
+            
+            // Автоскролл
+            container.scrollTop = container.scrollHeight;
+        },
+
+        show() {
+            if (!this._element) return;
+            this._element.classList.add('show');
+            this._visible = true;
+        },
+
+        hide() {
+            if (!this._element) return;
+            this._element.classList.remove('show');
+            this._visible = false;
+        },
+
+        toggle() {
+            if (this._visible) {
+                this.hide();
+            } else {
+                this.show();
+            }
+        },
+
+        clear() {
+            this._lines = [];
+            this._render();
+        },
+
+        destroy() {
+            if (this._element) {
+                this._element.parentNode.removeChild(this._element);
+                this._element = null;
+            }
+            if (this._hint) {
+                this._hint.parentNode.removeChild(this._hint);
+                this._hint = null;
             }
         }
     };
@@ -1152,19 +1367,28 @@
 
         async load(tmdbId, imdbId, season, episode) {
             const cached = Cache.get(tmdbId, season, episode);
-            if (cached) return cached;
+            if (cached) {
+                DebugLogger.log(`📦 Кэш: ${cached.length} сегментов`, 'success');
+                return cached;
+            }
 
             try {
+                DebugLogger.log(`🔍 Запрос к TheIntroDB...`, 'info');
                 const url = `${CONFIG.THEINTRODB_URL}?tmdb_id=${tmdbId}&season=${season}&episode=${episode}`;
                 const data = await this._fetch(url);
                 const segments = this._parseTheIntroDB(data);
                 if (segments.length) {
                     Cache.set(tmdbId, season, episode, segments);
+                    DebugLogger.log(`✅ TheIntroDB: ${segments.length} сегментов`, 'success');
                     return segments;
                 }
-            } catch(e) {}
+                DebugLogger.log(`❌ TheIntroDB: ничего не найдено`, 'warn');
+            } catch(e) {
+                DebugLogger.log(`❌ TheIntroDB ошибка: ${e.message}`, 'error');
+            }
 
             try {
+                DebugLogger.log(`🔍 Запрос к IntroDB...`, 'info');
                 const url1 = `${CONFIG.API_URL}/get_intros?tmdb=${tmdbId}&season=${season}&episode=${episode}`;
                 const url2 = `${CONFIG.API_URL}/get_credits?tmdb=${tmdbId}&season=${season}&episode=${episode}`;
                 const [intro, credits] = await Promise.all([
@@ -1189,22 +1413,32 @@
                 }
                 if (segments.length) {
                     Cache.set(tmdbId, season, episode, segments);
+                    DebugLogger.log(`✅ IntroDB: ${segments.length} сегментов`, 'success');
                     return segments;
                 }
-            } catch(e) {}
+                DebugLogger.log(`❌ IntroDB: ничего не найдено`, 'warn');
+            } catch(e) {
+                DebugLogger.log(`❌ IntroDB ошибка: ${e.message}`, 'error');
+            }
 
             if (imdbId) {
                 try {
+                    DebugLogger.log(`🔍 Запрос к IntroHater...`, 'info');
                     const url = `https://introhater.com/api/segments/${imdbId}:${season}:${episode}`;
                     const data = await this._fetch(url);
                     const segments = this._parseIntroHater(data);
                     if (segments.length) {
                         Cache.set(tmdbId, season, episode, segments);
+                        DebugLogger.log(`✅ IntroHater: ${segments.length} сегментов`, 'success');
                         return segments;
                     }
-                } catch(e) {}
+                    DebugLogger.log(`❌ IntroHater: ничего не найдено`, 'warn');
+                } catch(e) {
+                    DebugLogger.log(`❌ IntroHater ошибка: ${e.message}`, 'error');
+                }
             }
 
+            DebugLogger.log(`⚠️ Ни один API не вернул данные`, 'warn');
             return [];
         },
 
@@ -1265,6 +1499,9 @@
             if (this._initialized) return;
             this._initialized = true;
 
+            // Инициализируем дебаг логгер
+            DebugLogger.init();
+
             PluginSettings.initSettings();
             ProgressMarker.init();
 
@@ -1277,43 +1514,52 @@
                 );
             }
 
-            console.log('[SkipIntro] Plugin initialized for Tizen');
+            DebugLogger.log('🚀 Плагин инициализирован', 'success');
+            DebugLogger.log('📺 Источник: ' + Utils.getSourceType(), 'info');
+            DebugLogger.log('⌨️ Нажмите D для показа/скрытия логов', 'info');
         },
 
         _onStart(data) {
             this._cleanup();
 
-            if (!PluginSettings.isEnabled()) return;
+            if (!PluginSettings.isEnabled()) {
+                DebugLogger.log('⛔ Плагин отключен в настройках', 'warn');
+                return;
+            }
 
-            // Получаем метаданные
+            DebugLogger.log('🎬 Событие start', 'info');
+            DebugLogger.log('📊 Данные плеера:', 'info');
+
+            // Логируем данные плеера
+            try {
+                DebugLogger.log(`  - title: ${data.title || 'нет'}`, 'info');
+                DebugLogger.log(`  - url: ${data.url || 'нет'}`, 'info');
+                DebugLogger.log(`  - season: ${data.season || 'нет'}`, 'info');
+                DebugLogger.log(`  - episode: ${data.episode || 'нет'}`, 'info');
+                if (data.playlist) {
+                    DebugLogger.log(`  - playlist: ${data.playlist.length} элементов`, 'info');
+                }
+            } catch(e) {}
+
             const meta = this._extractMeta(data);
             
-            // Детальное логирование для отладки
-            console.log('[SkipIntro] ===== МЕТАДАННЫЕ =====');
-            console.log('[SkipIntro] Источник:', Utils.getSourceType());
-            console.log('[SkipIntro] TMDB ID:', meta.tmdb_id);
-            console.log('[SkipIntro] IMDB ID:', meta.imdb_id);
-            console.log('[SkipIntro] Сезон:', meta.season);
-            console.log('[SkipIntro] Серия:', meta.episode);
-            console.log('[SkipIntro] Это сериал?:', meta.is_series);
-            console.log('[SkipIntro] Данные плеера:', data);
-            
-            // Пробуем получить данные из Activity
-            try {
-                const activity = Lampa.Activity.active();
-                console.log('[SkipIntro] Activity:', activity);
-            } catch(e) {}
+            DebugLogger.log('📋 Извлеченные метаданные:', 'highlight');
+            DebugLogger.log(`  - TMDB ID: ${meta.tmdb_id || '❌ не найден'}`, meta.tmdb_id ? 'success' : 'error');
+            DebugLogger.log(`  - IMDB ID: ${meta.imdb_id || 'нет'}`, 'info');
+            DebugLogger.log(`  - Сезон: ${meta.season != null ? meta.season : '❌ не найден'}`, meta.season != null ? 'success' : 'error');
+            DebugLogger.log(`  - Серия: ${meta.episode != null ? meta.episode : '❌ не найден'}`, meta.episode != null ? 'success' : 'error');
+            DebugLogger.log(`  - Сериал: ${meta.is_series ? '✅ да' : '❌ нет'}`, meta.is_series ? 'success' : 'error');
             
             if (!meta.tmdb_id || !meta.is_series || meta.season == null || meta.episode == null) {
-                console.log('[SkipIntro] ❌ Не удалось определить метаданные для HDrezka');
-                console.log('[SkipIntro] Попробуйте вручную указать ID в настройках');
+                DebugLogger.log('❌ Не удалось определить метаданные для HDrezka', 'error');
+                DebugLogger.log('💡 Попробуйте вручную указать ID в настройках', 'warn');
                 return;
             }
 
             this._currentData = data;
             this._currentTmdb = meta.tmdb_id;
             
-            console.log(`[SkipIntro] ✅ Загружаем сегменты для S${meta.season}E${meta.episode} (TMDB: ${meta.tmdb_id})`);
+            DebugLogger.log(`✅ Загружаем сегменты для S${meta.season}E${meta.episode} (TMDB: ${meta.tmdb_id})`, 'success');
             
             let apiDone = false;
             let detectDone = false;
@@ -1341,9 +1587,19 @@
 
                 this._segments = merged;
                 this._updateProgressMarkers(merged);
-                console.log(`[SkipIntro] ✅ Загружено ${merged.length} сегментов`);
+                DebugLogger.log(`📊 Загружено ${merged.length} сегментов`, 'success');
+                
+                if (merged.length === 0) {
+                    DebugLogger.log('⚠️ Сегменты не найдены. Попробуйте детекцию.', 'warn');
+                } else {
+                    merged.forEach((seg, i) => {
+                        const typeNames = { intro: 'Заставка', recap: 'Рекап', credits: 'Титры', preview: 'Превью' };
+                        DebugLogger.log(`  ${i+1}. ${typeNames[seg.type] || seg.type}: ${seg.start}с → ${seg.end}с (${seg.end - seg.start}с)`, 'info');
+                    });
+                }
             };
 
+            DebugLogger.log('🌐 Запрос к API...', 'info');
             ApiClient.load(meta.tmdb_id, meta.imdb_id, meta.season, meta.episode)
                 .then(segments => {
                     if (this._currentData === data) {
@@ -1356,23 +1612,27 @@
                     }
                 })
                 .catch((err) => {
-                    console.log('[SkipIntro] ❌ Ошибка API:', err);
+                    DebugLogger.log(`❌ Ошибка API: ${err.message}`, 'error');
                     apiDone = true;
                     mergeSegments();
                 });
 
             if (PluginSettings.isDetectEnabled()) {
+                DebugLogger.log('🔍 Запуск детекции...', 'info');
                 this._runDetection(data, meta, (segments) => {
                     if (this._currentData === data && segments && segments.length) {
                         detectSegments = segments;
                         detectDone = true;
+                        DebugLogger.log(`🔍 Детекция: найдено ${segments.length} сегментов`, 'success');
                         mergeSegments();
                     } else {
                         detectDone = true;
+                        DebugLogger.log(`🔍 Детекция: ничего не найдено`, 'warn');
                         mergeSegments();
                     }
                 });
             } else {
+                DebugLogger.log('⏭️ Детекция отключена в настройках', 'warn');
                 detectDone = true;
                 mergeSegments();
             }
@@ -1408,20 +1668,18 @@
                 if (!meta.tmdb_id) meta.tmdb_id = card.id || null;
                 if (!meta.imdb_id) meta.imdb_id = card.imdb_id || null;
                 
-                // Определяем сериал
                 if (card.name && !card.title) meta.is_series = true;
                 if (card.number_of_seasons) meta.is_series = true;
                 if (card.first_air_date) meta.is_series = true;
                 if (card.seasons) meta.is_series = true;
                 
-                // Из карточки
                 if (meta.season == null && card.season != null) meta.season = parseInt(card.season);
                 if (meta.episode == null && card.episode != null) meta.episode = parseInt(card.episode);
                 if (meta.season == null && card.s != null) meta.season = parseInt(card.s);
                 if (meta.episode == null && card.e != null) meta.episode = parseInt(card.e);
             }
 
-            // 3. Из playlist (важно для HDrezka)
+            // 3. Из playlist
             if (data.playlist && Array.isArray(data.playlist)) {
                 const url = data.url;
                 for (let i = 0; i < data.playlist.length; i++) {
@@ -1429,7 +1687,6 @@
                     const itemUrl = typeof item.url === 'string' ? item.url : '';
                     
                     if (itemUrl === url || i === 0 || !url) {
-                        // Все возможные поля
                         const fields = ['season', 'episode', 's', 'e', 'season_num', 'episode_num', 'season_number', 'episode_number', 'season_index', 'episode_index'];
                         fields.forEach(f => {
                             if (item[f] != null) {
@@ -1442,7 +1699,6 @@
                             }
                         });
                         
-                        // Помечаем как сериал если есть сезон и серия
                         if (meta.season != null && meta.episode != null) {
                             meta.is_series = true;
                         }
@@ -1492,18 +1748,16 @@
                 if (meta.tmdb_id) meta.is_series = true;
             }
 
-            // 8. Из URL (для HDrezka)
+            // 8. Из URL
             if ((meta.season == null || meta.episode == null) || !meta.tmdb_id) {
                 try {
                     const url = Lampa.Player.getUrl ? Lampa.Player.getUrl() : '';
                     
-                    // Извлекаем TMDB ID из URL
                     if (!meta.tmdb_id) {
                         const tmdbMatch = url.match(/[?&]tmdb_id=(\d+)/) || url.match(/\/tmdb\/(\d+)/);
                         if (tmdbMatch) meta.tmdb_id = tmdbMatch[1];
                     }
                     
-                    // Извлекаем сезон/серию из URL
                     const seMatch = url.match(/[Ss](\d+)[Ee](\d+)/i);
                     if (seMatch) {
                         if (meta.season == null) meta.season = parseInt(seMatch[1]);
@@ -1511,7 +1765,6 @@
                         meta.is_series = true;
                     }
                     
-                    // HDrezka специфичный паттерн
                     const hdMatch = url.match(/\/\d+-(\d+)-(\d+)/);
                     if (hdMatch && (meta.season == null || meta.episode == null)) {
                         if (meta.season == null) meta.season = parseInt(hdMatch[1]);
@@ -1526,7 +1779,7 @@
                 meta.is_series = true;
             }
 
-            // 10. Fallback - пробуем получить из Storage
+            // 10. Fallback - из Storage
             if (!meta.tmdb_id || meta.season == null || meta.episode == null) {
                 try {
                     const current = Lampa.Storage.get('current', null);
@@ -1543,12 +1796,16 @@
         },
 
         _runDetection(data, meta, callback) {
-            if (this._detecting) return;
+            if (this._detecting) {
+                DebugLogger.log('⏳ Детекция уже запущена', 'warn');
+                return;
+            }
             this._detecting = true;
 
             const cached = Cache.get(meta.tmdb_id, meta.season, meta.episode);
             if (cached && cached.length) {
                 this._detecting = false;
+                DebugLogger.log(`📦 Кэш детекции: ${cached.length} сегментов`, 'success');
                 callback(cached);
                 return;
             }
@@ -1559,6 +1816,7 @@
             } catch(e) {}
 
             if (!video || !video.duration) {
+                DebugLogger.log('⏳ Ожидание загрузки видео...', 'info');
                 let attempts = 0;
                 const checkVideo = () => {
                     attempts++;
@@ -1567,50 +1825,60 @@
                     } catch(e) {}
                     
                     if (video && video.duration) {
+                        DebugLogger.log(`✅ Видео загружено (${Math.round(video.duration)}с)`, 'success');
                         this._runDetectionInternal(video, meta, callback);
                     } else if (attempts < 20) {
                         setTimeout(checkVideo, 500);
                     } else {
+                        DebugLogger.log('❌ Таймаут загрузки видео', 'error');
                         this._detecting = false;
                         callback([]);
                     }
                 };
                 checkVideo();
             } else {
+                DebugLogger.log(`✅ Видео загружено (${Math.round(video.duration)}с)`, 'success');
                 this._runDetectionInternal(video, meta, callback);
             }
         },
 
         _runDetectionInternal(video, meta, callback) {
             const duration = video.duration;
+            DebugLogger.log('🔍 Детекция по субтитрам...', 'info');
             
             SubtitleDetector.detect(video, duration)
                 .then(subSegments => {
                     if (subSegments && subSegments.length) {
                         Cache.set(meta.tmdb_id, meta.season, meta.episode, subSegments);
                         this._detecting = false;
+                        DebugLogger.log(`✅ Субтитры: найдено ${subSegments.length} сегментов`, 'success');
                         callback(subSegments);
                         return;
                     }
 
+                    DebugLogger.log('🔍 Детекция по звуку...', 'info');
                     AudioDetector.detect(video)
                         .then(audioSegment => {
                             this._detecting = false;
                             if (audioSegment) {
                                 const segments = [audioSegment];
                                 Cache.set(meta.tmdb_id, meta.season, meta.episode, segments);
+                                DebugLogger.log(`✅ Звук: найден сегмент ${audioSegment.start}с → ${audioSegment.end}с`, 'success');
                                 callback(segments);
                             } else {
+                                DebugLogger.log('❌ Детекция не нашла сегментов', 'warn');
                                 callback([]);
                             }
                         })
                         .catch(() => {
                             this._detecting = false;
+                            DebugLogger.log('❌ Ошибка детекции звука', 'error');
                             callback([]);
                         });
                 })
                 .catch(() => {
                     this._detecting = false;
+                    DebugLogger.log('❌ Ошибка детекции субтитров', 'error');
                     callback([]);
                 });
         },
@@ -1700,6 +1968,8 @@
             const label = labels[segment.type] || segment.type;
             const time = Math.round(segment.end - segment.start);
             
+            DebugLogger.log(`⏭ ${label} пропущена (${time}с)${auto ? ' ⚡' : ''}`, 'highlight');
+            
             Notification.show(
                 `⏭ ${label} пропущена`,
                 `${time}с${auto ? ' ⚡' : ''}`,
@@ -1711,7 +1981,6 @@
                 if (video) {
                     const target = Math.min(segment.end, video.duration || segment.end);
                     video.currentTime = target;
-                    console.log(`[SkipIntro] Skipped ${segment.type} to ${target}s${auto ? ' (auto)' : ''}`);
                     
                     setTimeout(() => {
                         try {
@@ -1720,7 +1989,7 @@
                     }, 100);
                 }
             } catch(e) {
-                console.log('[SkipIntro] Error seeking:', e);
+                DebugLogger.log(`❌ Ошибка перемотки: ${e.message}`, 'error');
             }
         },
 
@@ -1736,6 +2005,7 @@
         },
 
         _onDestroy() {
+            DebugLogger.log('🛑 Плеер уничтожен', 'info');
             this._cleanup();
             ProgressMarker.destroy();
         }
