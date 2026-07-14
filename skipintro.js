@@ -4,10 +4,9 @@
     if (window.__skipIntroLoaded) return;
     window.__skipIntroLoaded = !0;
 
-    // ===== КОНФИГУРАЦИЯ =====
     const CONFIG = {
         INTRO_MAX_START: 180, // Максимальное время начала первой реплики (в сек)
-        MIN_SUBTITLES: 5,     // Минимальное кол-во субтитров для анализа
+        MIN_SUBTITLES: 3,     // Минимальное кол-во субтитров для анализа
         NOTIFICATION_DURATION: 3000
     };
 
@@ -20,7 +19,7 @@
         init() {
             const selectors = [
                 '.player-progress', '.video-progress', '.progress-bar', 
-                '.seek-bar', '.timeline', '.player-timeline'
+                '.seek-bar', '.timeline', '.player-timeline', '.player-js-progress'
             ];
 
             for (const selector of selectors) {
@@ -39,7 +38,7 @@
             if (!mc) {
                 mc = document.createElement('div');
                 mc.className = 'skip-intro-markers';
-                mc.style.cssText = 'position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:10;';
+                mc.style.cssText = 'position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:99;';
                 this._container.appendChild(mc);
             }
             this._markersContainer = mc;
@@ -53,14 +52,14 @@
             style.id = 'skip-intro-styles';
             style.textContent = `
                 .skip-intro-marker {
-                    position: absolute; top: 50%; transform: translateY(-50%); height: 80%;
-                    border-radius: 3px; min-width: 4px; opacity: 0.6; transition: all 0.3s ease;
-                    background: rgba(76, 175, 80, 0.8); border: 1px solid rgba(76, 175, 80, 0.5);
+                    position: absolute; top: 0; left: 0; height: 100%;
+                    border-radius: 2px; min-width: 4px; opacity: 0.7; transition: all 0.3s ease;
+                    background: rgba(76, 175, 80, 0.7); border-right: 2px solid #4CAF50;
                 }
-                .skip-intro-marker.active { opacity: 0.95; height: 100%; box-shadow: 0 0 8px #fff; }
+                .skip-intro-marker.active { opacity: 0.95; background: rgba(76, 175, 80, 0.9); box-shadow: 0 0 8px #4CAF50; }
                 
                 .skip-intro-notification {
-                    position: fixed; top: 30px; left: 50%; transform: translateX(-50%) translateY(-20px);
+                    position: fixed; top: 40px; left: 50%; transform: translateX(-50%) translateY(-20px);
                     background: rgba(0, 0, 0, 0.9); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
                     color: #fff; padding: 12px 30px; border-radius: 8px; font-size: 16px; font-weight: 500;
                     z-index: 99999; opacity: 0; pointer-events: none; transition: all 0.3s ease;
@@ -73,11 +72,7 @@
 
         draw(endSec, duration) {
             this.clear();
-            
-            // Если контейнер еще не найден (плеер рендерится) — пробуем инициализировать повторно
-            if (!this._markersContainer) {
-                this.init();
-            }
+            this.init();
             
             if (!this._markersContainer || !duration || !endSec) return;
 
@@ -86,7 +81,6 @@
 
             const marker = document.createElement('div');
             marker.className = 'skip-intro-marker active';
-            marker.style.left = '0%';
             marker.style.width = `${Math.min(widthPct, 100)}%`;
             
             this._markersContainer.appendChild(marker);
@@ -148,7 +142,7 @@
                         const track = video.textTracks[i];
                         if (track.cues && track.cues.length > CONFIG.MIN_SUBTITLES) {
                             const firstCueStart = track.cues[0].startTime;
-                            if (firstCueStart >= 15 && firstCueStart <= CONFIG.INTRO_MAX_START) {
+                            if (firstCueStart >= 10 && firstCueStart <= CONFIG.INTRO_MAX_START) {
                                 return Math.round(firstCueStart);
                             }
                         }
@@ -165,6 +159,7 @@
         _isSkipped: false,
         _currentData: null,
         _initialized: false,
+        _scanTimer: null,
 
         init() {
             if (this._initialized) return;
@@ -180,28 +175,14 @@
 
         _onStart(data) {
             this._cleanup();
-
-            // Строгая проверка: работаем ТОЛЬКО с торрентами
-            const isTorrent = data.torrent || data.hash || 
-                (data.url && (
-                    data.url.includes('127.0.0.1') || 
-                    data.url.includes('localhost') || 
-                    data.url.includes(':8090') || 
-                    (data.url.includes('play') && data.url.includes('index='))
-                ));
-
-            if (!isTorrent) return;
-
             this._currentData = data;
             this._scanSubtitles();
         },
 
         _scanSubtitles() {
-            let attempts = 0;
             const check = () => {
                 if (this._isSkipped || !this._currentData) return;
                 
-                attempts++;
                 let video = null;
                 try { video = Lampa.PlayerVideo.video(); } catch(e) {}
                 
@@ -211,24 +192,24 @@
                         this._introEnd = detectTime;
                         console.log(`[SkipIntro] Intro detected: 0-${detectTime}s`);
                         
-                        // Пытаемся отрисовать маркер. Если плеер еще не построил DOM, повторим через секунду
-                        const drawMarker = () => {
-                            if (video.duration) {
-                                ProgressMarker.draw(this._introEnd, video.duration);
-                            } else if (attempts < 30) {
-                                setTimeout(drawMarker, 500);
-                            }
-                        };
-                        drawMarker();
+                        if (this._scanTimer) clearInterval(this._scanTimer);
+
+                        // Рисуем маркер на полосе
+                        if (video.duration) {
+                            ProgressMarker.draw(this._introEnd, video.duration);
+                        } else {
+                            setTimeout(() => {
+                                if (video.duration) ProgressMarker.draw(this._introEnd, video.duration);
+                            }, 1000);
+                        }
                         return;
                     }
                 }
-                
-                if (attempts < 30) {
-                    setTimeout(check, 500);
-                }
             };
-            check();
+
+            // Проверяем каждые 2 секунды фоном, пока не найдем субтитры
+            this._scanTimer = setInterval(check, 2000);
+            check(); 
         },
 
         _onTimeUpdate(data) {
@@ -252,7 +233,7 @@
 
         _doSkip(toTime) {
             this._isSkipped = true;
-            Notification.show('Заставка пропущено', `${toTime}с ⚡`);
+            Notification.show('Начало серии пропущено', `${toTime}с ⚡`);
 
             try {
                 const video = Lampa.PlayerVideo.video();
@@ -263,6 +244,10 @@
         },
 
         _cleanup() {
+            if (this._scanTimer) {
+                clearInterval(this._scanTimer);
+                this._scanTimer = null;
+            }
             this._introEnd = null;
             this._isSkipped = false;
             this._currentData = null;
