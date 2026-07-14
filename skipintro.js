@@ -10,15 +10,20 @@
         THEINTRODB_URL: 'https://api.theintrodb.org/v2/media',
         CACHE_TTL: 7 * 24 * 60 * 60 * 1000,
         DETECTION_TIMEOUT: 5000,
-        INTRO_MAX_START: 180,
-        INTRO_MAX_END: 350,
-        CREDITS_MIN_GAP: 25,
+        INTRO_MAX_START: 150,
+        INTRO_MAX_END: 300,
+        CREDITS_MIN_GAP: 30,
         MIN_SUBTITLES: 5,
-        AUTO_SKIP_DELAY: 3000,
-        NOTIFICATION_DURATION: 3000,
-        MIN_VIDEO_DURATION: 120,
-        SEGMENT_OVERLAP_TOLERANCE: 5,
-        MAX_SEGMENTS_PER_TYPE: 2
+        AUTO_SKIP_DELAY: 4000,
+        AUDIO_SAMPLE_INTERVAL: 500,
+        AUDIO_MAX_TIME: 420,
+        AUDIO_MIN_SAMPLES: 20,
+        ENERGY_THRESHOLD_MULTIPLIER: 1.3,
+        ENERGY_MIN_THRESHOLD: 0.8,
+        MIN_ENERGY_PEAK_DURATION: 15,
+        MAX_ENERGY_PEAK_DURATION: 150,
+        MIN_ENERGY_SAMPLES: 10,
+        NOTIFICATION_DURATION: 3000
     };
 
     // ===== УТИЛИТЫ =====
@@ -63,14 +68,6 @@
             };
         },
 
-        debounce(fn, delay) {
-            let timer = null;
-            return function(...args) {
-                clearTimeout(timer);
-                timer = setTimeout(() => fn.apply(this, args), delay);
-            };
-        },
-
         isNumeric(val) {
             return typeof val === 'number' && !isNaN(val) && isFinite(val);
         },
@@ -82,33 +79,6 @@
                 if (seg.start > time) break;
             }
             return null;
-        },
-
-        mergeSegments(segments) {
-            if (!segments || !segments.length) return [];
-            
-            const merged = [];
-            const sorted = [...segments].sort((a, b) => a.start - b.start);
-            
-            for (const seg of sorted) {
-                let added = false;
-                for (let i = 0; i < merged.length; i++) {
-                    const existing = merged[i];
-                    if (existing.type === seg.type &&
-                        Math.abs(existing.start - seg.start) < CONFIG.SEGMENT_OVERLAP_TOLERANCE &&
-                        Math.abs(existing.end - seg.end) < CONFIG.SEGMENT_OVERLAP_TOLERANCE) {
-                        existing.start = Math.min(existing.start, seg.start);
-                        existing.end = Math.max(existing.end, seg.end);
-                        added = true;
-                        break;
-                    }
-                }
-                if (!added) {
-                    merged.push({ ...seg });
-                }
-            }
-            
-            return merged;
         },
 
         getVideoElement() {
@@ -172,14 +142,6 @@
             } catch(e) {}
             
             return false;
-        },
-
-        isVideoPlaying() {
-            try {
-                const video = this.getVideoElement();
-                if (video) return !video.paused;
-            } catch(e) {}
-            return false;
         }
     };
 
@@ -198,17 +160,7 @@
         },
 
         isTypeEnabled(type) {
-            const defaultEnabled = {
-                intro: true,
-                recap: true,
-                credits: true,
-                preview: false
-            };
-            return Utils.getStorage(`skip_intro_type_${type}`, defaultEnabled[type] || false) !== false;
-        },
-
-        getDetectionMethod() {
-            return Utils.getStorage('skip_intro_detection_method', 'auto');
+            return Utils.getStorage(`skip_intro_type_${type}`, true) !== false;
         },
 
         initSettings() {
@@ -222,18 +174,6 @@
                 { name: 'skip_intro_enabled', type: 'trigger', default: true, label: 'Включить плагин' },
                 { name: 'skip_intro_auto', type: 'trigger', default: true, label: 'Автоматический пропуск' },
                 { name: 'skip_intro_detect', type: 'trigger', default: true, label: 'Умное обнаружение' },
-                { 
-                    name: 'skip_intro_detection_method', 
-                    type: 'select', 
-                    default: 'auto',
-                    values: {
-                        auto: 'Авто',
-                        subtitles: 'Субтитры',
-                        audio: 'Звук',
-                        both: 'Оба метода'
-                    },
-                    label: 'Метод обнаружения'
-                },
                 { name: 'skip_intro_type_intro', type: 'trigger', default: true, label: 'Пропускать заставку' },
                 { name: 'skip_intro_type_recap', type: 'trigger', default: true, label: 'Пропускать рекап' },
                 { name: 'skip_intro_type_credits', type: 'trigger', default: true, label: 'Пропускать титры' },
@@ -243,7 +183,7 @@
             params.forEach(p => {
                 Lampa.SettingsApi.addParam({
                     component: 'skip_intro',
-                    param: { name: p.name, type: p.type, default: p.default, values: p.values },
+                    param: { name: p.name, type: p.type, default: p.default },
                     field: { name: p.label, description: p.desc || '' }
                 });
             });
@@ -324,12 +264,6 @@
         _container: null,
         _markersContainer: null,
         _markers: [],
-        _colors: {
-            intro: '#4CAF50',
-            recap: '#FF9800',
-            credits: '#2196F3',
-            preview: '#9C27B0'
-        },
 
         init() {
             this._findProgressBar();
@@ -349,8 +283,7 @@
                 '[class*="timeline"]',
                 '.vjs-progress-holder',
                 '.vjs-slider',
-                '.jw-progress',
-                '.jw-slider-time'
+                '.jw-progress'
             ];
 
             for (const selector of selectors) {
@@ -363,7 +296,7 @@
 
             if (!this._container) {
                 try {
-                    const player = document.querySelector('.player, .video-js, .jwplayer, [data-player]');
+                    const player = document.querySelector('.player, .video-js, .jwplayer');
                     if (player) {
                         const progress = player.querySelector('[class*="progress"]') || 
                                        player.querySelector('[class*="timeline"]') ||
@@ -412,24 +345,34 @@
                     top: 50%;
                     transform: translateY(-50%);
                     height: 70%;
-                    border-radius: 2px;
+                    border-radius: 3px;
                     transition: all 0.3s ease;
                     pointer-events: none !important;
-                    min-width: 3px;
+                    min-width: 4px;
                     opacity: 0.6;
                     z-index: 5;
                 }
-                .skip-intro-marker-intro { background: rgba(76, 175, 80, 0.8); border: 1px solid #4CAF50; }
-                .skip-intro-marker-recap { background: rgba(255, 152, 0, 0.8); border: 1px solid #FF9800; }
-                .skip-intro-marker-credits { background: rgba(33, 150, 243, 0.8); border: 1px solid #2196F3; }
-                .skip-intro-marker-preview { background: rgba(156, 39, 176, 0.8); border: 1px solid #9C27B0; }
-                .skip-intro-marker.active {
-                    opacity: 1 !important;
-                    height: 100% !important;
-                    box-shadow: 0 0 15px rgba(255,255,255,0.3);
+                .skip-intro-marker-intro {
+                    background: linear-gradient(180deg, rgba(76, 175, 80, 0.8), rgba(76, 175, 80, 0.3));
+                    border: 1px solid rgba(76, 175, 80, 0.5);
                 }
-                .skip-intro-marker.animating {
+                .skip-intro-marker-recap {
+                    background: linear-gradient(180deg, rgba(255, 152, 0, 0.8), rgba(255, 152, 0, 0.3));
+                    border: 1px solid rgba(255, 152, 0, 0.5);
+                }
+                .skip-intro-marker-credits {
+                    background: linear-gradient(180deg, rgba(33, 150, 243, 0.8), rgba(33, 150, 243, 0.3));
+                    border: 1px solid rgba(33, 150, 243, 0.5);
+                }
+                .skip-intro-marker-preview {
+                    background: linear-gradient(180deg, rgba(156, 39, 176, 0.8), rgba(156, 39, 176, 0.3));
+                    border: 1px solid rgba(156, 39, 176, 0.5);
+                }
+                .skip-intro-marker.active {
+                    opacity: 0.9 !important;
+                    height: 100% !important;
                     animation: skip-intro-pulse 1s ease-in-out infinite;
+                    box-shadow: 0 0 20px rgba(255,255,255,0.2);
                 }
                 @keyframes skip-intro-pulse {
                     0%, 100% { opacity: 0.6; transform: translateY(-50%) scaleY(1); }
@@ -472,7 +415,7 @@
 
         updateMarkers(segments, duration) {
             this.clear();
-            if (!segments || !segments.length || !duration || duration < CONFIG.MIN_VIDEO_DURATION) return;
+            if (!segments || !segments.length || !duration || duration < 60) return;
             
             if (!this._container || !this._markersContainer) {
                 this._findProgressBar();
@@ -495,20 +438,15 @@
                     Math.abs(data.start - segment.start) < 1 && 
                     Math.abs(data.end - segment.end) < 1) {
                     marker.classList.add('active');
-                    marker.classList.add('animating');
                 } else {
                     marker.classList.remove('active');
-                    marker.classList.remove('animating');
                 }
             });
         },
 
         resetHighlights() {
             const markers = this._markersContainer?.querySelectorAll('.skip-intro-marker') || [];
-            markers.forEach(m => {
-                m.classList.remove('active');
-                m.classList.remove('animating');
-            });
+            markers.forEach(m => m.classList.remove('active'));
         },
 
         destroy() {
@@ -533,58 +471,56 @@
                     position: fixed;
                     top: 30px;
                     left: 50%;
-                    transform: translateX(-50%) translateY(-30px);
-                    background: rgba(0, 0, 0, 0.88);
+                    transform: translateX(-50%) translateY(-20px);
+                    background: rgba(0, 0, 0, 0.85);
                     backdrop-filter: blur(12px);
                     -webkit-backdrop-filter: blur(12px);
                     color: #fff;
-                    padding: 14px 32px;
+                    padding: 16px 40px;
                     border-radius: 12px;
-                    font-size: 17px;
+                    font-size: 18px;
                     font-weight: 500;
                     z-index: 99999;
                     opacity: 0;
                     pointer-events: none;
                     transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
                     font-family: system-ui, -apple-system, sans-serif;
-                    border: 1px solid rgba(255, 255, 255, 0.15);
+                    border: 1px solid rgba(255, 255, 255, 0.1);
                     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
                     text-align: center;
-                    min-width: 180px;
-                    max-width: 85vw;
-                    letter-spacing: 0.2px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    gap: 12px;
+                    min-width: 200px;
+                    max-width: 80vw;
+                    letter-spacing: 0.3px;
                 }
                 .skip-intro-notification.show {
                     opacity: 1;
                     transform: translateX(-50%) translateY(0);
                 }
                 .skip-intro-notification .icon {
-                    font-size: 20px;
-                    line-height: 1;
+                    display: inline-block;
+                    margin-right: 12px;
+                    font-size: 22px;
                 }
                 .skip-intro-notification .label {
-                    white-space: nowrap;
+                    display: inline-block;
                 }
                 .skip-intro-notification .badge {
+                    display: inline-block;
+                    margin-left: 10px;
                     font-size: 13px;
-                    opacity: 0.7;
+                    opacity: 0.6;
                     font-weight: 400;
-                    background: rgba(255,255,255,0.1);
-                    padding: 2px 10px;
-                    border-radius: 20px;
                 }
                 .skip-intro-notification .progress-ring {
-                    width: 18px;
-                    height: 18px;
+                    display: inline-block;
+                    margin-left: 14px;
+                    width: 20px;
+                    height: 20px;
                     border: 2px solid rgba(255,255,255,0.2);
                     border-top-color: #4CAF50;
                     border-radius: 50%;
                     animation: skip-intro-spin 0.8s linear infinite;
-                    flex-shrink: 0;
+                    vertical-align: middle;
                 }
                 @keyframes skip-intro-spin {
                     to { transform: rotate(360deg); }
@@ -592,14 +528,9 @@
                 @media (max-width: 720px) {
                     .skip-intro-notification {
                         top: 20px;
-                        padding: 10px 20px;
-                        font-size: 14px;
-                        min-width: 120px;
-                        gap: 8px;
-                    }
-                    .skip-intro-notification .badge {
-                        font-size: 11px;
-                        padding: 1px 8px;
+                        padding: 12px 24px;
+                        font-size: 15px;
+                        min-width: 150px;
                     }
                 }
             `;
@@ -669,8 +600,147 @@
         }
     };
 
-    // ===== УНИВЕРСАЛЬНЫЙ ДЕТЕКТОР =====
-    const UniversalDetector = {
+    // ===== ДЕТЕКЦИЯ ПО СУБТИТРАМ =====
+    const SubtitleDetector = {
+        detect(video, duration) {
+            return new Promise((resolve) => {
+                try {
+                    if (video.textTracks && video.textTracks.length) {
+                        for (let i = 0; i < video.textTracks.length; i++) {
+                            const track = video.textTracks[i];
+                            if (track.cues && track.cues.length > CONFIG.MIN_SUBTITLES) {
+                                const segments = this._analyzeCues(track.cues, duration);
+                                if (segments.length) {
+                                    resolve(segments);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+
+                    const subs = Lampa.PlayerVideo.subtitles ? 
+                        Lampa.PlayerVideo.subtitles() : null;
+                    if (subs && subs.length) {
+                        for (let i = 0; i < subs.length; i++) {
+                            if (subs[i].url) {
+                                this._fetchSubtitle(subs[i].url, duration)
+                                    .then(segments => resolve(segments))
+                                    .catch(() => resolve([]));
+                                return;
+                            }
+                        }
+                    }
+                    resolve([]);
+                } catch(e) {
+                    resolve([]);
+                }
+            });
+        },
+
+        _fetchSubtitle(url, duration) {
+            return new Promise((resolve) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open('GET', url, true);
+                xhr.timeout = CONFIG.DETECTION_TIMEOUT;
+                xhr.ontimeout = () => resolve([]);
+                xhr.onerror = () => resolve([]);
+                xhr.onload = () => {
+                    if (xhr.status >= 200 && xhr.status < 300 && xhr.responseText) {
+                        const segments = this._parseSrt(xhr.responseText, duration);
+                        resolve(segments);
+                    } else {
+                        resolve([]);
+                    }
+                };
+                xhr.send();
+            });
+        },
+
+        _parseSrt(text, duration) {
+            const cues = [];
+            const lines = text.replace(/\r\n/g, '\n').split('\n');
+            
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                const timeMatch = line.match(/(\d{1,2}:\d{2}:\d{2}[.,]\d{3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[.,]\d{3})/);
+                if (timeMatch) {
+                    const start = this._parseTime(timeMatch[1]);
+                    const end = this._parseTime(timeMatch[2]);
+                    if (end > start) {
+                        cues.push({ start, end });
+                    }
+                }
+            }
+
+            return this._analyzeCues(cues, duration);
+        },
+
+        _parseTime(str) {
+            const parts = str.match(/(\d+):(\d{2}):(\d{2})[.,](\d{3})/);
+            if (!parts) return 0;
+            return parseInt(parts[1]) * 3600 + 
+                   parseInt(parts[2]) * 60 + 
+                   parseInt(parts[3]) + 
+                   parseInt(parts[4]) / 1000;
+        },
+
+        _analyzeCues(cues, duration) {
+            if (cues.length < CONFIG.MIN_SUBTITLES) return [];
+
+            cues.sort((a, b) => a.start - b.start);
+            const segments = [];
+            
+            if (cues[0].start >= 15 && cues[0].start <= CONFIG.INTRO_MAX_START) {
+                segments.push({
+                    type: 'intro',
+                    start: 0,
+                    end: Math.round(cues[0].start),
+                    _source: 'subs'
+                });
+            }
+
+            let maxGap = 0;
+            let introStart = 0;
+            let introEnd = 0;
+            
+            for (let i = 0; i < cues.length - 1 && cues[i].end < CONFIG.INTRO_MAX_END; i++) {
+                const gap = cues[i + 1].start - cues[i].end;
+                if (gap >= 15 && gap <= CONFIG.INTRO_MAX_END && gap > maxGap) {
+                    maxGap = gap;
+                    introStart = Math.round(cues[i].end);
+                    introEnd = Math.round(cues[i + 1].start);
+                }
+            }
+
+            if (introStart && introEnd) {
+                segments.push({
+                    type: 'intro',
+                    start: introStart,
+                    end: introEnd,
+                    _source: 'subs'
+                });
+            }
+
+            if (duration > 600 && cues.length > 0) {
+                const lastCue = cues[cues.length - 1];
+                const gap = duration - lastCue.end;
+                
+                if (gap >= CONFIG.CREDITS_MIN_GAP) {
+                    segments.push({
+                        type: 'credits',
+                        start: Math.round(lastCue.end),
+                        end: Math.round(duration),
+                        _source: 'subs'
+                    });
+                }
+            }
+
+            return segments;
+        }
+    };
+
+    // ===== ДЕТЕКЦИЯ ПО ЗВУКУ =====
+    const AudioDetector = {
         _context: null,
         _analyser: null,
         _source: null,
@@ -678,162 +748,7 @@
         _timer: null,
         _timeout: null,
 
-        async detect(video, method) {
-            const duration = video.duration || Utils.getPlayerDuration();
-            if (duration < CONFIG.MIN_VIDEO_DURATION) return null;
-
-            const segments = [];
-            
-            // Метод 1: Субтитры
-            if (method === 'auto' || method === 'subtitles' || method === 'both') {
-                try {
-                    const subSegments = await this._detectFromSubtitles(video, duration);
-                    if (subSegments && subSegments.length) {
-                        segments.push(...subSegments);
-                    }
-                } catch(e) {}
-            }
-
-            // Метод 2: Звук
-            if (method === 'auto' || method === 'audio' || method === 'both') {
-                try {
-                    const audioSegment = await this._detectFromAudio(video);
-                    if (audioSegment) {
-                        segments.push(audioSegment);
-                    }
-                } catch(e) {}
-            }
-
-            // Метод 3: Анализ сцен (если другие методы не сработали)
-            if (!segments.length && method === 'auto') {
-                try {
-                    const sceneSegments = await this._detectFromScenes(video, duration);
-                    if (sceneSegments && sceneSegments.length) {
-                        segments.push(...sceneSegments);
-                    }
-                } catch(e) {}
-            }
-
-            return segments.length ? Utils.mergeSegments(segments) : null;
-        },
-
-        _detectFromSubtitles(video, duration) {
-            return new Promise((resolve) => {
-                try {
-                    const cues = this._extractCues(video);
-                    if (!cues || cues.length < CONFIG.MIN_SUBTITLES) {
-                        resolve([]);
-                        return;
-                    }
-
-                    const segments = [];
-                    const sortedCues = [...cues].sort((a, b) => a.start - b.start);
-
-                    // Поиск заставки в начале
-                    const firstCue = sortedCues[0];
-                    if (firstCue && firstCue.start >= 10 && firstCue.start <= CONFIG.INTRO_MAX_START) {
-                        segments.push({
-                            type: 'intro',
-                            start: 0,
-                            end: Math.round(firstCue.start),
-                            _source: 'subs'
-                        });
-                    }
-
-                    // Поиск по паузам между субтитрами
-                    let maxGap = 0;
-                    let introStart = 0;
-                    let introEnd = 0;
-
-                    for (let i = 0; i < sortedCues.length - 1; i++) {
-                        const gap = sortedCues[i + 1].start - sortedCues[i].end;
-                        if (gap >= 10 && gap <= CONFIG.INTRO_MAX_END && gap > maxGap) {
-                            const current = sortedCues[i].end;
-                            if (current < CONFIG.INTRO_MAX_END) {
-                                maxGap = gap;
-                                introStart = Math.round(sortedCues[i].end);
-                                introEnd = Math.round(sortedCues[i + 1].start);
-                            }
-                        }
-                    }
-
-                    if (introStart && introEnd) {
-                        segments.push({
-                            type: 'intro',
-                            start: introStart,
-                            end: introEnd,
-                            _source: 'subs'
-                        });
-                    }
-
-                    // Поиск титров в конце
-                    if (duration > 600 && sortedCues.length > 0) {
-                        const lastCue = sortedCues[sortedCues.length - 1];
-                        const gap = duration - lastCue.end;
-                        
-                        if (gap >= CONFIG.CREDITS_MIN_GAP) {
-                            segments.push({
-                                type: 'credits',
-                                start: Math.round(lastCue.end),
-                                end: Math.round(duration),
-                                _source: 'subs'
-                            });
-                        }
-                    }
-
-                    resolve(segments);
-                } catch(e) {
-                    resolve([]);
-                }
-            });
-        },
-
-        _extractCues(video) {
-            const cues = [];
-
-            // Из textTracks
-            if (video.textTracks) {
-                for (let i = 0; i < video.textTracks.length; i++) {
-                    const track = video.textTracks[i];
-                    if (track.cues) {
-                        for (let j = 0; j < track.cues.length; j++) {
-                            const cue = track.cues[j];
-                            if (cue.startTime !== undefined && cue.endTime !== undefined) {
-                                cues.push({
-                                    start: cue.startTime,
-                                    end: cue.endTime,
-                                    text: cue.text || ''
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Из внешних субтитров Lampa
-            try {
-                const subs = Lampa.PlayerVideo.subtitles ? Lampa.PlayerVideo.subtitles() : null;
-                if (subs && subs.length) {
-                    for (const sub of subs) {
-                        if (sub.cues && Array.isArray(sub.cues)) {
-                            for (const cue of sub.cues) {
-                                if (cue.start !== undefined && cue.end !== undefined) {
-                                    cues.push({
-                                        start: cue.start,
-                                        end: cue.end,
-                                        text: cue.text || ''
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch(e) {}
-
-            return cues;
-        },
-
-        _detectFromAudio(video) {
+        detect(video) {
             return new Promise((resolve) => {
                 this._cleanup();
 
@@ -850,8 +765,7 @@
                     if (!this._connected || !this._analyser) {
                         this._source = this._context.createMediaElementSource(video);
                         this._analyser = this._context.createAnalyser();
-                        this._analyser.fftSize = 2048;
-                        this._analyser.smoothingTimeConstant = 0.8;
+                        this._analyser.fftSize = 1024;
                         this._source.connect(this._analyser);
                         this._analyser.connect(this._context.destination);
                         this._connected = true;
@@ -865,14 +779,13 @@
                     const samples = [];
                     const data = new Uint8Array(this._analyser.frequencyBinCount);
                     const startTime = video.currentTime;
-                    const maxTime = Math.min(420, video.duration || 420);
 
                     this._timer = setInterval(() => {
                         try {
                             const currentTime = video.currentTime;
-                            if (currentTime - startTime > maxTime) {
+                            if (currentTime - startTime > CONFIG.AUDIO_MAX_TIME) {
                                 this._cleanup();
-                                resolve(this._analyzeAudio(samples));
+                                resolve(this._analyze(samples));
                                 return;
                             }
 
@@ -881,22 +794,20 @@
                             for (let i = 0; i < data.length; i++) {
                                 sum += data[i];
                             }
-                            const energy = sum / data.length;
-                            
                             samples.push({
                                 time: currentTime,
-                                energy: energy
+                                energy: sum / data.length
                             });
                         } catch(e) {
                             this._cleanup();
                             resolve(null);
                         }
-                    }, 500);
+                    }, CONFIG.AUDIO_SAMPLE_INTERVAL);
 
                     this._timeout = setTimeout(() => {
                         this._cleanup();
-                        resolve(this._analyzeAudio(samples));
-                    }, maxTime * 1000 + 1000);
+                        resolve(this._analyze(samples));
+                    }, CONFIG.AUDIO_MAX_TIME * 1000);
 
                 } catch(e) {
                     this._cleanup();
@@ -905,58 +816,55 @@
             });
         },
 
-        _analyzeAudio(samples) {
-            if (samples.length < 15) return null;
+        _analyze(samples) {
+            if (samples.length < CONFIG.AUDIO_MIN_SAMPLES) return null;
 
             const smoothed = [];
-            const windowSize = 3;
-            for (let i = windowSize; i < samples.length - windowSize; i++) {
-                let sum = 0;
-                for (let j = -windowSize; j <= windowSize; j++) {
-                    sum += samples[i + j].energy;
-                }
+            for (let i = 2; i < samples.length - 2; i++) {
+                const avg = (samples[i-2].energy + samples[i-1].energy + samples[i].energy + 
+                            samples[i+1].energy + samples[i+2].energy) / 5;
                 smoothed.push({
                     time: samples[i].time,
-                    energy: sum / (windowSize * 2 + 1)
+                    energy: avg
                 });
             }
 
-            if (smoothed.length < 10) return null;
+            if (smoothed.length < CONFIG.MIN_ENERGY_SAMPLES) return null;
 
             const energies = smoothed.map(s => s.energy).sort((a, b) => a - b);
             const median = energies[Math.floor(energies.length / 2)];
-            const threshold = median * 1.5;
-            const minThreshold = median * 0.5;
+            const threshold = median * CONFIG.ENERGY_THRESHOLD_MULTIPLIER;
+            const minThreshold = median * CONFIG.ENERGY_MIN_THRESHOLD;
 
             let peakStart = null;
+            let peakCount = 0;
             let peakEnd = null;
-            let peakEnergy = 0;
-            let inPeak = false;
 
             for (let i = 0; i < smoothed.length; i++) {
                 const sample = smoothed[i];
                 if (sample.time > CONFIG.INTRO_MAX_END) break;
 
                 if (sample.energy > threshold) {
-                    if (!inPeak) {
-                        inPeak = true;
+                    if (!peakStart) {
                         peakStart = sample.time;
-                        peakEnergy = sample.energy;
-                    } else if (sample.energy > peakEnergy) {
-                        peakEnergy = sample.energy;
+                        peakCount = 1;
+                    } else {
+                        peakCount++;
                     }
-                } else if (inPeak && sample.energy < minThreshold) {
+                } else if (peakStart && sample.energy < minThreshold) {
                     const duration = sample.time - peakStart;
-                    if (duration >= 10 && duration <= 150) {
+                    if (duration >= CONFIG.MIN_ENERGY_PEAK_DURATION && 
+                        duration <= CONFIG.MAX_ENERGY_PEAK_DURATION && 
+                        peakCount >= CONFIG.MIN_ENERGY_SAMPLES) {
                         peakEnd = sample.time;
                         break;
                     }
-                    inPeak = false;
                     peakStart = null;
+                    peakCount = 0;
                 }
             }
 
-            if (peakStart !== null && peakEnd !== null) {
+            if (peakStart && peakEnd) {
                 return {
                     type: 'intro',
                     start: Math.round(peakStart),
@@ -966,110 +874,6 @@
             }
 
             return null;
-        },
-
-        _detectFromScenes(video, duration) {
-            return new Promise((resolve) => {
-                try {
-                    // Простой анализ по времени
-                    const segments = [];
-                    
-                    // Если видео длинное и есть характерные паттерны
-                    if (duration > 600) {
-                        // Проверяем наличие заставки в первых 3 минутах
-                        // по изменению яркости/цвета можно определить границы
-                        const canvas = document.createElement('canvas');
-                        canvas.width = 160;
-                        canvas.height = 90;
-                        const ctx = canvas.getContext('2d');
-                        
-                        const videoElement = Utils.getVideoElement();
-                        if (!videoElement) {
-                            resolve([]);
-                            return;
-                        }
-
-                        // Сохраняем текущее время
-                        const currentTime = videoElement.currentTime;
-                        
-                        const checkFrame = (time) => {
-                            return new Promise((resolveFrame) => {
-                                videoElement.currentTime = time;
-                                videoElement.addEventListener('seeked', function onSeeked() {
-                                    videoElement.removeEventListener('seeked', onSeeked);
-                                    try {
-                                        ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-                                        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                                        const data = imageData.data;
-                                        
-                                        let brightness = 0;
-                                        for (let i = 0; i < data.length; i += 4) {
-                                            brightness += (data[i] + data[i+1] + data[i+2]) / 3;
-                                        }
-                                        brightness /= (data.length / 4);
-                                        resolveFrame(brightness);
-                                    } catch(e) {
-                                        resolveFrame(0);
-                                    }
-                                }, { once: true });
-                                
-                                setTimeout(() => {
-                                    videoElement.removeEventListener('seeked', onSeeked);
-                                    resolveFrame(0);
-                                }, 1000);
-                            });
-                        };
-
-                        // Проверяем несколько точек
-                        Promise.all([
-                            checkFrame(0),
-                            checkFrame(30),
-                            checkFrame(60),
-                            checkFrame(90),
-                            checkFrame(120),
-                            checkFrame(150)
-                        ]).then(results => {
-                            // Восстанавливаем позицию
-                            videoElement.currentTime = currentTime;
-                            
-                            // Анализируем изменения яркости
-                            const changes = [];
-                            for (let i = 1; i < results.length; i++) {
-                                if (results[i] > 0 && results[i-1] > 0) {
-                                    const diff = Math.abs(results[i] - results[i-1]);
-                                    changes.push({
-                                        time: i * 30,
-                                        diff: diff,
-                                        brightness: results[i]
-                                    });
-                                }
-                            }
-                            
-                            // Ищем резкие изменения
-                            const avgDiff = changes.reduce((sum, c) => sum + c.diff, 0) / changes.length;
-                            const threshold2 = avgDiff * 2;
-                            
-                            for (const change of changes) {
-                                if (change.diff > threshold2 && change.brightness > 50) {
-                                    segments.push({
-                                        type: 'intro',
-                                        start: Math.max(0, change.time - 5),
-                                        end: Math.min(change.time + 15, CONFIG.INTRO_MAX_END),
-                                        _source: 'scene'
-                                    });
-                                    break;
-                                }
-                            }
-                            
-                            resolve(segments);
-                        }).catch(() => resolve([]));
-                    } else {
-                        resolve([]);
-                    }
-                } catch(e) {
-                    resolve([]);
-                }
-            });
         },
 
         _cleanup() {
@@ -1105,60 +909,6 @@
 
     // ===== API КЛИЕНТ =====
     const ApiClient = {
-        _cache: {},
-
-        async load(tmdbId, imdbId, season, episode) {
-            if (!tmdbId || season == null || episode == null) return [];
-
-            const cached = Cache.get(tmdbId, season, episode);
-            if (cached) return cached;
-
-            const segments = [];
-
-            // Пробуем TheIntroDB
-            try {
-                const url = `${CONFIG.THEINTRODB_URL}?tmdb_id=${tmdbId}&season=${season}&episode=${episode}`;
-                const data = await this._fetch(url);
-                const parsed = this._parseTheIntroDB(data);
-                if (parsed.length) {
-                    segments.push(...parsed);
-                }
-            } catch(e) {}
-
-            // Пробуем IntroDB
-            try {
-                const url = `${CONFIG.API_URL}/get_intros?tmdb=${tmdbId}&season=${season}&episode=${episode}`;
-                const data = await this._fetch(url);
-                if (data && data.start && data.end) {
-                    segments.push({
-                        type: 'intro',
-                        start: Math.round(data.start),
-                        end: Math.round(data.end)
-                    });
-                }
-            } catch(e) {}
-
-            // Пробуем IntroHater
-            if (imdbId) {
-                try {
-                    const url = `https://introhater.com/api/segments/${imdbId}:${season}:${episode}`;
-                    const data = await this._fetch(url);
-                    const parsed = this._parseIntroHater(data);
-                    if (parsed.length) {
-                        segments.push(...parsed);
-                    }
-                } catch(e) {}
-            }
-
-            if (segments.length) {
-                const merged = Utils.mergeSegments(segments);
-                Cache.set(tmdbId, season, episode, merged);
-                return merged;
-            }
-
-            return [];
-        },
-
         _fetch(url, timeout) {
             return new Promise((resolve, reject) => {
                 const xhr = new XMLHttpRequest();
@@ -1202,6 +952,50 @@
                 };
                 xhr.send();
             });
+        },
+
+        async load(tmdbId, imdbId, season, episode) {
+            if (!tmdbId || season == null || episode == null) return [];
+
+            const cached = Cache.get(tmdbId, season, episode);
+            if (cached) return cached;
+
+            const segments = [];
+
+            try {
+                const url = `${CONFIG.THEINTRODB_URL}?tmdb_id=${tmdbId}&season=${season}&episode=${episode}`;
+                const data = await this._fetch(url);
+                const parsed = this._parseTheIntroDB(data);
+                if (parsed.length) segments.push(...parsed);
+            } catch(e) {}
+
+            try {
+                const url = `${CONFIG.API_URL}/get_intros?tmdb=${tmdbId}&season=${season}&episode=${episode}`;
+                const data = await this._fetch(url);
+                if (data && data.start && data.end) {
+                    segments.push({
+                        type: 'intro',
+                        start: Math.round(data.start),
+                        end: Math.round(data.end)
+                    });
+                }
+            } catch(e) {}
+
+            if (imdbId) {
+                try {
+                    const url = `https://introhater.com/api/segments/${imdbId}:${season}:${episode}`;
+                    const data = await this._fetch(url);
+                    const parsed = this._parseIntroHater(data);
+                    if (parsed.length) segments.push(...parsed);
+                } catch(e) {}
+            }
+
+            if (segments.length) {
+                Cache.set(tmdbId, season, episode, segments);
+                return segments;
+            }
+
+            return [];
         },
 
         _parseTheIntroDB(data) {
@@ -1253,10 +1047,9 @@
         _activeSegment: null,
         _lastSkipped: null,
         _currentData: null,
+        _currentTmdb: null,
         _detecting: false,
         _initialized: false,
-        _retryCount: 0,
-        _maxRetries: 3,
 
         init() {
             if (this._initialized) return;
@@ -1274,33 +1067,89 @@
                 );
             }
 
-            // Дополнительный слушатель для любых изменений времени
-            document.addEventListener('timeupdate', 
-                Utils.throttle(() => this._onTimeUpdate({ current: Utils.getCurrentTime() }), 300)
-            );
-
-            console.log('[SkipIntro] Universal plugin initialized');
+            console.log('[SkipIntro] Plugin initialized');
         },
 
         _onStart(data) {
             this._cleanup();
-            this._retryCount = 0;
 
-            if (!PluginSettings.isEnabled()) {
-                console.log('[SkipIntro] Plugin disabled');
-                return;
-            }
+            if (!PluginSettings.isEnabled()) return;
 
             const meta = this._extractMeta(data);
-            console.log('[SkipIntro] Extracted metadata:', meta);
-
-            if (!meta.is_series || meta.season == null || meta.episode == null) {
-                console.log('[SkipIntro] Not a series or missing episode info');
+            
+            console.log('[SkipIntro] Extracted meta:', meta);
+            
+            if (!meta.tmdb_id || !meta.is_series || meta.season == null || meta.episode == null) {
+                console.log('[SkipIntro] Not a series or missing metadata');
                 return;
             }
 
             this._currentData = data;
-            this._loadSegments(meta);
+            this._currentTmdb = meta.tmdb_id;
+            
+            console.log(`[SkipIntro] Loading segments for S${meta.season}E${meta.episode} (TMDB: ${meta.tmdb_id})`);
+            
+            let apiDone = false;
+            let detectDone = false;
+            let apiSegments = [];
+            let detectSegments = [];
+
+            const mergeSegments = () => {
+                if (!apiDone || !detectDone) return;
+                if (this._currentData !== data) return;
+
+                const merged = [...apiSegments];
+                detectSegments.forEach(detSeg => {
+                    let exists = false;
+                    for (let i = 0; i < merged.length; i++) {
+                        if (merged[i].type === detSeg.type) {
+                            if (detSeg.start < merged[i].start) {
+                                merged[i] = detSeg;
+                            }
+                            exists = true;
+                            break;
+                        }
+                    }
+                    if (!exists) merged.push(detSeg);
+                });
+
+                this._segments = merged;
+                this._updateProgressMarkers(merged);
+                console.log(`[SkipIntro] Loaded ${merged.length} segments`);
+            };
+
+            ApiClient.load(meta.tmdb_id, meta.imdb_id, meta.season, meta.episode)
+                .then(segments => {
+                    if (this._currentData === data) {
+                        apiSegments = segments || [];
+                        apiDone = true;
+                        if (apiSegments.length) {
+                            this._segments = apiSegments;
+                        }
+                        mergeSegments();
+                    }
+                })
+                .catch((err) => {
+                    console.log('[SkipIntro] API error:', err);
+                    apiDone = true;
+                    mergeSegments();
+                });
+
+            if (PluginSettings.isDetectEnabled()) {
+                this._runDetection(data, meta, (segments) => {
+                    if (this._currentData === data && segments && segments.length) {
+                        detectSegments = segments;
+                        detectDone = true;
+                        mergeSegments();
+                    } else {
+                        detectDone = true;
+                        mergeSegments();
+                    }
+                });
+            } else {
+                detectDone = true;
+                mergeSegments();
+            }
         },
 
         _extractMeta(data) {
@@ -1309,8 +1158,7 @@
                 imdb_id: null,
                 season: null,
                 episode: null,
-                is_series: false,
-                title: null
+                is_series: false
             };
 
             // 1. Из данных плеера
@@ -1318,242 +1166,204 @@
             if (data.imdb_id) meta.imdb_id = data.imdb_id;
             if (data.season != null) meta.season = parseInt(data.season);
             if (data.episode != null) meta.episode = parseInt(data.episode);
-            if (data.title) meta.title = data.title;
 
             // 2. Из активности
-            try {
-                const activity = Lampa.Activity.active();
-                if (activity) {
-                    const card = activity.card || activity.movie || {};
-                    if (!meta.tmdb_id) meta.tmdb_id = card.id || null;
-                    if (!meta.imdb_id) meta.imdb_id = card.imdb_id || null;
-                    if (!meta.title && card.title) meta.title = card.title;
-                    if (!meta.title && card.name) meta.title = card.name;
-                    
-                    if (card.name || card.title || card.number_of_seasons || card.first_air_date) {
-                        meta.is_series = true;
+            let card = data.card || null;
+            if (!card) {
+                try {
+                    const activity = Lampa.Activity.active();
+                    if (activity) {
+                        card = activity.card || activity.movie || null;
                     }
+                } catch(e) {}
+            }
+
+            if (card) {
+                if (!meta.tmdb_id) meta.tmdb_id = card.id || null;
+                if (!meta.imdb_id) meta.imdb_id = card.imdb_id || null;
+                if (card.name || card.title || card.number_of_seasons || card.first_air_date) {
+                    meta.is_series = true;
                 }
-            } catch(e) {}
+            }
 
             // 3. Из плейлиста
             if (data.playlist && Array.isArray(data.playlist)) {
-                const url = data.url || Utils.getVideoElement()?.src || '';
-                for (const item of data.playlist) {
+                const url = data.url || '';
+                for (let i = 0; i < data.playlist.length; i++) {
+                    const item = data.playlist[i];
                     const itemUrl = typeof item.url === 'string' ? item.url : '';
                     
-                    if (itemUrl === url || !url) {
+                    if (itemUrl === url || i === 0) {
                         if (item.season != null && meta.season == null) meta.season = parseInt(item.season);
                         if (item.episode != null && meta.episode == null) meta.episode = parseInt(item.episode);
                         if (item.s != null && meta.season == null) meta.season = parseInt(item.s);
                         if (item.e != null && meta.episode == null) meta.episode = parseInt(item.e);
                         if (item.season_num != null && meta.season == null) meta.season = parseInt(item.season_num);
                         if (item.episode_num != null && meta.episode == null) meta.episode = parseInt(item.episode_num);
-                        
-                        if (item.title && !meta.title) meta.title = item.title;
-                        if (item.name && !meta.title) meta.title = item.name;
                     }
+                    if (itemUrl === url) break;
                 }
             }
 
-            // 4. Из URL видео
+            // 4. Из URL
             if (!meta.tmdb_id || !meta.season || !meta.episode) {
                 try {
-                    const url = data.url || Utils.getVideoElement()?.src || '';
-                    
-                    // Универсальный парсинг URL
-                    // S01E02, s01e02, 1x02, Season 1 Episode 2
+                    const url = data.url || '';
+                    // S01E02, s01e02
                     let match = url.match(/[Ss](\d+)[Ee](\d+)/);
                     if (match) {
                         if (meta.season == null) meta.season = parseInt(match[1]);
                         if (meta.episode == null) meta.episode = parseInt(match[2]);
                         meta.is_series = true;
                     }
-                    
+                    // 1x02
                     match = url.match(/(\d+)x(\d+)/);
                     if (match) {
                         if (meta.season == null) meta.season = parseInt(match[1]);
                         if (meta.episode == null) meta.episode = parseInt(match[2]);
                         meta.is_series = true;
                     }
-                    
-                    match = url.match(/season[_\s-]*(\d+)[_\s-]*episode[_\s-]*(\d+)/i);
-                    if (match) {
-                        if (meta.season == null) meta.season = parseInt(match[1]);
-                        if (meta.episode == null) meta.episode = parseInt(match[2]);
-                        meta.is_series = true;
-                    }
-                    
-                    // Поиск TMDB ID в URL
-                    match = url.match(/[\/_](\d{5,8})[\/_]/);
-                    if (match && !meta.tmdb_id) {
-                        meta.tmdb_id = match[1];
-                    }
                 } catch(e) {}
             }
 
-            // 5. Из заголовка (для всех источников)
-            if (!meta.season || !meta.episode) {
-                const titles = [data.title, data.name, meta.title];
-                for (const title of titles) {
-                    if (!title) continue;
-                    
-                    // S01E02
-                    let match = title.match(/[Ss](\d+)[Ee](\d+)/);
-                    if (match) {
-                        if (meta.season == null) meta.season = parseInt(match[1]);
-                        if (meta.episode == null) meta.episode = parseInt(match[2]);
-                        meta.is_series = true;
-                        break;
-                    }
-                    
-                    // 1x02
-                    match = title.match(/(\d+)x(\d+)/);
-                    if (match) {
-                        if (meta.season == null) meta.season = parseInt(match[1]);
-                        if (meta.episode == null) meta.episode = parseInt(match[2]);
-                        meta.is_series = true;
-                        break;
-                    }
-                    
-                    // Season 1 Episode 2
-                    match = title.match(/season\s*(\d+)\s*episode\s*(\d+)/i);
-                    if (match) {
-                        if (meta.season == null) meta.season = parseInt(match[1]);
-                        if (meta.episode == null) meta.episode = parseInt(match[2]);
-                        meta.is_series = true;
-                        break;
-                    }
-                    
-                    // 1 сезон 2 серия
-                    match = title.match(/(\d+)\s*сезон\s*(\d+)\s*серия/i);
-                    if (match) {
-                        if (meta.season == null) meta.season = parseInt(match[1]);
-                        if (meta.episode == null) meta.episode = parseInt(match[2]);
-                        meta.is_series = true;
-                        break;
-                    }
+            // 5. Из заголовка
+            if (data.title) {
+                const parsed = this._parseTitle(data.title);
+                if (parsed) {
+                    if (meta.season == null) meta.season = parsed.season;
+                    if (meta.episode == null) meta.episode = parsed.episode;
+                    meta.is_series = true;
                 }
             }
 
-            // 6. Если есть сезон и серия, это сериал
-            if (meta.season != null && meta.episode != null) {
+            // 6. Если есть ID и сезон с серией
+            if (meta.tmdb_id && meta.season != null && meta.episode != null) {
                 meta.is_series = true;
             }
 
             return meta;
         },
 
-        async _loadSegments(meta) {
-            // Пробуем загрузить из кэша
-            let segments = Cache.get(meta.tmdb_id, meta.season, meta.episode);
+        _parseTitle(title) {
+            if (!title) return null;
             
-            if (!segments && meta.tmdb_id) {
-                // Загружаем из API
-                try {
-                    segments = await ApiClient.load(meta.tmdb_id, meta.imdb_id, meta.season, meta.episode);
-                } catch(e) {
-                    console.log('[SkipIntro] API load error:', e);
-                }
+            // 1 сезон 1 серия
+            let match = title.match(/(\d+)\s*сезон\s*(\d+)\s*серия/i);
+            if (match) {
+                return { season: parseInt(match[1]), episode: parseInt(match[2]) };
             }
-
-            if (segments && segments.length) {
-                this._segments = segments;
-                this._updateProgressMarkers(segments);
-                console.log(`[SkipIntro] Loaded ${segments.length} segments from API/cache`);
-                return;
+            
+            // Season 1 Episode 2
+            match = title.match(/season\s*(\d+)\s*episode\s*(\d+)/i);
+            if (match) {
+                return { season: parseInt(match[1]), episode: parseInt(match[2]) };
             }
-
-            // Если нет в API, пробуем детекцию
-            if (PluginSettings.isDetectEnabled()) {
-                this._runDetection(meta);
+            
+            // S01E02
+            match = title.match(/[Ss](\d+)[Ee](\d+)/);
+            if (match) {
+                return { season: parseInt(match[1]), episode: parseInt(match[2]) };
             }
+            
+            // 1x02
+            match = title.match(/(\d+)x(\d+)/);
+            if (match) {
+                return { season: parseInt(match[1]), episode: parseInt(match[2]) };
+            }
+            
+            return null;
         },
 
-        _runDetection(meta) {
+        _runDetection(data, meta, callback) {
             if (this._detecting) return;
             this._detecting = true;
 
-            const video = Utils.getVideoElement();
-            if (!video) {
-                // Пробуем через Lampa
-                try {
-                    const videoEl = Lampa.PlayerVideo.video();
-                    if (videoEl) {
-                        this._performDetection(videoEl, meta);
-                        return;
-                    }
-                } catch(e) {}
-                
-                // Отложенная попытка
-                setTimeout(() => {
-                    const v = Utils.getVideoElement();
-                    if (v) {
-                        this._performDetection(v, meta);
-                    } else {
-                        this._detecting = false;
-                    }
-                }, 2000);
+            // Проверяем кэш
+            const cached = Cache.get(meta.tmdb_id, meta.season, meta.episode);
+            if (cached && cached.length) {
+                this._detecting = false;
+                callback(cached);
                 return;
             }
 
-            this._performDetection(video, meta);
+            let video = Utils.getVideoElement();
+
+            if (!video) {
+                let attempts = 0;
+                const checkVideo = () => {
+                    attempts++;
+                    video = Utils.getVideoElement();
+                    
+                    if (video && video.duration) {
+                        this._runDetectionInternal(video, meta, callback);
+                    } else if (attempts < 20) {
+                        setTimeout(checkVideo, 500);
+                    } else {
+                        this._detecting = false;
+                        callback([]);
+                    }
+                };
+                checkVideo();
+            } else {
+                this._runDetectionInternal(video, meta, callback);
+            }
         },
 
-        async _performDetection(video, meta) {
-            try {
-                const method = PluginSettings.getDetectionMethod();
-                const segments = await UniversalDetector.detect(video, method);
-                
-                this._detecting = false;
-                
-                if (segments && segments.length) {
-                    this._segments = segments;
-                    if (meta.tmdb_id) {
-                        Cache.set(meta.tmdb_id, meta.season, meta.episode, segments);
+        _runDetectionInternal(video, meta, callback) {
+            const duration = video.duration || Utils.getPlayerDuration();
+            
+            SubtitleDetector.detect(video, duration)
+                .then(subSegments => {
+                    if (subSegments && subSegments.length) {
+                        Cache.set(meta.tmdb_id, meta.season, meta.episode, subSegments);
+                        this._detecting = false;
+                        callback(subSegments);
+                        return;
                     }
-                    this._updateProgressMarkers(segments);
-                    console.log(`[SkipIntro] Detected ${segments.length} segments`);
-                } else {
-                    console.log('[SkipIntro] No segments detected');
-                    // Попробовать еще раз при следующем старте
-                    if (this._retryCount < this._maxRetries) {
-                        this._retryCount++;
-                        setTimeout(() => {
-                            if (this._currentData) {
-                                const meta2 = this._extractMeta(this._currentData);
-                                if (meta2.is_series) {
-                                    this._runDetection(meta2);
-                                }
+
+                    AudioDetector.detect(video)
+                        .then(audioSegment => {
+                            this._detecting = false;
+                            if (audioSegment) {
+                                const segments = [audioSegment];
+                                Cache.set(meta.tmdb_id, meta.season, meta.episode, segments);
+                                callback(segments);
+                            } else {
+                                callback([]);
                             }
-                        }, 5000 * this._retryCount);
-                    }
-                }
-            } catch(e) {
-                console.log('[SkipIntro] Detection error:', e);
-                this._detecting = false;
-            }
+                        })
+                        .catch(() => {
+                            this._detecting = false;
+                            callback([]);
+                        });
+                })
+                .catch(() => {
+                    this._detecting = false;
+                    callback([]);
+                });
         },
 
         _updateProgressMarkers(segments) {
             const duration = Utils.getPlayerDuration();
+            
             if (duration > 0 && segments && segments.length) {
                 ProgressMarker.updateMarkers(segments, duration);
                 return;
             }
             
-            // Ждем появления длительности
-            let attempts = 0;
-            const checkDuration = () => {
-                attempts++;
-                const dur = Utils.getPlayerDuration();
-                if (dur > 0) {
-                    ProgressMarker.updateMarkers(segments, dur);
-                } else if (attempts < 20) {
-                    setTimeout(checkDuration, 500);
-                }
-            };
-            checkDuration();
+            if (!duration) {
+                let attempts = 0;
+                const checkDuration = () => {
+                    attempts++;
+                    const dur = Utils.getPlayerDuration();
+                    if (dur > 0) {
+                        ProgressMarker.updateMarkers(segments, dur);
+                    } else if (attempts < 20) {
+                        setTimeout(checkDuration, 500);
+                    }
+                };
+                checkDuration();
+            }
         },
 
         _onTimeUpdate(data) {
@@ -1583,9 +1393,7 @@
                     
                     if (PluginSettings.isAutoSkip()) {
                         this._doSkip(segment, true);
-                    } else {
-                        // Показываем уведомление с возможностью пропуска
-                        this._showSkipNotification(segment);
+                        return;
                     }
                 }
             } else if (this._activeSegment) {
@@ -1593,87 +1401,14 @@
             }
         },
 
-        _showSkipNotification(segment) {
-            const labels = {
-                intro: 'Заставка',
-                recap: 'Рекап',
-                credits: 'Титры',
-                preview: 'Превью'
-            };
-            
-            const label = labels[segment.type] || segment.type;
-            Notification.show(
-                `⏭ ${label}`,
-                `${Math.round(segment.end - segment.start)}с`,
-                false,
-                5000
-            );
-            
-            // Создаем кнопку пропуска
-            this._addSkipButton(segment);
-        },
-
-        _addSkipButton(segment) {
-            // Удаляем старую кнопку
-            this._removeSkipButton();
-            
-            const button = document.createElement('div');
-            button.className = 'skip-intro-skip-button';
-            button.style.cssText = `
-                position: fixed;
-                bottom: 120px;
-                right: 30px;
-                background: rgba(76, 175, 80, 0.9);
-                color: white;
-                padding: 12px 24px;
-                border-radius: 8px;
-                font-size: 16px;
-                font-weight: 600;
-                cursor: pointer;
-                z-index: 99998;
-                border: none;
-                box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-                transition: all 0.3s ease;
-                font-family: system-ui, -apple-system, sans-serif;
-                display: flex;
-                align-items: center;
-                gap: 8px;
-            `;
-            button.textContent = '⏭ Пропустить';
-            button.onmouseover = () => {
-                button.style.transform = 'scale(1.05)';
-                button.style.background = 'rgba(76, 175, 80, 1)';
-            };
-            button.onmouseout = () => {
-                button.style.transform = 'scale(1)';
-                button.style.background = 'rgba(76, 175, 80, 0.9)';
-            };
-            button.onclick = () => {
-                this._doSkip(segment, false);
-                this._removeSkipButton();
-            };
-            
-            document.body.appendChild(button);
-            this._skipButton = button;
-        },
-
-        _removeSkipButton() {
-            if (this._skipButton && this._skipButton.parentNode) {
-                this._skipButton.parentNode.removeChild(this._skipButton);
-            }
-            this._skipButton = null;
-        },
-
         _hideNotification() {
             this._activeSegment = null;
             Notification.hide();
-            this._removeSkipButton();
         },
 
         _doSkip(segment, auto) {
             this._lastSkipped = segment;
             this._activeSegment = null;
-            this._removeSkipButton();
             
             const labels = {
                 intro: 'Заставка',
@@ -1686,10 +1421,9 @@
             const time = Math.round(segment.end - segment.start);
             
             Notification.show(
-                `⏭ ${label} пропущена`,
+                `${label} пропущена`,
                 `${time}с${auto ? ' ⚡' : ''}`,
-                false,
-                2000
+                false
             );
             
             const target = Math.min(segment.end, Utils.getPlayerDuration() || segment.end);
@@ -1702,16 +1436,15 @@
             this._activeSegment = null;
             this._lastSkipped = null;
             this._currentData = null;
+            this._currentTmdb = null;
             this._detecting = false;
-            this._removeSkipButton();
             Notification.destroy();
-            UniversalDetector.destroy();
+            AudioDetector.destroy();
         },
 
         _onDestroy() {
             this._cleanup();
             ProgressMarker.destroy();
-            console.log('[SkipIntro] Plugin destroyed');
         }
     };
 
