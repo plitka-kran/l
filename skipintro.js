@@ -79,6 +79,48 @@
                 if (seg.start > time) break;
             }
             return null;
+        },
+
+        // Дополнительный парсинг для HDrezka
+        parseHDrezkaTitle(title) {
+            if (!title) return null;
+            // 1 сезон 1 серия
+            let match = title.match(/(\d+)\s*сезон\s*(\d+)\s*серия/i);
+            if (match) {
+                return { season: parseInt(match[1]), episode: parseInt(match[2]) };
+            }
+            // Сезон 1 Серия 1
+            match = title.match(/Сезон\s*(\d+)\s*Серия\s*(\d+)/i);
+            if (match) {
+                return { season: parseInt(match[1]), episode: parseInt(match[2]) };
+            }
+            // S01E01
+            match = title.match(/[Ss](\d+)[Ee](\d+)/);
+            if (match) {
+                return { season: parseInt(match[1]), episode: parseInt(match[2]) };
+            }
+            // 1x01
+            match = title.match(/(\d+)x(\d+)/);
+            if (match) {
+                return { season: parseInt(match[1]), episode: parseInt(match[2]) };
+            }
+            return null;
+        },
+
+        // Определение источника
+        getSourceType() {
+            try {
+                const url = Lampa.Player.getUrl ? Lampa.Player.getUrl() : '';
+                if (url.includes('torrent') || url.includes('.torrent') || url.includes('magnet')) {
+                    return 'torrent';
+                }
+                if (url.includes('hdrezka') || url.includes('rezka') || url.includes('hd.rezka')) {
+                    return 'hdrezka';
+                }
+                return 'other';
+            } catch(e) {
+                return 'unknown';
+            }
         }
     };
 
@@ -507,19 +549,16 @@
             const el = document.createElement('div');
             el.className = 'skip-intro-notification';
             
-            // Иконка
             const icon = document.createElement('span');
             icon.className = 'icon';
             icon.textContent = '⏭';
             el.appendChild(icon);
 
-            // Текст
             const label = document.createElement('span');
             label.className = 'label';
             label.textContent = text;
             el.appendChild(label);
 
-            // Бейдж
             if (badge) {
                 const badgeEl = document.createElement('span');
                 badgeEl.className = 'badge';
@@ -527,7 +566,6 @@
                 el.appendChild(badgeEl);
             }
 
-            // Прогресс
             if (showProgress) {
                 const progress = document.createElement('span');
                 progress.className = 'progress-ring';
@@ -537,12 +575,10 @@
             document.body.appendChild(el);
             this._element = el;
 
-            // Анимация появления
             requestAnimationFrame(() => {
                 el.classList.add('show');
             });
 
-            // Автоскрытие
             this._timer = setTimeout(() => {
                 this.hide();
             }, CONFIG.NOTIFICATION_DURATION);
@@ -1083,14 +1119,18 @@
             if (!PluginSettings.isEnabled()) return;
 
             const meta = this._extractMeta(data);
+            
+            console.log('[SkipIntro] Extracted meta:', meta);
+            
             if (!meta.tmdb_id || !meta.is_series || meta.season == null || meta.episode == null) {
+                console.log('[SkipIntro] Not a series or missing metadata');
                 return;
             }
 
             this._currentData = data;
             this._currentTmdb = meta.tmdb_id;
             
-            console.log(`[SkipIntro] Loading segments for S${meta.season}E${meta.episode}`);
+            console.log(`[SkipIntro] Loading segments for S${meta.season}E${meta.episode} (TMDB: ${meta.tmdb_id})`);
             
             let apiDone = false;
             let detectDone = false;
@@ -1132,7 +1172,8 @@
                         mergeSegments();
                     }
                 })
-                .catch(() => {
+                .catch((err) => {
+                    console.log('[SkipIntro] API error:', err);
                     apiDone = true;
                     mergeSegments();
                 });
@@ -1163,6 +1204,13 @@
                 is_series: false
             };
 
+            // 1. Пробуем получить из data напрямую
+            if (data.tmdb_id) meta.tmdb_id = data.tmdb_id;
+            if (data.imdb_id) meta.imdb_id = data.imdb_id;
+            if (data.season != null) meta.season = parseInt(data.season);
+            if (data.episode != null) meta.episode = parseInt(data.episode);
+
+            // 2. Из карточки
             let card = data.card || null;
             if (!card) {
                 try {
@@ -1174,29 +1222,20 @@
             }
 
             if (card) {
-                meta.tmdb_id = card.id || null;
-                meta.imdb_id = card.imdb_id || null;
-                if (card.name || card.number_of_seasons || card.first_air_date) {
+                if (!meta.tmdb_id) meta.tmdb_id = card.id || null;
+                if (!meta.imdb_id) meta.imdb_id = card.imdb_id || null;
+                if (card.name || card.title || card.number_of_seasons || card.first_air_date) {
                     meta.is_series = true;
                 }
             }
 
-            if (data.season != null) meta.season = parseInt(data.season);
-            if (data.episode != null) meta.episode = parseInt(data.episode);
-
-            if ((meta.season == null || meta.episode == null) && data.title) {
-                const match = data.title.match(/[Ss](\d+)[Ee](\d+)/);
-                if (match) {
-                    if (meta.season == null) meta.season = parseInt(match[1]);
-                    if (meta.episode == null) meta.episode = parseInt(match[2]);
-                }
-            }
-
+            // 3. Для HDrezka - пытаемся найти в playlist
             if (data.playlist && Array.isArray(data.playlist)) {
                 const url = data.url;
                 for (let i = 0; i < data.playlist.length; i++) {
                     const item = data.playlist[i];
                     const itemUrl = typeof item.url === 'string' ? item.url : '';
+                    
                     if (itemUrl === url || i === 0) {
                         if (item.season != null && meta.season == null) {
                             meta.season = parseInt(item.season);
@@ -1210,13 +1249,77 @@
                         if (item.e != null && meta.episode == null) {
                             meta.episode = parseInt(item.e);
                         }
+                        // HDrezka часто использует season_num и episode_num
+                        if (item.season_num != null && meta.season == null) {
+                            meta.season = parseInt(item.season_num);
+                        }
+                        if (item.episode_num != null && meta.episode == null) {
+                            meta.episode = parseInt(item.episode_num);
+                        }
                     }
                     if (itemUrl === url) break;
                 }
             }
 
+            // 4. Из названия (для HDrezka)
+            if ((meta.season == null || meta.episode == null) && data.title) {
+                const parsed = Utils.parseHDrezkaTitle(data.title);
+                if (parsed) {
+                    if (meta.season == null) meta.season = parsed.season;
+                    if (meta.episode == null) meta.episode = parsed.episode;
+                }
+            }
+
+            // 5. Из названия файла (для HDrezka)
+            if ((meta.season == null || meta.episode == null) && data.file && data.file.title) {
+                const parsed = Utils.parseHDrezkaTitle(data.file.title);
+                if (parsed) {
+                    if (meta.season == null) meta.season = parsed.season;
+                    if (meta.episode == null) meta.episode = parsed.episode;
+                }
+            }
+
+            // 6. Пробуем получить TMDB ID через Lampa API для HDrezka
+            if (!meta.tmdb_id && meta.is_series) {
+                try {
+                    const activity = Lampa.Activity.active();
+                    if (activity && activity.movie && activity.movie.id) {
+                        meta.tmdb_id = activity.movie.id;
+                    }
+                } catch(e) {}
+            }
+
+            // 7. Если есть ID, это сериал
             if (meta.tmdb_id && meta.season != null && meta.episode != null) {
                 meta.is_series = true;
+            }
+
+            // 8. Если это HDrezka и есть ссылка - пробуем извлечь из URL
+            if (!meta.tmdb_id || !meta.is_series) {
+                const source = Utils.getSourceType();
+                if (source === 'hdrezka') {
+                    try {
+                        const url = Lampa.Player.getUrl ? Lampa.Player.getUrl() : '';
+                        // Пробуем извлечь из URL
+                        const match = url.match(/\/\d+-(\d+)-(\d+)/);
+                        if (match) {
+                            if (meta.season == null) meta.season = parseInt(match[1]);
+                            if (meta.episode == null) meta.episode = parseInt(match[2]);
+                            meta.is_series = true;
+                        }
+                    } catch(e) {}
+                }
+            }
+
+            // Дополнительный fallback для HDrezka
+            if (!meta.tmdb_id && meta.is_series) {
+                try {
+                    // Пробуем найти через Lampa Storage
+                    const current = Lampa.Storage.get('current', null);
+                    if (current && current.id) {
+                        meta.tmdb_id = current.id;
+                    }
+                } catch(e) {}
             }
 
             return meta;
@@ -1361,10 +1464,6 @@
             }
         },
 
-        _showNotification(text, badge, showProgress) {
-            Notification.show(text, badge, showProgress);
-        },
-
         _hideNotification() {
             this._activeSegment = null;
             Notification.hide();
@@ -1384,9 +1483,8 @@
             const label = labels[segment.type] || segment.type;
             const time = Math.round(segment.end - segment.start);
             
-            // Показываем уведомление о пропуске
             Notification.show(
-                `⏭ ${label} пропущена`,
+                `${label} пропущена`,
                 `${time}с${auto ? ' ⚡' : ''}`,
                 false
             );
