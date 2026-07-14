@@ -10,9 +10,9 @@
         THEINTRODB_URL: 'https://api.theintrodb.org/v2/media',
         CACHE_TTL: 7 * 24 * 60 * 60 * 1000,
         DETECTION_TIMEOUT: 5000,
-        INTRO_MAX_START: 180,
-        INTRO_MAX_END: 350,
-        CREDITS_MIN_GAP: 25,
+        INTRO_MAX_START: 150,
+        INTRO_MAX_END: 300,
+        CREDITS_MIN_GAP: 30,
         MIN_SUBTITLES: 5,
         AUTO_SKIP_DELAY: 4000,
         AUDIO_SAMPLE_INTERVAL: 500,
@@ -23,8 +23,7 @@
         MIN_ENERGY_PEAK_DURATION: 15,
         MAX_ENERGY_PEAK_DURATION: 150,
         MIN_ENERGY_SAMPLES: 10,
-        NOTIFICATION_DURATION: 3000,
-        MIN_VIDEO_DURATION: 120
+        NOTIFICATION_DURATION: 3000
     };
 
     // ===== УТИЛИТЫ =====
@@ -74,7 +73,6 @@
         },
 
         findSegment(segments, time) {
-            if (!segments || !segments.length) return null;
             for (let i = 0, len = segments.length; i < len; i++) {
                 const seg = segments[i];
                 if (time >= seg.start && time < seg.end) return seg;
@@ -83,77 +81,70 @@
             return null;
         },
 
+        // Универсальный парсер номеров сезона и серии из любых текстовых строк.
+        // ВАЖНО: сезон/серия почти всегда небольшие числа (1-50 / 1-999), а
+        // разрешение видео, год выпуска и т.п. — большие. Проверяем это,
+        // иначе регулярка легко цепляет "1920x1080" или "2024" как сезон/серию.
+        _isPlausible(season, episode) {
+            return season >= 1 && season <= 50 && episode >= 1 && episode <= 999;
+        },
+
         parseSeasonEpisode(text) {
             if (!text || typeof text !== 'string') return null;
 
-            // S01E05, s1e5, S01.E05
-            let match = text.match(/[Ss](\d+)\s*[\.\-]?\s*[Ee](\d+)/);
-            if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
-
-            // 1x05, 01x05
-            match = text.match(/(\d+)\s*[xX]\s*(\d+)/);
-            if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
-
-            // 1 сезон 5 серия, сезон 1 серия 5
-            match = text.match(/(?:сезон)?\s*(\d+)\s*(?:сезон|сезона)?\s*(?:серия|эпизод)?\s*(\d+)\s*(?:серии|эпизода)?/i);
-            if (match && match[1] && match[2]) {
-                return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
+            // Шаблоны: "S01E05", "s1e5", "S01.E05"
+            let match = text.match(/[Ss](\d{1,2})\s*[Ee](\d{1,3})/);
+            if (match) {
+                const season = parseInt(match[1], 10), episode = parseInt(match[2], 10);
+                if (this._isPlausible(season, episode)) return { season, episode };
             }
 
-            // Season 1 Episode 5
-            match = text.match(/season\s*(\d+)\s*episode\s*(\d+)/i);
-            if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
+            // Русскоязычные шаблоны — ключевые слова "сезон"/"серия"/"эпизод"
+            // обязательны, чтобы не цеплять случайные числа (год, разрешение)
+            match = text.match(/(\d{1,2})\s*сезон\w*.{0,15}?(\d{1,3})\s*(?:сери\w*|эпизод\w*)/i);
+            if (match) {
+                const season = parseInt(match[1], 10), episode = parseInt(match[2], 10);
+                if (this._isPlausible(season, episode)) return { season, episode };
+            }
+            match = text.match(/сезон\w*\s*(\d{1,2}).{0,15}?(?:сери\w*|эпизод\w*)\s*(\d{1,3})/i);
+            if (match) {
+                const season = parseInt(match[1], 10), episode = parseInt(match[2], 10);
+                if (this._isPlausible(season, episode)) return { season, episode };
+            }
 
-            // EP 05, Episode 5
-            match = text.match(/(?:ep|episode|серия|эпизод)\s*(\d+)/i);
-            if (match) return { season: 1, episode: parseInt(match[1], 10) };
+            // Шаблоны: "1x05", "01x05" — только для правдоподобных чисел,
+            // иначе матчит разрешение видео вроде "1920x1080"
+            match = text.match(/(?<!\d)(\d{1,2})\s*[xX]\s*(\d{1,3})(?!\d)/);
+            if (match) {
+                const season = parseInt(match[1], 10), episode = parseInt(match[2], 10);
+                if (this._isPlausible(season, episode)) return { season, episode };
+            }
+
+            // Упрощенный поиск цифр: "EP 05", "Episode 5" (сезон считаем первым, если не найден)
+            match = text.match(/(?:^|[^a-zа-яё])(?:ep|episode|серия|эпизод)\.?\s*(\d{1,3})(?!\d)/i);
+            if (match) {
+                const episode = parseInt(match[1], 10);
+                if (episode >= 1 && episode <= 999) return { season: 1, episode };
+            }
 
             return null;
         },
 
-        getVideoElement() {
+        // torrent = свой локальный сервер (без CORS-ограничений),
+        // online = любой внешний балансер/плеер — для Web Audio API он
+        // всегда "чужой" источник, анализ звука там не сработает
+        getSourceType() {
             try {
-                const video = Lampa.PlayerVideo.video();
-                if (video && video.tagName === 'VIDEO') return video;
-            } catch(e) {}
-            
-            const selectors = ['video', '.player video', '#player video', '[data-video]', 'video[src]'];
-            for (const selector of selectors) {
-                const el = document.querySelector(selector);
-                if (el && el.tagName === 'VIDEO') return el;
+                const url = Lampa.Player.getUrl ? Lampa.Player.getUrl() : '';
+                if (url.startsWith('blob:') || url.includes('127.0.0.1') ||
+                    url.includes('localhost') || url.includes('torrent') ||
+                    url.includes('.torrent') || url.includes('magnet')) {
+                    return 'torrent';
+                }
+                return 'online';
+            } catch(e) {
+                return 'online';
             }
-            return null;
-        },
-
-        getPlayerDuration() {
-            try {
-                const video = this.getVideoElement();
-                if (video && video.duration && isFinite(video.duration)) {
-                    return video.duration;
-                }
-            } catch(e) {}
-            return 0;
-        },
-
-        getCurrentTime() {
-            try {
-                const video = this.getVideoElement();
-                if (video && video.currentTime && isFinite(video.currentTime)) {
-                    return video.currentTime;
-                }
-            } catch(e) {}
-            return 0;
-        },
-
-        seekTo(time) {
-            try {
-                const video = this.getVideoElement();
-                if (video && isFinite(time)) {
-                    video.currentTime = time;
-                    return true;
-                }
-            } catch(e) {}
-            return false;
         }
     };
 
@@ -226,7 +217,6 @@
         },
 
         get(tmdbId, season, episode) {
-            if (!tmdbId || season == null || episode == null) return null;
             const key = `${tmdbId}_s${season}_e${episode}`;
             const data = this._load();
             const entry = data[key];
@@ -241,7 +231,6 @@
         },
 
         set(tmdbId, season, episode, segments) {
-            if (!tmdbId || season == null || episode == null || !segments) return;
             const key = `${tmdbId}_s${season}_e${episode}`;
             const data = this._load();
             data[key] = {
@@ -262,7 +251,6 @@
         _container: null,
         _markersContainer: null,
         _markers: [],
-        _found: false,
 
         init() {
             this._findProgressBar();
@@ -271,31 +259,24 @@
         _findProgressBar() {
             const selectors = [
                 '.player-progress', '.video-progress', '.progress-bar', '.progress', 
-                '.seek-bar', '.timeline', '.player-timeline', '[class*="progress"]', '[class*="timeline"]',
-                '.vjs-progress-holder', '.vjs-slider', '.jw-progress', '.jw-slider-time'
+                '.seek-bar', '.timeline', '.player-timeline', '[class*="progress"]', '[class*="timeline"]'
             ];
 
             for (const selector of selectors) {
                 const el = document.querySelector(selector);
                 if (el) {
                     this._container = el;
-                    this._found = true;
                     break;
                 }
             }
 
             if (!this._container) {
                 try {
-                    const player = document.querySelector('.player, .video-js, .jwplayer');
+                    const player = document.querySelector('.player');
                     if (player) {
                         const progress = player.querySelector('[class*="progress"]') || 
-                                       player.querySelector('[class*="timeline"]') ||
-                                       player.querySelector('.vjs-progress-holder') ||
-                                       player.querySelector('.jw-progress');
-                        if (progress) {
-                            this._container = progress;
-                            this._found = true;
-                        }
+                                       player.querySelector('[class*="timeline"]');
+                        if (progress) this._container = progress;
                     }
                 } catch(e) {}
             }
@@ -316,9 +297,7 @@
                     z-index: 10;
                     overflow: visible;
                 `;
-                if (this._container.style.position === 'static' || !this._container.style.position) {
-                    this._container.style.position = 'relative';
-                }
+                this._container.style.position = 'relative';
                 this._container.appendChild(markersContainer);
             }
             this._markersContainer = markersContainer;
@@ -392,16 +371,12 @@
             
             const marker = document.createElement('div');
             marker.className = `skip-intro-marker skip-intro-marker-${type}`;
-            marker.dataset.type = type;
-            marker.dataset.start = start;
-            marker.dataset.end = end;
-            
             marker.style.cssText = `
                 position: absolute;
                 top: 50%;
                 transform: translateY(-50%);
-                left: ${Math.min(startPercent, 100)}%;
-                width: ${Math.min(width, 100 - startPercent)}%;
+                left: ${startPercent}%;
+                width: ${width}%;
                 height: 70%;
                 border-radius: 3px;
                 transition: all 0.3s ease;
@@ -417,7 +392,7 @@
 
         updateMarkers(segments, duration) {
             this.clear();
-            if (!segments || !segments.length || !duration || duration < CONFIG.MIN_VIDEO_DURATION) return;
+            if (!segments || !segments.length || !duration) return;
             
             if (!this._container || !this._markersContainer) {
                 this._findProgressBar();
@@ -437,8 +412,7 @@
             markers.forEach((marker) => {
                 const data = this._markers.find(m => m.element === marker);
                 if (data && segment && data.type === segment.type && 
-                    Math.abs(data.start - segment.start) < 1 && 
-                    Math.abs(data.end - segment.end) < 1) {
+                    data.start === segment.start && data.end === segment.end) {
                     marker.classList.add('active');
                 } else {
                     marker.classList.remove('active');
@@ -455,11 +429,10 @@
             this.clear();
             this._container = null;
             this._markersContainer = null;
-            this._found = false;
         }
     };
 
-    // ===== УВЕДОМЛЕНИЕ =====
+    // ===== УВЕДОМЛЕНИЕ ПО ЦЕНТРУ ВВЕРХУ =====
     const Notification = {
         _element: null,
         _timer: null,
@@ -479,56 +452,46 @@
                     backdrop-filter: blur(12px);
                     -webkit-backdrop-filter: blur(12px);
                     color: #fff;
-                    padding: 14px 32px;
+                    padding: 16px 40px;
                     border-radius: 12px;
-                    font-size: 17px;
+                    font-size: 18px;
                     font-weight: 500;
                     z-index: 99999;
                     opacity: 0;
                     pointer-events: none;
                     transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
                     font-family: system-ui, -apple-system, sans-serif;
-                    border: 1px solid rgba(255, 255, 255, 0.15);
+                    border: 1px solid rgba(255, 255, 255, 0.1);
                     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
                     text-align: center;
-                    min-width: 180px;
-                    max-width: 85vw;
-                    letter-spacing: 0.2px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    gap: 10px;
+                    min-width: 200px;
+                    max-width: 80vw;
+                    letter-spacing: 0.3px;
                 }
                 .skip-intro-notification.show {
                     opacity: 1;
                     transform: translateX(-50%) translateY(0);
                 }
                 .skip-intro-notification .icon {
-                    font-size: 20px;
-                    line-height: 1;
+                    display: inline-block;
+                    margin-right: 12px;
+                    font-size: 22px;
                 }
                 .skip-intro-notification .label {
-                    white-space: nowrap;
+                    display: inline-block;
                 }
                 .skip-intro-notification .badge {
+                    display: inline-block;
+                    margin-left: 10px;
                     font-size: 13px;
-                    opacity: 0.7;
-                    font-weight: 400;
-                    background: rgba(255,255,255,0.1);
-                    padding: 2px 10px;
-                    border-radius: 20px;
+                    opacity: 0.6;
                 }
                 @media (max-width: 720px) {
                     .skip-intro-notification {
                         top: 20px;
-                        padding: 10px 20px;
-                        font-size: 14px;
-                        min-width: 120px;
-                        gap: 8px;
-                    }
-                    .skip-intro-notification .badge {
-                        font-size: 11px;
-                        padding: 1px 8px;
+                        padding: 12px 24px;
+                        font-size: 15px;
+                        min-width: 150px;
                     }
                 }
             `;
@@ -682,8 +645,7 @@
             cues.sort((a, b) => a.start - b.start);
             const segments = [];
             
-            // Заставка в начале
-            if (cues[0].start >= 10 && cues[0].start <= CONFIG.INTRO_MAX_START) {
+            if (cues[0].start >= 15 && cues[0].start <= CONFIG.INTRO_MAX_START) {
                 segments.push({
                     type: 'intro',
                     start: 0,
@@ -692,20 +654,16 @@
                 });
             }
 
-            // Поиск паузы между субтитрами
             let maxGap = 0;
             let introStart = 0;
             let introEnd = 0;
             
             for (let i = 0; i < cues.length - 1 && cues[i].end < CONFIG.INTRO_MAX_END; i++) {
                 const gap = cues[i + 1].start - cues[i].end;
-                if (gap >= 10 && gap <= CONFIG.INTRO_MAX_END && gap > maxGap) {
-                    const current = cues[i].end;
-                    if (current < CONFIG.INTRO_MAX_END) {
-                        maxGap = gap;
-                        introStart = Math.round(cues[i].end);
-                        introEnd = Math.round(cues[i + 1].start);
-                    }
+                if (gap >= 15 && gap <= CONFIG.INTRO_MAX_END && gap > maxGap) {
+                    maxGap = gap;
+                    introStart = Math.round(cues[i].end);
+                    introEnd = Math.round(cues[i + 1].start);
                 }
             }
 
@@ -718,7 +676,6 @@
                 });
             }
 
-            // Титры в конце
             if (duration > 600 && cues.length > 0) {
                 const lastCue = cues[cues.length - 1];
                 const gap = duration - lastCue.end;
@@ -953,18 +910,17 @@
         },
 
         async load(tmdbId, imdbId, season, episode) {
-            if (!tmdbId || season == null || episode == null) return [];
-
             const cached = Cache.get(tmdbId, season, episode);
             if (cached) return cached;
-
-            const segments = [];
 
             try {
                 const url = `${CONFIG.THEINTRODB_URL}?tmdb_id=${tmdbId}&season=${season}&episode=${episode}`;
                 const data = await this._fetch(url);
-                const parsed = this._parseTheIntroDB(data);
-                if (parsed.length) segments.push(...parsed);
+                const segments = this._parseTheIntroDB(data);
+                if (segments.length) {
+                    Cache.set(tmdbId, season, episode, segments);
+                    return segments;
+                }
             } catch(e) {}
 
             try {
@@ -975,6 +931,7 @@
                     this._fetch(url2).catch(() => null)
                 ]);
                 
+                const segments = [];
                 if (intro && intro.start && intro.end) {
                     segments.push({
                         type: 'intro',
@@ -989,20 +946,22 @@
                         end: Math.round(credits.end)
                     });
                 }
+                if (segments.length) {
+                    Cache.set(tmdbId, season, episode, segments);
+                    return segments;
+                }
             } catch(e) {}
 
             if (imdbId) {
                 try {
                     const url = `https://introhater.com/api/segments/${imdbId}:${season}:${episode}`;
                     const data = await this._fetch(url);
-                    const parsed = this._parseIntroHater(data);
-                    if (parsed.length) segments.push(...parsed);
+                    const segments = this._parseIntroHater(data);
+                    if (segments.length) {
+                        Cache.set(tmdbId, season, episode, segments);
+                        return segments;
+                    }
                 } catch(e) {}
-            }
-
-            if (segments.length) {
-                Cache.set(tmdbId, season, episode, segments);
-                return segments;
             }
 
             return [];
@@ -1019,8 +978,8 @@
                     items.forEach(item => {
                         const start = item.start_ms ? item.start_ms / 1000 : (item.start || 0);
                         const end = item.end_ms ? item.end_ms / 1000 : (item.end || 0);
-                        if (end > start && start >= 0) {
-                            segments.push({ type, start: Math.round(start), end: Math.round(end) });
+                        if (end > start) {
+                            segments.push({ type, start, end });
                         }
                     });
                 }
@@ -1060,9 +1019,6 @@
         _currentTmdb: null,
         _detecting: false,
         _initialized: false,
-        _retryCount: 0,
-        _maxRetries: 3,
-        _checkInterval: null,
 
         init() {
             if (this._initialized) return;
@@ -1080,23 +1036,19 @@
                 );
             }
 
-            console.log('[SkipIntro] Plugin initialized');
+            console.log('[SkipIntro] Plugin initialized globally');
         },
 
         _onStart(data) {
             this._cleanup();
-            this._retryCount = 0;
 
-            if (!PluginSettings.isEnabled()) {
-                console.log('[SkipIntro] Plugin disabled');
-                return;
-            }
+            if (!PluginSettings.isEnabled()) return;
 
             const meta = this._extractMeta(data);
             
             console.log('[SkipIntro] Extracted meta:', meta);
             
-            if (!meta.is_series || meta.season == null || meta.episode == null) {
+            if (!meta.tmdb_id || !meta.is_series || meta.season == null || meta.episode == null) {
                 console.log('[SkipIntro] Not a series or missing metadata');
                 return;
             }
@@ -1135,30 +1087,23 @@
                 console.log(`[SkipIntro] Loaded ${merged.length} segments`);
             };
 
-            // Если есть TMDB ID - грузим из API
-            if (meta.tmdb_id) {
-                ApiClient.load(meta.tmdb_id, meta.imdb_id, meta.season, meta.episode)
-                    .then(segments => {
-                        if (this._currentData === data) {
-                            apiSegments = segments || [];
-                            apiDone = true;
-                            if (apiSegments.length) {
-                                this._segments = apiSegments;
-                            }
-                            mergeSegments();
-                        }
-                    })
-                    .catch((err) => {
-                        console.log('[SkipIntro] API error:', err);
+            ApiClient.load(meta.tmdb_id, meta.imdb_id, meta.season, meta.episode)
+                .then(segments => {
+                    if (this._currentData === data) {
+                        apiSegments = segments || [];
                         apiDone = true;
+                        if (apiSegments.length) {
+                            this._segments = apiSegments;
+                        }
                         mergeSegments();
-                    });
-            } else {
-                apiDone = true;
-                mergeSegments();
-            }
+                    }
+                })
+                .catch((err) => {
+                    console.log('[SkipIntro] API error:', err);
+                    apiDone = true;
+                    mergeSegments();
+                });
 
-            // Детекция всегда запускается для универсальности
             if (PluginSettings.isDetectEnabled()) {
                 this._runDetection(data, meta, (segments) => {
                     if (this._currentData === data && segments && segments.length) {
@@ -1187,13 +1132,13 @@
 
             if (!data) return meta;
 
-            // 1. Из данных плеера
+            // 1. Попытка забрать данные напрямую из передаваемого Lampa события
             if (data.tmdb_id) meta.tmdb_id = data.tmdb_id;
             if (data.imdb_id) meta.imdb_id = data.imdb_id;
             if (data.season != null) meta.season = parseInt(data.season, 10);
             if (data.episode != null) meta.episode = parseInt(data.episode, 10);
 
-            // 2. Из активности Lampa
+            // 2. Универсальное сканирование активной карточки контента в Lampa
             let card = data.card || null;
             try {
                 const activity = Lampa.Activity.active();
@@ -1210,30 +1155,21 @@
                 }
             }
 
-            // 3. Из плейлиста
+            // 3. Сканирование плейлистов любого балансера или онлайн-модуля
+            // Мы ищем текущую серию в списке воспроизведения
             if (data.playlist && Array.isArray(data.playlist)) {
-                const url = data.url || '';
-                let activeItem = null;
-                
-                for (const item of data.playlist) {
-                    const itemUrl = typeof item.url === 'string' ? item.url : '';
-                    if (itemUrl === url || item.active === true) {
-                        activeItem = item;
-                        break;
-                    }
-                }
-                
-                if (!activeItem && data.playlist.length) {
-                    activeItem = data.playlist[0];
-                }
+                // Ищем элемент, помеченный как активный, либо используем первый
+                const activeItem = data.playlist.find(item => item.active === true) || data.playlist[0];
                 
                 if (activeItem) {
+                    // Универсальная проверка всевозможных ключей серий/сезонов, которые шлют разные балансеры
                     const s = activeItem.season ?? activeItem.s ?? activeItem.season_num ?? activeItem.seasons;
                     const e = activeItem.episode ?? activeItem.e ?? activeItem.episode_num ?? activeItem.episodes;
                     
                     if (s != null && meta.season == null) meta.season = parseInt(s, 10);
                     if (e != null && meta.episode == null) meta.episode = parseInt(e, 10);
 
+                    // Если в элементе плейлиста есть текстовый тайтл - пробуем его распарсить
                     if ((meta.season == null || meta.episode == null) && activeItem.title) {
                         const parsed = Utils.parseSeasonEpisode(activeItem.title);
                         if (parsed) {
@@ -1244,14 +1180,15 @@
                 }
             }
 
-            // 4. Из URL и заголовков
+            // 4. Универсальный прогон текстовых полей плеера через регулярные выражения.
+            // Намеренно НЕ трогаем data.url — сырые ссылки часто содержат числа
+            // (разрешение, id качества, токены CDN), которые легко принять за
+            // сезон/серию и получить неверный результат.
             if (meta.season == null || meta.episode == null) {
                 const fieldsToParse = [
                     data.title,
-                    data.name,
                     data.file ? data.file.title : null,
-                    data.video ? data.video.title : null,
-                    data.url
+                    data.video ? data.video.title : null
                 ];
 
                 for (const field of fieldsToParse) {
@@ -1266,7 +1203,7 @@
                 }
             }
 
-            // 5. Поиск TMDB ID из хранилища
+            // 5. Поиск скрытого ID фильма в системных хранилищах Lampa
             if (!meta.tmdb_id) {
                 try {
                     const keys = ['online_view_id', 'current_movie_id', 'player_movie_id'];
@@ -1285,8 +1222,22 @@
                 } catch(e) {}
             }
 
-            // Если есть сезон и серия - это сериал
-            if (meta.season != null && meta.episode != null) {
+            // 6. Season/episode из query-параметров текущей активности Lampa —
+            // это состояние самой Lampa (не конкретного балансера), поэтому
+            // работает одинаково для торрентов и для любого онлайн-плеера
+            if (meta.season == null || meta.episode == null) {
+                try {
+                    const activity = Lampa.Activity.active();
+                    const query = activity && (activity.query || (activity.activity && activity.activity.query));
+                    if (query) {
+                        if (meta.season == null && query.season != null) meta.season = parseInt(query.season, 10);
+                        if (meta.episode == null && query.episode != null) meta.episode = parseInt(query.episode, 10);
+                    }
+                } catch(e) {}
+            }
+
+            // Если нашли TMDB ID, сезон и серию — активируем логику сериала
+            if (meta.tmdb_id && meta.season != null && meta.episode != null) {
                 meta.is_series = true;
             }
 
@@ -1297,23 +1248,25 @@
             if (this._detecting) return;
             this._detecting = true;
 
-            // Проверяем кэш
-            if (meta.tmdb_id) {
-                const cached = Cache.get(meta.tmdb_id, meta.season, meta.episode);
-                if (cached && cached.length) {
-                    this._detecting = false;
-                    callback(cached);
-                    return;
-                }
+            const cached = Cache.get(meta.tmdb_id, meta.season, meta.episode);
+            if (cached && cached.length) {
+                this._detecting = false;
+                callback(cached);
+                return;
             }
 
-            let video = Utils.getVideoElement();
+            let video = null;
+            try {
+                video = Lampa.PlayerVideo.video();
+            } catch(e) {}
 
             if (!video || !video.duration) {
                 let attempts = 0;
                 const checkVideo = () => {
                     attempts++;
-                    video = Utils.getVideoElement();
+                    try {
+                        video = Lampa.PlayerVideo.video();
+                    } catch(e) {}
                     
                     if (video && video.duration) {
                         this._runDetectionInternal(video, meta, callback);
@@ -1331,22 +1284,24 @@
         },
 
         _runDetectionInternal(video, meta, callback) {
-            const duration = video.duration || Utils.getPlayerDuration();
-            
-            if (duration < CONFIG.MIN_VIDEO_DURATION) {
-                this._detecting = false;
-                callback([]);
-                return;
-            }
+            const duration = video.duration;
             
             SubtitleDetector.detect(video, duration)
                 .then(subSegments => {
                     if (subSegments && subSegments.length) {
-                        if (meta.tmdb_id) {
-                            Cache.set(meta.tmdb_id, meta.season, meta.episode, subSegments);
-                        }
+                        Cache.set(meta.tmdb_id, meta.season, meta.episode, subSegments);
                         this._detecting = false;
                         callback(subSegments);
+                        return;
+                    }
+
+                    // Анализ звука через Web Audio API работает только когда
+                    // видео с того же источника (локальный сервер торрента) —
+                    // на внешних балансерах браузер блокирует чтение "чужого"
+                    // видео по CORS, так что там пытаться бессмысленно.
+                    if (Utils.getSourceType() !== 'torrent') {
+                        this._detecting = false;
+                        callback([]);
                         return;
                     }
 
@@ -1355,9 +1310,7 @@
                             this._detecting = false;
                             if (audioSegment) {
                                 const segments = [audioSegment];
-                                if (meta.tmdb_id) {
-                                    Cache.set(meta.tmdb_id, meta.season, meta.episode, segments);
-                                }
+                                Cache.set(meta.tmdb_id, meta.season, meta.episode, segments);
                                 callback(segments);
                             } else {
                                 callback([]);
@@ -1375,23 +1328,30 @@
         },
 
         _updateProgressMarkers(segments) {
-            const duration = Utils.getPlayerDuration();
+            let duration = 0;
+            try {
+                const video = Lampa.PlayerVideo.video();
+                if (video) duration = video.duration;
+            } catch(e) {}
             
             if (duration > 0 && segments && segments.length) {
                 ProgressMarker.updateMarkers(segments, duration);
                 return;
             }
             
-            // Ждем появления длительности
-            if (segments && segments.length) {
+            if (!duration) {
                 let attempts = 0;
                 const checkDuration = () => {
                     attempts++;
-                    const dur = Utils.getPlayerDuration();
-                    if (dur > 0) {
-                        ProgressMarker.updateMarkers(segments, dur);
-                    } else if (attempts < 20) {
-                        setTimeout(checkDuration, 500);
+                    try {
+                        const video = Lampa.PlayerVideo.video();
+                        if (video && video.duration) {
+                            ProgressMarker.updateMarkers(segments, video.duration);
+                        } else if (attempts < 20) {
+                            setTimeout(checkDuration, 500);
+                        }
+                    } catch(e) {
+                        if (attempts < 20) setTimeout(checkDuration, 500);
                     }
                 };
                 checkDuration();
@@ -1401,7 +1361,7 @@
         _onTimeUpdate(data) {
             if (!PluginSettings.isEnabled() || !this._segments.length) return;
             
-            const current = data.current || Utils.getCurrentTime();
+            const current = data.current;
             if (!Utils.isNumeric(current)) return;
             
             const segment = Utils.findSegment(this._segments, current);
@@ -1457,9 +1417,22 @@
                 `${time}с${auto ? ' ⚡' : ''}`
             );
             
-            const target = Math.min(segment.end, Utils.getPlayerDuration() || segment.end);
-            Utils.seekTo(target);
-            console.log(`[SkipIntro] Skipped ${segment.type} to ${target}s${auto ? ' (auto)' : ''}`);
+            try {
+                const video = Lampa.PlayerVideo.video();
+                if (video) {
+                    const target = Math.min(segment.end, video.duration || segment.end);
+                    video.currentTime = target;
+                    console.log(`[SkipIntro] Skipped ${segment.type} to ${target}s${auto ? ' (auto)' : ''}`);
+                    
+                    setTimeout(() => {
+                        try {
+                            if (video.paused) video.play();
+                        } catch(e) {}
+                    }, 100);
+                }
+            } catch(e) {
+                console.log('[SkipIntro] Error seeking:', e);
+            }
         },
 
         _cleanup() {
@@ -1471,11 +1444,6 @@
             this._detecting = false;
             Notification.destroy();
             AudioDetector.destroy();
-            
-            if (this._checkInterval) {
-                clearInterval(this._checkInterval);
-                this._checkInterval = null;
-            }
         },
 
         _onDestroy() {
