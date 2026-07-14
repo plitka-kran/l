@@ -24,7 +24,7 @@
         MAX_ENERGY_PEAK_DURATION: 150,
         MIN_ENERGY_SAMPLES: 10,
         NOTIFICATION_DURATION: 3000,
-        DEBUG_MODE: true // Включен режим отладки
+        DEBUG_MODE: true
     };
 
     // ===== УТИЛИТЫ =====
@@ -253,28 +253,30 @@
         }
     };
 
-    // ===== ДЕБАГ ЛОГГЕР В ПЛЕЕРЕ =====
+    // ===== ДЕБАГ ЛОГГЕР В ПЛЕЕРЕ (ВСЕГДА ВИДИМ) =====
     const DebugLogger = {
         _element: null,
         _lines: [],
-        _maxLines: 8,
-        _visible: false,
+        _maxLines: 12,
+        _visible: true,
 
         init() {
             if (!CONFIG.DEBUG_MODE) return;
             
             this._injectStyles();
             this._createElement();
+            this._visible = true;
             
-            // Показываем/скрываем по двойному нажатию
-            document.addEventListener('keydown', (e) => {
-                if (e.key === 'd' || e.key === 'D') {
-                    this.toggle();
+            this.log('🐛 РЕЖИМ ОТЛАДКИ');
+            this.log('📺 Источник: ' + Utils.getSourceType());
+            this.log('⏳ Ожидание воспроизведения...');
+            
+            // Скрываем через 60 секунд если ничего не произошло
+            setTimeout(() => {
+                if (this._lines.length < 3) {
+                    this.log('⚠️ Нет активности, проверьте плеер');
                 }
-            });
-            
-            this.log('🐛 Режим отладки включен');
-            this.log('Нажмите D для показа/скрытия');
+            }, 10000);
         },
 
         _injectStyles() {
@@ -285,54 +287,74 @@
             style.textContent = `
                 .skip-intro-debug {
                     position: fixed;
-                    bottom: 20px;
-                    left: 20px;
-                    right: 20px;
-                    max-width: 600px;
+                    bottom: 30px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    width: 90%;
+                    max-width: 800px;
                     background: rgba(0, 0, 0, 0.92);
-                    backdrop-filter: blur(12px);
-                    -webkit-backdrop-filter: blur(12px);
-                    border: 1px solid rgba(255, 255, 255, 0.1);
-                    border-radius: 12px;
-                    padding: 12px 16px;
+                    backdrop-filter: blur(16px);
+                    -webkit-backdrop-filter: blur(16px);
+                    border: 2px solid rgba(0, 255, 136, 0.3);
+                    border-radius: 16px;
+                    padding: 14px 18px;
                     z-index: 999999;
-                    font-family: 'Consolas', 'Monaco', monospace;
-                    font-size: 12px;
-                    line-height: 1.6;
+                    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+                    font-size: 13px;
+                    line-height: 1.7;
                     color: #00ff88;
-                    opacity: 0;
-                    transform: translateY(20px);
-                    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-                    pointer-events: none;
-                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
-                    max-height: 300px;
+                    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.9);
+                    max-height: 350px;
                     overflow: hidden;
-                }
-                .skip-intro-debug.show {
-                    opacity: 1;
-                    transform: translateY(0);
-                    pointer-events: auto;
+                    pointer-events: none;
+                    text-shadow: 0 0 10px rgba(0,255,136,0.1);
                 }
                 .skip-intro-debug .header {
                     display: flex;
                     justify-content: space-between;
                     align-items: center;
-                    margin-bottom: 6px;
-                    padding-bottom: 6px;
-                    border-bottom: 1px solid rgba(255,255,255,0.05);
-                    font-size: 10px;
-                    color: rgba(255,255,255,0.4);
+                    margin-bottom: 8px;
+                    padding-bottom: 8px;
+                    border-bottom: 1px solid rgba(0,255,136,0.1);
+                    font-size: 11px;
+                    color: rgba(0,255,136,0.5);
                     text-transform: uppercase;
-                    letter-spacing: 1px;
+                    letter-spacing: 2px;
+                    font-weight: bold;
                 }
-                .skip-intro-debug .header .close {
-                    cursor: pointer;
-                    color: rgba(255,255,255,0.3);
-                    transition: color 0.2s;
-                    font-size: 14px;
+                .skip-intro-debug .header .status {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
                 }
-                .skip-intro-debug .header .close:hover {
-                    color: #ff6b6b;
+                .skip-intro-debug .header .dot {
+                    display: inline-block;
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 50%;
+                    background: #00ff88;
+                    animation: skip-intro-blink 1s infinite;
+                }
+                @keyframes skip-intro-blink {
+                    0%, 100% { opacity: 1; }
+                    50% { opacity: 0.2; }
+                }
+                .skip-intro-debug .scroll-area {
+                    max-height: 270px;
+                    overflow-y: auto;
+                    scrollbar-width: thin;
+                    scrollbar-color: rgba(0,255,136,0.2) transparent;
+                    padding-right: 4px;
+                }
+                .skip-intro-debug .scroll-area::-webkit-scrollbar {
+                    width: 4px;
+                }
+                .skip-intro-debug .scroll-area::-webkit-scrollbar-thumb {
+                    background: rgba(0,255,136,0.3);
+                    border-radius: 2px;
+                }
+                .skip-intro-debug .scroll-area::-webkit-scrollbar-track {
+                    background: transparent;
                 }
                 .skip-intro-debug .log-line {
                     padding: 2px 0;
@@ -341,66 +363,82 @@
                     white-space: nowrap;
                     overflow: hidden;
                     text-overflow: ellipsis;
+                    font-size: 12px;
                 }
                 .skip-intro-debug .log-line .time {
-                    color: rgba(255,255,255,0.3);
-                    margin-right: 8px;
+                    color: rgba(0,255,136,0.2);
+                    margin-right: 10px;
                     font-size: 10px;
+                    font-weight: bold;
                 }
                 .skip-intro-debug .log-line.error {
                     color: #ff6b6b;
+                    border-left: 2px solid #ff6b6b;
+                    padding-left: 8px;
                 }
                 .skip-intro-debug .log-line.warn {
                     color: #ffd93d;
+                    border-left: 2px solid #ffd93d;
+                    padding-left: 8px;
                 }
                 .skip-intro-debug .log-line.success {
                     color: #6bcb6b;
+                    border-left: 2px solid #6bcb6b;
+                    padding-left: 8px;
                 }
                 .skip-intro-debug .log-line.info {
                     color: #6bc5ff;
+                    border-left: 2px solid #6bc5ff;
+                    padding-left: 8px;
                 }
                 .skip-intro-debug .log-line.highlight {
                     color: #ff6bff;
                     font-weight: bold;
+                    border-left: 2px solid #ff6bff;
+                    padding-left: 8px;
+                    background: rgba(255,107,255,0.05);
                 }
-                .skip-intro-debug .scroll-area {
-                    max-height: 240px;
-                    overflow-y: auto;
-                    scrollbar-width: thin;
-                    scrollbar-color: rgba(255,255,255,0.1) transparent;
+                .skip-intro-debug .log-line.meta {
+                    color: #ffa94d;
+                    border-left: 2px solid #ffa94d;
+                    padding-left: 8px;
+                    background: rgba(255,169,77,0.05);
                 }
-                .skip-intro-debug .scroll-area::-webkit-scrollbar {
-                    width: 4px;
-                }
-                .skip-intro-debug .scroll-area::-webkit-scrollbar-thumb {
-                    background: rgba(255,255,255,0.2);
-                    border-radius: 2px;
-                }
-                .skip-intro-debug .hint {
-                    position: fixed;
-                    bottom: 10px;
-                    right: 10px;
-                    color: rgba(255,255,255,0.15);
-                    font-size: 10px;
-                    font-family: monospace;
-                    z-index: 999998;
-                    opacity: 0;
-                    transition: opacity 0.5s;
-                }
-                .skip-intro-debug .hint.show {
-                    opacity: 1;
+                .skip-intro-debug .log-line .emoji {
+                    margin-right: 6px;
                 }
                 @keyframes skip-intro-log-fade {
-                    from { opacity: 0; transform: translateX(-10px); }
-                    to { opacity: 1; transform: translateX(0); }
+                    from { opacity: 0; transform: translateY(-5px); }
+                    to { opacity: 1; transform: translateY(0); }
                 }
                 @media (max-width: 720px) {
                     .skip-intro-debug {
-                        left: 10px;
-                        right: 10px;
-                        bottom: 10px;
+                        bottom: 20px;
+                        padding: 10px 14px;
                         font-size: 11px;
-                        padding: 10px 12px;
+                        max-height: 250px;
+                        width: 95%;
+                        border-radius: 12px;
+                    }
+                    .skip-intro-debug .log-line {
+                        font-size: 10px;
+                    }
+                    .skip-intro-debug .scroll-area {
+                        max-height: 190px;
+                    }
+                }
+                @media (max-width: 480px) {
+                    .skip-intro-debug {
+                        bottom: 10px;
+                        padding: 8px 10px;
+                        font-size: 10px;
+                        max-height: 200px;
+                    }
+                    .skip-intro-debug .log-line {
+                        font-size: 9px;
+                    }
+                    .skip-intro-debug .scroll-area {
+                        max-height: 150px;
                     }
                 }
             `;
@@ -412,29 +450,23 @@
             el.className = 'skip-intro-debug';
             el.innerHTML = `
                 <div class="header">
-                    <span>🐛 SkipIntro Debug</span>
-                    <span class="close" id="skip-intro-debug-close">✕</span>
+                    <span>🐛 SKIP INTRO DEBUG</span>
+                    <div class="status">
+                        <span class="dot"></span>
+                        <span style="font-size:9px;opacity:0.5;">LIVE</span>
+                    </div>
                 </div>
                 <div class="scroll-area" id="skip-intro-debug-logs"></div>
             `;
             document.body.appendChild(el);
             this._element = el;
             
-            // Закрытие
-            const closeBtn = el.querySelector('#skip-intro-debug-close');
-            if (closeBtn) {
-                closeBtn.addEventListener('click', () => this.hide());
-            }
-            
-            // Хинт
-            const hint = document.createElement('div');
-            hint.className = 'skip-intro-debug hint';
-            hint.textContent = 'Нажмите D для отладки';
-            document.body.appendChild(hint);
-            setTimeout(() => hint.classList.add('show'), 2000);
-            setTimeout(() => hint.classList.remove('show'), 6000);
-            
-            this._hint = hint;
+            // Автоматически показываем
+            setTimeout(() => {
+                if (this._element) {
+                    this._element.style.opacity = '1';
+                }
+            }, 100);
         },
 
         log(message, type = 'info') {
@@ -458,35 +490,27 @@
             if (!container) return;
             
             const visibleLines = this._lines.slice(-this._maxLines);
-            container.innerHTML = visibleLines.map(line => `
-                <div class="log-line ${line.type}">
-                    <span class="time">${line.time}</span>
-                    ${line.message}
-                </div>
-            `).join('');
+            container.innerHTML = visibleLines.map(line => {
+                let emoji = '';
+                switch(line.type) {
+                    case 'error': emoji = '❌'; break;
+                    case 'warn': emoji = '⚠️'; break;
+                    case 'success': emoji = '✅'; break;
+                    case 'highlight': emoji = '⭐'; break;
+                    case 'meta': emoji = '📋'; break;
+                    default: emoji = '•';
+                }
+                return `
+                    <div class="log-line ${line.type}">
+                        <span class="time">${line.time}</span>
+                        <span class="emoji">${emoji}</span>
+                        ${line.message}
+                    </div>
+                `;
+            }).join('');
             
             // Автоскролл
             container.scrollTop = container.scrollHeight;
-        },
-
-        show() {
-            if (!this._element) return;
-            this._element.classList.add('show');
-            this._visible = true;
-        },
-
-        hide() {
-            if (!this._element) return;
-            this._element.classList.remove('show');
-            this._visible = false;
-        },
-
-        toggle() {
-            if (this._visible) {
-                this.hide();
-            } else {
-                this.show();
-            }
         },
 
         clear() {
@@ -498,10 +522,6 @@
             if (this._element) {
                 this._element.parentNode.removeChild(this._element);
                 this._element = null;
-            }
-            if (this._hint) {
-                this._hint.parentNode.removeChild(this._hint);
-                this._hint = null;
             }
         }
     };
@@ -898,20 +918,6 @@
                     opacity: 0.6;
                     font-weight: 400;
                 }
-                .skip-intro-notification .progress-ring {
-                    display: inline-block;
-                    margin-left: 14px;
-                    width: 20px;
-                    height: 20px;
-                    border: 2px solid rgba(255,255,255,0.2);
-                    border-top-color: #4CAF50;
-                    border-radius: 50%;
-                    animation: skip-intro-spin 0.8s linear infinite;
-                    vertical-align: middle;
-                }
-                @keyframes skip-intro-spin {
-                    to { transform: rotate(360deg); }
-                }
                 @media (max-width: 720px) {
                     .skip-intro-notification {
                         top: 20px;
@@ -924,7 +930,7 @@
             document.head.appendChild(style);
         },
 
-        show(text, badge, showProgress) {
+        show(text, badge) {
             this._injectStyles();
             this.hide();
 
@@ -946,12 +952,6 @@
                 badgeEl.className = 'badge';
                 badgeEl.textContent = badge;
                 el.appendChild(badgeEl);
-            }
-
-            if (showProgress) {
-                const progress = document.createElement('span');
-                progress.className = 'progress-ring';
-                el.appendChild(progress);
             }
 
             document.body.appendChild(el);
@@ -1373,22 +1373,22 @@
             }
 
             try {
-                DebugLogger.log(`🔍 Запрос к TheIntroDB...`, 'info');
+                DebugLogger.log(`🌐 TheIntroDB...`, 'info');
                 const url = `${CONFIG.THEINTRODB_URL}?tmdb_id=${tmdbId}&season=${season}&episode=${episode}`;
                 const data = await this._fetch(url);
                 const segments = this._parseTheIntroDB(data);
                 if (segments.length) {
                     Cache.set(tmdbId, season, episode, segments);
-                    DebugLogger.log(`✅ TheIntroDB: ${segments.length} сегментов`, 'success');
+                    DebugLogger.log(`✅ TheIntroDB: ${segments.length} сегм.`, 'success');
                     return segments;
                 }
-                DebugLogger.log(`❌ TheIntroDB: ничего не найдено`, 'warn');
+                DebugLogger.log(`❌ TheIntroDB: нет данных`, 'warn');
             } catch(e) {
-                DebugLogger.log(`❌ TheIntroDB ошибка: ${e.message}`, 'error');
+                DebugLogger.log(`❌ TheIntroDB: ${e.message}`, 'error');
             }
 
             try {
-                DebugLogger.log(`🔍 Запрос к IntroDB...`, 'info');
+                DebugLogger.log(`🌐 IntroDB...`, 'info');
                 const url1 = `${CONFIG.API_URL}/get_intros?tmdb=${tmdbId}&season=${season}&episode=${episode}`;
                 const url2 = `${CONFIG.API_URL}/get_credits?tmdb=${tmdbId}&season=${season}&episode=${episode}`;
                 const [intro, credits] = await Promise.all([
@@ -1413,32 +1413,32 @@
                 }
                 if (segments.length) {
                     Cache.set(tmdbId, season, episode, segments);
-                    DebugLogger.log(`✅ IntroDB: ${segments.length} сегментов`, 'success');
+                    DebugLogger.log(`✅ IntroDB: ${segments.length} сегм.`, 'success');
                     return segments;
                 }
-                DebugLogger.log(`❌ IntroDB: ничего не найдено`, 'warn');
+                DebugLogger.log(`❌ IntroDB: нет данных`, 'warn');
             } catch(e) {
-                DebugLogger.log(`❌ IntroDB ошибка: ${e.message}`, 'error');
+                DebugLogger.log(`❌ IntroDB: ${e.message}`, 'error');
             }
 
             if (imdbId) {
                 try {
-                    DebugLogger.log(`🔍 Запрос к IntroHater...`, 'info');
+                    DebugLogger.log(`🌐 IntroHater...`, 'info');
                     const url = `https://introhater.com/api/segments/${imdbId}:${season}:${episode}`;
                     const data = await this._fetch(url);
                     const segments = this._parseIntroHater(data);
                     if (segments.length) {
                         Cache.set(tmdbId, season, episode, segments);
-                        DebugLogger.log(`✅ IntroHater: ${segments.length} сегментов`, 'success');
+                        DebugLogger.log(`✅ IntroHater: ${segments.length} сегм.`, 'success');
                         return segments;
                     }
-                    DebugLogger.log(`❌ IntroHater: ничего не найдено`, 'warn');
+                    DebugLogger.log(`❌ IntroHater: нет данных`, 'warn');
                 } catch(e) {
-                    DebugLogger.log(`❌ IntroHater ошибка: ${e.message}`, 'error');
+                    DebugLogger.log(`❌ IntroHater: ${e.message}`, 'error');
                 }
             }
 
-            DebugLogger.log(`⚠️ Ни один API не вернул данные`, 'warn');
+            DebugLogger.log(`⚠️ Все API: нет данных`, 'warn');
             return [];
         },
 
@@ -1499,7 +1499,6 @@
             if (this._initialized) return;
             this._initialized = true;
 
-            // Инициализируем дебаг логгер
             DebugLogger.init();
 
             PluginSettings.initSettings();
@@ -1514,52 +1513,38 @@
                 );
             }
 
-            DebugLogger.log('🚀 Плагин инициализирован', 'success');
-            DebugLogger.log('📺 Источник: ' + Utils.getSourceType(), 'info');
-            DebugLogger.log('⌨️ Нажмите D для показа/скрытия логов', 'info');
+            DebugLogger.log('🚀 Плагин запущен', 'success');
         },
 
         _onStart(data) {
             this._cleanup();
 
             if (!PluginSettings.isEnabled()) {
-                DebugLogger.log('⛔ Плагин отключен в настройках', 'warn');
+                DebugLogger.log('⛔ Плагин отключен', 'warn');
                 return;
             }
 
-            DebugLogger.log('🎬 Событие start', 'info');
-            DebugLogger.log('📊 Данные плеера:', 'info');
-
-            // Логируем данные плеера
-            try {
-                DebugLogger.log(`  - title: ${data.title || 'нет'}`, 'info');
-                DebugLogger.log(`  - url: ${data.url || 'нет'}`, 'info');
-                DebugLogger.log(`  - season: ${data.season || 'нет'}`, 'info');
-                DebugLogger.log(`  - episode: ${data.episode || 'нет'}`, 'info');
-                if (data.playlist) {
-                    DebugLogger.log(`  - playlist: ${data.playlist.length} элементов`, 'info');
-                }
-            } catch(e) {}
+            DebugLogger.log('🎬 Воспроизведение начато', 'info');
+            DebugLogger.log(`📺 Источник: ${Utils.getSourceType()}`, 'meta');
 
             const meta = this._extractMeta(data);
             
-            DebugLogger.log('📋 Извлеченные метаданные:', 'highlight');
-            DebugLogger.log(`  - TMDB ID: ${meta.tmdb_id || '❌ не найден'}`, meta.tmdb_id ? 'success' : 'error');
-            DebugLogger.log(`  - IMDB ID: ${meta.imdb_id || 'нет'}`, 'info');
-            DebugLogger.log(`  - Сезон: ${meta.season != null ? meta.season : '❌ не найден'}`, meta.season != null ? 'success' : 'error');
-            DebugLogger.log(`  - Серия: ${meta.episode != null ? meta.episode : '❌ не найден'}`, meta.episode != null ? 'success' : 'error');
-            DebugLogger.log(`  - Сериал: ${meta.is_series ? '✅ да' : '❌ нет'}`, meta.is_series ? 'success' : 'error');
+            DebugLogger.log('📋 МЕТАДАННЫЕ:', 'highlight');
+            DebugLogger.log(`  ID: ${meta.tmdb_id || '❌'}`, meta.tmdb_id ? 'success' : 'error');
+            DebugLogger.log(`  Сезон: ${meta.season != null ? meta.season : '❌'}`, meta.season != null ? 'success' : 'error');
+            DebugLogger.log(`  Серия: ${meta.episode != null ? meta.episode : '❌'}`, meta.episode != null ? 'success' : 'error');
+            DebugLogger.log(`  Сериал: ${meta.is_series ? '✅' : '❌'}`, meta.is_series ? 'success' : 'error');
             
             if (!meta.tmdb_id || !meta.is_series || meta.season == null || meta.episode == null) {
-                DebugLogger.log('❌ Не удалось определить метаданные для HDrezka', 'error');
-                DebugLogger.log('💡 Попробуйте вручную указать ID в настройках', 'warn');
+                DebugLogger.log('❌ НЕ УДАЛОСЬ ОПРЕДЕЛИТЬ МЕТАДАННЫЕ', 'error');
+                DebugLogger.log('💡 Проверьте: включен ли плагин для сериалов', 'warn');
                 return;
             }
 
             this._currentData = data;
             this._currentTmdb = meta.tmdb_id;
             
-            DebugLogger.log(`✅ Загружаем сегменты для S${meta.season}E${meta.episode} (TMDB: ${meta.tmdb_id})`, 'success');
+            DebugLogger.log(`✅ S${meta.season}E${meta.episode} (TMDB: ${meta.tmdb_id})`, 'success');
             
             let apiDone = false;
             let detectDone = false;
@@ -1587,14 +1572,14 @@
 
                 this._segments = merged;
                 this._updateProgressMarkers(merged);
-                DebugLogger.log(`📊 Загружено ${merged.length} сегментов`, 'success');
                 
                 if (merged.length === 0) {
-                    DebugLogger.log('⚠️ Сегменты не найдены. Попробуйте детекцию.', 'warn');
+                    DebugLogger.log('⚠️ СЕГМЕНТЫ НЕ НАЙДЕНЫ', 'warn');
                 } else {
+                    DebugLogger.log(`📊 НАЙДЕНО ${merged.length} СЕГМЕНТОВ:`, 'highlight');
+                    const typeNames = { intro: 'Заставка', recap: 'Рекап', credits: 'Титры', preview: 'Превью' };
                     merged.forEach((seg, i) => {
-                        const typeNames = { intro: 'Заставка', recap: 'Рекап', credits: 'Титры', preview: 'Превью' };
-                        DebugLogger.log(`  ${i+1}. ${typeNames[seg.type] || seg.type}: ${seg.start}с → ${seg.end}с (${seg.end - seg.start}с)`, 'info');
+                        DebugLogger.log(`  ${i+1}. ${typeNames[seg.type]}: ${seg.start}→${seg.end}с (${seg.end - seg.start}с)`, 'info');
                     });
                 }
             };
@@ -1623,16 +1608,16 @@
                     if (this._currentData === data && segments && segments.length) {
                         detectSegments = segments;
                         detectDone = true;
-                        DebugLogger.log(`🔍 Детекция: найдено ${segments.length} сегментов`, 'success');
+                        DebugLogger.log(`🔍 Детекция: ${segments.length} сегм.`, 'success');
                         mergeSegments();
                     } else {
                         detectDone = true;
-                        DebugLogger.log(`🔍 Детекция: ничего не найдено`, 'warn');
+                        DebugLogger.log(`🔍 Детекция: ничего нет`, 'warn');
                         mergeSegments();
                     }
                 });
             } else {
-                DebugLogger.log('⏭️ Детекция отключена в настройках', 'warn');
+                DebugLogger.log('⏭️ Детекция отключена', 'warn');
                 detectDone = true;
                 mergeSegments();
             }
@@ -1647,13 +1632,11 @@
                 is_series: false
             };
 
-            // 1. Прямые данные
             if (data.tmdb_id) meta.tmdb_id = data.tmdb_id;
             if (data.imdb_id) meta.imdb_id = data.imdb_id;
             if (data.season != null) meta.season = parseInt(data.season);
             if (data.episode != null) meta.episode = parseInt(data.episode);
 
-            // 2. Из card
             let card = data.card || null;
             if (!card) {
                 try {
@@ -1679,7 +1662,6 @@
                 if (meta.episode == null && card.e != null) meta.episode = parseInt(card.e);
             }
 
-            // 3. Из playlist
             if (data.playlist && Array.isArray(data.playlist)) {
                 const url = data.url;
                 for (let i = 0; i < data.playlist.length; i++) {
@@ -1706,7 +1688,6 @@
                 }
             }
 
-            // 4. Из title
             if ((meta.season == null || meta.episode == null) && data.title) {
                 const parsed = Utils.parseHDrezkaTitle(data.title);
                 if (parsed) {
@@ -1716,7 +1697,6 @@
                 }
             }
 
-            // 5. Из file.title
             if ((meta.season == null || meta.episode == null) && data.file && data.file.title) {
                 const parsed = Utils.parseHDrezkaTitle(data.file.title);
                 if (parsed) {
@@ -1726,7 +1706,6 @@
                 }
             }
 
-            // 6. Из Activity
             if (!meta.tmdb_id || !meta.is_series) {
                 try {
                     const activity = Lampa.Activity.active();
@@ -1742,13 +1721,11 @@
                 } catch(e) {}
             }
 
-            // 7. Universal TMDB ID
             if (!meta.tmdb_id) {
                 meta.tmdb_id = Utils.getTMDBId();
                 if (meta.tmdb_id) meta.is_series = true;
             }
 
-            // 8. Из URL
             if ((meta.season == null || meta.episode == null) || !meta.tmdb_id) {
                 try {
                     const url = Lampa.Player.getUrl ? Lampa.Player.getUrl() : '';
@@ -1774,12 +1751,10 @@
                 } catch(e) {}
             }
 
-            // 9. Если есть сезон и серия - это сериал
             if (meta.season != null && meta.episode != null) {
                 meta.is_series = true;
             }
 
-            // 10. Fallback - из Storage
             if (!meta.tmdb_id || meta.season == null || meta.episode == null) {
                 try {
                     const current = Lampa.Storage.get('current', null);
@@ -1805,7 +1780,7 @@
             const cached = Cache.get(meta.tmdb_id, meta.season, meta.episode);
             if (cached && cached.length) {
                 this._detecting = false;
-                DebugLogger.log(`📦 Кэш детекции: ${cached.length} сегментов`, 'success');
+                DebugLogger.log(`📦 Кэш детекции: ${cached.length} сегм.`, 'success');
                 callback(cached);
                 return;
             }
@@ -1816,7 +1791,7 @@
             } catch(e) {}
 
             if (!video || !video.duration) {
-                DebugLogger.log('⏳ Ожидание загрузки видео...', 'info');
+                DebugLogger.log('⏳ Ожидание видео...', 'info');
                 let attempts = 0;
                 const checkVideo = () => {
                     attempts++;
@@ -1830,7 +1805,7 @@
                     } else if (attempts < 20) {
                         setTimeout(checkVideo, 500);
                     } else {
-                        DebugLogger.log('❌ Таймаут загрузки видео', 'error');
+                        DebugLogger.log('❌ Таймаут видео', 'error');
                         this._detecting = false;
                         callback([]);
                     }
@@ -1844,41 +1819,41 @@
 
         _runDetectionInternal(video, meta, callback) {
             const duration = video.duration;
-            DebugLogger.log('🔍 Детекция по субтитрам...', 'info');
+            DebugLogger.log('🔍 Детекция субтитров...', 'info');
             
             SubtitleDetector.detect(video, duration)
                 .then(subSegments => {
                     if (subSegments && subSegments.length) {
                         Cache.set(meta.tmdb_id, meta.season, meta.episode, subSegments);
                         this._detecting = false;
-                        DebugLogger.log(`✅ Субтитры: найдено ${subSegments.length} сегментов`, 'success');
+                        DebugLogger.log(`✅ Субтитры: ${subSegments.length} сегм.`, 'success');
                         callback(subSegments);
                         return;
                     }
 
-                    DebugLogger.log('🔍 Детекция по звуку...', 'info');
+                    DebugLogger.log('🔍 Детекция звука...', 'info');
                     AudioDetector.detect(video)
                         .then(audioSegment => {
                             this._detecting = false;
                             if (audioSegment) {
                                 const segments = [audioSegment];
                                 Cache.set(meta.tmdb_id, meta.season, meta.episode, segments);
-                                DebugLogger.log(`✅ Звук: найден сегмент ${audioSegment.start}с → ${audioSegment.end}с`, 'success');
+                                DebugLogger.log(`✅ Звук: ${audioSegment.start}→${audioSegment.end}с`, 'success');
                                 callback(segments);
                             } else {
-                                DebugLogger.log('❌ Детекция не нашла сегментов', 'warn');
+                                DebugLogger.log('❌ Детекция: ничего нет', 'warn');
                                 callback([]);
                             }
                         })
                         .catch(() => {
                             this._detecting = false;
-                            DebugLogger.log('❌ Ошибка детекции звука', 'error');
+                            DebugLogger.log('❌ Ошибка звука', 'error');
                             callback([]);
                         });
                 })
                 .catch(() => {
                     this._detecting = false;
-                    DebugLogger.log('❌ Ошибка детекции субтитров', 'error');
+                    DebugLogger.log('❌ Ошибка субтитров', 'error');
                     callback([]);
                 });
         },
@@ -1972,8 +1947,7 @@
             
             Notification.show(
                 `⏭ ${label} пропущена`,
-                `${time}с${auto ? ' ⚡' : ''}`,
-                false
+                `${time}с${auto ? ' ⚡' : ''}`
             );
             
             try {
@@ -1989,7 +1963,7 @@
                     }, 100);
                 }
             } catch(e) {
-                DebugLogger.log(`❌ Ошибка перемотки: ${e.message}`, 'error');
+                DebugLogger.log(`❌ Ошибка: ${e.message}`, 'error');
             }
         },
 
@@ -2005,7 +1979,7 @@
         },
 
         _onDestroy() {
-            DebugLogger.log('🛑 Плеер уничтожен', 'info');
+            DebugLogger.log('🛑 Плеер закрыт', 'info');
             this._cleanup();
             ProgressMarker.destroy();
         }
