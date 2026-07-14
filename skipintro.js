@@ -81,70 +81,24 @@
             return null;
         },
 
-        // Универсальный парсер номеров сезона и серии из любых текстовых строк.
-        // ВАЖНО: сезон/серия почти всегда небольшие числа (1-50 / 1-999), а
-        // разрешение видео, год выпуска и т.п. — большие. Проверяем это,
-        // иначе регулярка легко цепляет "1920x1080" или "2024" как сезон/серию.
-        _isPlausible(season, episode) {
-            return season >= 1 && season <= 50 && episode >= 1 && episode <= 999;
-        },
-
         parseSeasonEpisode(text) {
             if (!text || typeof text !== 'string') return null;
 
-            // Шаблоны: "S01E05", "s1e5", "S01.E05"
-            let match = text.match(/[Ss](\d{1,2})\s*[Ee](\d{1,3})/);
-            if (match) {
-                const season = parseInt(match[1], 10), episode = parseInt(match[2], 10);
-                if (this._isPlausible(season, episode)) return { season, episode };
+            let match = text.match(/[Ss](\d+)\s*[Ee](\d+)/);
+            if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
+
+            match = text.match(/(\d+)\s*[xX]\s*(\d+)/);
+            if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
+
+            match = text.match(/(?:сезон)?\s*(\d+)\s*(?:сезон\w*|серии\w*)?\s*(?:серия|эпизод)?\s*(\d+)\s*(?:сери\w*|эпизод\w*)?/i);
+            if (match && match[1] && match[2]) {
+                return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
             }
 
-            // Русскоязычные шаблоны — ключевые слова "сезон"/"серия"/"эпизод"
-            // обязательны, чтобы не цеплять случайные числа (год, разрешение)
-            match = text.match(/(\d{1,2})\s*сезон\w*.{0,15}?(\d{1,3})\s*(?:сери\w*|эпизод\w*)/i);
-            if (match) {
-                const season = parseInt(match[1], 10), episode = parseInt(match[2], 10);
-                if (this._isPlausible(season, episode)) return { season, episode };
-            }
-            match = text.match(/сезон\w*\s*(\d{1,2}).{0,15}?(?:сери\w*|эпизод\w*)\s*(\d{1,3})/i);
-            if (match) {
-                const season = parseInt(match[1], 10), episode = parseInt(match[2], 10);
-                if (this._isPlausible(season, episode)) return { season, episode };
-            }
-
-            // Шаблоны: "1x05", "01x05" — только для правдоподобных чисел,
-            // иначе матчит разрешение видео вроде "1920x1080"
-            match = text.match(/(?<!\d)(\d{1,2})\s*[xX]\s*(\d{1,3})(?!\d)/);
-            if (match) {
-                const season = parseInt(match[1], 10), episode = parseInt(match[2], 10);
-                if (this._isPlausible(season, episode)) return { season, episode };
-            }
-
-            // Упрощенный поиск цифр: "EP 05", "Episode 5" (сезон считаем первым, если не найден)
-            match = text.match(/(?:^|[^a-zа-яё])(?:ep|episode|серия|эпизод)\.?\s*(\d{1,3})(?!\d)/i);
-            if (match) {
-                const episode = parseInt(match[1], 10);
-                if (episode >= 1 && episode <= 999) return { season: 1, episode };
-            }
+            match = text.match(/(?:ep|episode|серия|эпизод)\s*(\d+)/i);
+            if (match) return { season: 1, episode: parseInt(match[1], 10) };
 
             return null;
-        },
-
-        // torrent = свой локальный сервер (без CORS-ограничений),
-        // online = любой внешний балансер/плеер — для Web Audio API он
-        // всегда "чужой" источник, анализ звука там не сработает
-        getSourceType() {
-            try {
-                const url = Lampa.Player.getUrl ? Lampa.Player.getUrl() : '';
-                if (url.startsWith('blob:') || url.includes('127.0.0.1') ||
-                    url.includes('localhost') || url.includes('torrent') ||
-                    url.includes('.torrent') || url.includes('magnet')) {
-                    return 'torrent';
-                }
-                return 'online';
-            } catch(e) {
-                return 'online';
-            }
         }
     };
 
@@ -367,7 +321,7 @@
             const endPercent = (end / duration) * 100;
             const width = Math.max(endPercent - startPercent, 0.5);
             
-            if (width <= 0) return;
+            if (width <= 0 || startPercent > 100) return;
             
             const marker = document.createElement('div');
             marker.className = `skip-intro-marker skip-intro-marker-${type}`;
@@ -375,8 +329,8 @@
                 position: absolute;
                 top: 50%;
                 transform: translateY(-50%);
-                left: ${startPercent}%;
-                width: ${width}%;
+                left: ${Math.min(startPercent, 99)}%;
+                width: ${Math.min(width, 100 - startPercent)}%;
                 height: 70%;
                 border-radius: 3px;
                 transition: all 0.3s ease;
@@ -412,7 +366,7 @@
             markers.forEach((marker) => {
                 const data = this._markers.find(m => m.element === marker);
                 if (data && segment && data.type === segment.type && 
-                    data.start === segment.start && data.end === segment.end) {
+                    Math.abs(data.start - segment.start) < 2 && Math.abs(data.end - segment.end) < 2) {
                     marker.classList.add('active');
                 } else {
                     marker.classList.remove('active');
@@ -1013,6 +967,7 @@
     // ===== ОСНОВНОЙ КЛАСС =====
     const SkipIntroPlugin = {
         _segments: [],
+        _rawSegments: [], // Храним чистые сегменты из API до калибровки под онлайн-поток
         _activeSegment: null,
         _lastSkipped: null,
         _currentData: null,
@@ -1032,11 +987,11 @@
             
             if (Lampa.PlayerVideo && Lampa.PlayerVideo.listener) {
                 Lampa.PlayerVideo.listener.follow('timeupdate', 
-                    Utils.throttle((data) => this._onTimeUpdate(data), 300)
+                    Utils.throttle((data) => this._onTimeUpdate(data), 250)
                 );
             }
 
-            console.log('[SkipIntro] Plugin initialized globally');
+            console.log('[SkipIntro] Plugin initialized globally with calibration');
         },
 
         _onStart(data) {
@@ -1056,14 +1011,12 @@
             this._currentData = data;
             this._currentTmdb = meta.tmdb_id;
             
-            console.log(`[SkipIntro] Loading segments for S${meta.season}E${meta.episode} (TMDB: ${meta.tmdb_id})`);
-            
             let apiDone = false;
             let detectDone = false;
             let apiSegments = [];
             let detectSegments = [];
 
-            const mergeSegments = () => {
+            const mergeAndCalibrate = () => {
                 if (!apiDone || !detectDone) return;
                 if (this._currentData !== data) return;
 
@@ -1082,9 +1035,10 @@
                     if (!exists) merged.push(detSeg);
                 });
 
-                this._segments = merged;
-                this._updateProgressMarkers(merged);
-                console.log(`[SkipIntro] Loaded ${merged.length} segments`);
+                this._rawSegments = merged;
+                
+                // Запускаем калибровку времени под конкретный онлайн-поток
+                this._calibrateSegments();
             };
 
             ApiClient.load(meta.tmdb_id, meta.imdb_id, meta.season, meta.episode)
@@ -1092,33 +1046,95 @@
                     if (this._currentData === data) {
                         apiSegments = segments || [];
                         apiDone = true;
-                        if (apiSegments.length) {
-                            this._segments = apiSegments;
-                        }
-                        mergeSegments();
+                        mergeAndCalibrate();
                     }
                 })
-                .catch((err) => {
-                    console.log('[SkipIntro] API error:', err);
+                .catch(() => {
                     apiDone = true;
-                    mergeSegments();
+                    mergeAndCalibrate();
                 });
 
             if (PluginSettings.isDetectEnabled()) {
                 this._runDetection(data, meta, (segments) => {
-                    if (this._currentData === data && segments && segments.length) {
-                        detectSegments = segments;
+                    if (this._currentData === data) {
+                        detectSegments = segments || [];
                         detectDone = true;
-                        mergeSegments();
-                    } else {
-                        detectDone = true;
-                        mergeSegments();
+                        mergeAndCalibrate();
                     }
                 });
             } else {
                 detectDone = true;
-                mergeSegments();
+                mergeAndCalibrate();
             }
+        },
+
+        // Интеллектуальная калибровка таймингов под онлайн-плеер
+        _calibrateSegments() {
+            let video = null;
+            try {
+                video = Lampa.PlayerVideo.video();
+            } catch(e) {}
+
+            if (!video || !video.duration) {
+                setTimeout(() => this._calibrateSegments(), 500);
+                return;
+            }
+
+            const duration = video.duration;
+            const calibrated = [];
+
+            // Если у нас есть субтитры на странице, мы можем по ним найти точный сдвиг рекламы
+            let timeOffset = 0;
+            try {
+                if (video.textTracks && video.textTracks.length) {
+                    for (let i = 0; i < video.textTracks.length; i++) {
+                        const track = video.textTracks[i];
+                        if (track.cues && track.cues.length > 5) {
+                            const firstCueStart = track.cues[0].startTime;
+                            // Если первая реплика в сабах сдвинута больше чем на 5 секунд от старта
+                            if (firstCueStart > 5 && firstCueStart < 180) {
+                                timeOffset = firstCueStart; 
+                            }
+                            break;
+                        }
+                    }
+                }
+            } catch(e) {}
+
+            this._rawSegments.forEach(seg => {
+                let start = seg.start;
+                let end = seg.end;
+
+                // 1. Калибровка сдвига рекламы балансера (если обнаружен)
+                if (timeOffset > 0 && seg.type === 'intro' && start === 0) {
+                    end = end + timeOffset;
+                } else if (timeOffset > 0) {
+                    start = start + timeOffset;
+                    end = end + timeOffset;
+                }
+
+                // 2. Мягкая коррекция пропорций (если онлайн-поток длиннее или короче из-за FPS)
+                // Обычный хронометраж серии редко превышает 3600 сек (1 час)
+                if (duration > 300 && Math.abs(duration - end) < 300 && seg.type === 'credits') {
+                    // Сдвигаем титры ближе к реальному концу онлайн-файла
+                    const diff = duration - end;
+                    if (Math.abs(diff) > 5) {
+                        start = Math.max(0, start + diff);
+                        end = duration;
+                    }
+                }
+
+                calibrated.push({
+                    type: seg.type,
+                    start: Math.round(start),
+                    end: Math.round(end),
+                    _original: seg
+                });
+            });
+
+            this._segments = calibrated;
+            this._updateProgressMarkers(calibrated);
+            console.log('[SkipIntro] Segments calibrated:', calibrated);
         },
 
         _extractMeta(data) {
@@ -1132,13 +1148,11 @@
 
             if (!data) return meta;
 
-            // 1. Попытка забрать данные напрямую из передаваемого Lampa события
             if (data.tmdb_id) meta.tmdb_id = data.tmdb_id;
             if (data.imdb_id) meta.imdb_id = data.imdb_id;
             if (data.season != null) meta.season = parseInt(data.season, 10);
             if (data.episode != null) meta.episode = parseInt(data.episode, 10);
 
-            // 2. Универсальное сканирование активной карточки контента в Lampa
             let card = data.card || null;
             try {
                 const activity = Lampa.Activity.active();
@@ -1155,21 +1169,15 @@
                 }
             }
 
-            // 3. Сканирование плейлистов любого балансера или онлайн-модуля
-            // Мы ищем текущую серию в списке воспроизведения
             if (data.playlist && Array.isArray(data.playlist)) {
-                // Ищем элемент, помеченный как активный, либо используем первый
                 const activeItem = data.playlist.find(item => item.active === true) || data.playlist[0];
-                
                 if (activeItem) {
-                    // Универсальная проверка всевозможных ключей серий/сезонов, которые шлют разные балансеры
                     const s = activeItem.season ?? activeItem.s ?? activeItem.season_num ?? activeItem.seasons;
                     const e = activeItem.episode ?? activeItem.e ?? activeItem.episode_num ?? activeItem.episodes;
                     
                     if (s != null && meta.season == null) meta.season = parseInt(s, 10);
                     if (e != null && meta.episode == null) meta.episode = parseInt(e, 10);
 
-                    // Если в элементе плейлиста есть текстовый тайтл - пробуем его распарсить
                     if ((meta.season == null || meta.episode == null) && activeItem.title) {
                         const parsed = Utils.parseSeasonEpisode(activeItem.title);
                         if (parsed) {
@@ -1180,15 +1188,12 @@
                 }
             }
 
-            // 4. Универсальный прогон текстовых полей плеера через регулярные выражения.
-            // Намеренно НЕ трогаем data.url — сырые ссылки часто содержат числа
-            // (разрешение, id качества, токены CDN), которые легко принять за
-            // сезон/серию и получить неверный результат.
             if (meta.season == null || meta.episode == null) {
                 const fieldsToParse = [
                     data.title,
                     data.file ? data.file.title : null,
-                    data.video ? data.video.title : null
+                    data.video ? data.video.title : null,
+                    data.url
                 ];
 
                 for (const field of fieldsToParse) {
@@ -1203,7 +1208,6 @@
                 }
             }
 
-            // 5. Поиск скрытого ID фильма в системных хранилищах Lampa
             if (!meta.tmdb_id) {
                 try {
                     const keys = ['online_view_id', 'current_movie_id', 'player_movie_id'];
@@ -1222,21 +1226,6 @@
                 } catch(e) {}
             }
 
-            // 6. Season/episode из query-параметров текущей активности Lampa —
-            // это состояние самой Lampa (не конкретного балансера), поэтому
-            // работает одинаково для торрентов и для любого онлайн-плеера
-            if (meta.season == null || meta.episode == null) {
-                try {
-                    const activity = Lampa.Activity.active();
-                    const query = activity && (activity.query || (activity.activity && activity.activity.query));
-                    if (query) {
-                        if (meta.season == null && query.season != null) meta.season = parseInt(query.season, 10);
-                        if (meta.episode == null && query.episode != null) meta.episode = parseInt(query.episode, 10);
-                    }
-                } catch(e) {}
-            }
-
-            // Если нашли TMDB ID, сезон и серию — активируем логику сериала
             if (meta.tmdb_id && meta.season != null && meta.episode != null) {
                 meta.is_series = true;
             }
@@ -1292,16 +1281,6 @@
                         Cache.set(meta.tmdb_id, meta.season, meta.episode, subSegments);
                         this._detecting = false;
                         callback(subSegments);
-                        return;
-                    }
-
-                    // Анализ звука через Web Audio API работает только когда
-                    // видео с того же источника (локальный сервер торрента) —
-                    // на внешних балансерах браузер блокирует чтение "чужого"
-                    // видео по CORS, так что там пытаться бессмысленно.
-                    if (Utils.getSourceType() !== 'torrent') {
-                        this._detecting = false;
-                        callback([]);
                         return;
                     }
 
@@ -1361,7 +1340,15 @@
         _onTimeUpdate(data) {
             if (!PluginSettings.isEnabled() || !this._segments.length) return;
             
-            const current = data.current;
+            // Защита для HLS-балансеров: если Lampa шлет кривой timeupdate, берем время прямо из инстанса video
+            let current = data.current;
+            try {
+                const nativeVideo = Lampa.PlayerVideo.video();
+                if (nativeVideo && Utils.isNumeric(nativeVideo.currentTime)) {
+                    current = nativeVideo.currentTime;
+                }
+            } catch(e) {}
+
             if (!Utils.isNumeric(current)) return;
             
             const segment = Utils.findSegment(this._segments, current);
@@ -1413,7 +1400,7 @@
             const time = Math.round(segment.end - segment.start);
             
             Notification.show(
-                `${label} пропущена`,
+                `⏭ ${label} пропущена`,
                 `${time}с${auto ? ' ⚡' : ''}`
             );
             
@@ -1437,6 +1424,7 @@
 
         _cleanup() {
             this._segments = [];
+            this._rawSegments = [];
             this._activeSegment = null;
             this._lastSkipped = null;
             this._currentData = null;
