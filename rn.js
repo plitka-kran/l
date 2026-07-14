@@ -20,7 +20,7 @@
         'pubtorr.js': '1.0',
         'ss.js': '1.0.1',
         'playlist.js': '1.0.33',
-        'skipintro.js': '1.0.30',
+        'skipintro.js': '1.0.31',
         'audio.js': '1.0.11'
 	};
 
