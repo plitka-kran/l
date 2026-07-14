@@ -9,10 +9,6 @@
         API_URL: 'https://api.introdb.app',
         THEINTRODB_URL: 'https://api.theintrodb.org/v2/media',
         CACHE_TTL: 7 * 24 * 60 * 60 * 1000,
-        INTRO_MAX_START: 150,
-        INTRO_MAX_END: 300,
-        CREDITS_MIN_GAP: 30,
-        MIN_SUBTITLES: 5,
         NOTIFICATION_DURATION: 3000
     };
 
@@ -47,6 +43,13 @@
             } catch(e) {}
             const el = document.querySelector('video');
             return el && el.tagName === 'VIDEO' ? el : null;
+        },
+        getDuration() {
+            try {
+                const v = this.getVideo();
+                if (v && v.duration) return v.duration;
+            } catch(e) {}
+            return 0;
         }
     };
 
@@ -117,73 +120,78 @@
     // ===== МАРКЕРЫ =====
     const Marker = {
         _container: null,
-        _markers: null,
+        _wrap: null,
 
         init() {
-            const selectors = ['.player-progress', '.video-progress', '.progress-bar', '.seek-bar', '.timeline'];
+            // Ищем прогресс-бар
+            const selectors = [
+                '.player-progress', '.video-progress', '.progress-bar', 
+                '.seek-bar', '.timeline', '.player-timeline'
+            ];
             for (const s of selectors) {
                 const el = document.querySelector(s);
                 if (el) { this._container = el; break; }
             }
             if (!this._container) return;
 
-            this._markers = this._container.querySelector('.skip-intro-markers');
-            if (!this._markers) {
-                this._markers = document.createElement('div');
-                this._markers.className = 'skip-intro-markers';
-                this._markers.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10';
+            // Создаем контейнер для маркеров
+            this._wrap = this._container.querySelector('.skip-intro-markers');
+            if (!this._wrap) {
+                this._wrap = document.createElement('div');
+                this._wrap.className = 'skip-intro-markers';
+                this._wrap.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10';
                 this._container.style.position = 'relative';
-                this._container.appendChild(this._markers);
+                this._container.appendChild(this._wrap);
             }
-            this._injectStyles();
-        },
-
-        _injectStyles() {
-            if (document.getElementById('skip-intro-styles')) return;
-            const style = document.createElement('style');
-            style.id = 'skip-intro-styles';
-            style.textContent = `
-                .skip-intro-marker {
-                    position:absolute;top:50%;transform:translateY(-50%);
-                    height:70%;border-radius:3px;min-width:4px;opacity:0.6;
-                    pointer-events:none;z-index:5;transition:all .3s;
-                }
-                .skip-intro-marker-intro { background:rgba(76,175,80,0.8); border:1px solid #4CAF50; }
-                .skip-intro-marker-recap { background:rgba(255,152,0,0.8); border:1px solid #FF9800; }
-                .skip-intro-marker-credits { background:rgba(33,150,243,0.8); border:1px solid #2196F3; }
-                .skip-intro-marker-preview { background:rgba(156,39,176,0.8); border:1px solid #9C27B0; }
-                .skip-intro-marker.active {
-                    opacity:0.9 !important;height:100% !important;
-                    animation:pulse 1s infinite;
-                }
-                @keyframes pulse { 0%,100%{opacity:0.6} 50%{opacity:1} }
-            `;
-            document.head.appendChild(style);
+            
+            // Стили
+            if (!document.getElementById('skip-intro-styles')) {
+                const style = document.createElement('style');
+                style.id = 'skip-intro-styles';
+                style.textContent = `
+                    .skip-intro-marker {
+                        position:absolute;top:50%;transform:translateY(-50%);
+                        height:70%;border-radius:2px;min-width:3px;opacity:0.6;
+                        pointer-events:none;z-index:5;transition:all .3s;
+                    }
+                    .skip-intro-marker-intro { background:rgba(76,175,80,0.8); }
+                    .skip-intro-marker-recap { background:rgba(255,152,0,0.8); }
+                    .skip-intro-marker-credits { background:rgba(33,150,243,0.8); }
+                    .skip-intro-marker-preview { background:rgba(156,39,176,0.8); }
+                    .skip-intro-marker.active {
+                        opacity:0.9 !important;
+                        height:100% !important;
+                        box-shadow:0 0 15px rgba(255,255,255,0.3);
+                    }
+                `;
+                document.head.appendChild(style);
+            }
         },
 
         update(segments, duration) {
-            if (!this._markers || !segments || !duration) return;
-            this._markers.innerHTML = '';
+            if (!this._wrap || !segments || !duration) return;
+            this._wrap.innerHTML = '';
+            
             segments.forEach(s => {
-                const l = (s.start / duration) * 100;
-                const w = Math.max(((s.end - s.start) / duration) * 100, 0.5);
+                const left = (s.start / duration) * 100;
+                const width = Math.max(((s.end - s.start) / duration) * 100, 0.5);
+                if (width <= 0) return;
+                
                 const el = document.createElement('div');
                 el.className = `skip-intro-marker skip-intro-marker-${s.type}`;
-                el.style.cssText = `left:${Math.min(l,100)}%;width:${Math.min(w,100-l)}%;`;
-                this._markers.appendChild(el);
+                el.style.cssText = `left:${Math.min(left, 100)}%;width:${Math.min(width, 100 - left)}%;`;
+                this._wrap.appendChild(el);
             });
         },
 
         highlight(segment) {
-            if (!this._markers) return;
-            const els = this._markers.querySelectorAll('.skip-intro-marker');
-            els.forEach(el => el.classList.remove('active'));
+            if (!this._wrap) return;
+            const items = this._wrap.querySelectorAll('.skip-intro-marker');
+            items.forEach(el => el.classList.remove('active'));
             if (segment) {
-                const idx = this._markers.children.length - 1;
-                for (let i = 0; i < this._markers.children.length; i++) {
-                    const el = this._markers.children[i];
-                    const type = el.className.match(/skip-intro-marker-(\w+)/);
-                    if (type && type[1] === segment.type) {
+                const type = segment.type;
+                for (const el of items) {
+                    if (el.className.includes(`skip-intro-marker-${type}`)) {
                         el.classList.add('active');
                         break;
                     }
@@ -192,9 +200,9 @@
         },
 
         destroy() {
-            if (this._markers) this._markers.innerHTML = '';
+            if (this._wrap) this._wrap.innerHTML = '';
             this._container = null;
-            this._markers = null;
+            this._wrap = null;
         }
     };
 
@@ -214,10 +222,19 @@
                 border:1px solid rgba(255,255,255,0.15);box-shadow:0 8px 32px rgba(0,0,0,0.6);
                 display:flex;align-items:center;gap:10px;
             `;
-            el.innerHTML = `<span>⏭</span><span>${text}</span>${badge ? `<span style="font-size:13px;opacity:0.7;background:rgba(255,255,255,0.1);padding:2px 10px;border-radius:20px">${badge}</span>` : ''}`;
+            el.innerHTML = `
+                <span>⏭</span>
+                <span>${text}</span>
+                ${badge ? `<span style="font-size:13px;opacity:0.7;background:rgba(255,255,255,0.1);padding:2px 10px;border-radius:20px">${badge}</span>` : ''}
+            `;
             document.body.appendChild(el);
             this._el = el;
-            requestAnimationFrame(() => { el.style.opacity = '1'; el.style.transform = 'translateX(-50%) translateY(0)'; });
+            
+            requestAnimationFrame(() => {
+                el.style.opacity = '1';
+                el.style.transform = 'translateX(-50%) translateY(0)';
+            });
+            
             this._timer = setTimeout(() => this.hide(), C.NOTIFICATION_DURATION);
         },
 
@@ -226,7 +243,12 @@
             if (this._el) {
                 this._el.style.opacity = '0';
                 this._el.style.transform = 'translateX(-50%) translateY(-20px)';
-                setTimeout(() => { if (this._el && this._el.parentNode) this._el.parentNode.removeChild(this._el); this._el = null; }, 400);
+                setTimeout(() => {
+                    if (this._el && this._el.parentNode) {
+                        this._el.parentNode.removeChild(this._el);
+                    }
+                    this._el = null;
+                }, 400);
             }
         },
 
@@ -239,7 +261,10 @@
             return new Promise((resolve, reject) => {
                 const xhr = new XMLHttpRequest();
                 let done = false;
-                const timer = setTimeout(() => { if (!done) { done = true; xhr.abort(); reject('timeout'); } }, 5000);
+                const timer = setTimeout(() => {
+                    if (!done) { done = true; xhr.abort(); reject('timeout'); }
+                }, 5000);
+                
                 xhr.open('GET', url, true);
                 xhr.setRequestHeader('Accept', 'application/json');
                 xhr.onreadystatechange = () => {
@@ -251,18 +276,22 @@
                         } else { resolve(null); }
                     }
                 };
-                xhr.onerror = () => { if (!done) { done = true; clearTimeout(timer); reject('network'); } };
+                xhr.onerror = () => {
+                    if (!done) { done = true; clearTimeout(timer); reject('network'); }
+                };
                 xhr.send();
             });
         },
 
         async load(tmdbId, imdbId, season, episode) {
             if (!tmdbId || season == null || episode == null) return [];
+            
             const cached = Cache.get(tmdbId, season, episode);
             if (cached) return cached;
 
             let segments = [];
 
+            // TheIntroDB
             try {
                 const data = await this._fetch(`${C.THEINTRODB_URL}?tmdb_id=${tmdbId}&season=${season}&episode=${episode}`);
                 if (data) {
@@ -271,24 +300,32 @@
                             data[type].forEach(item => {
                                 const s = item.start_ms ? item.start_ms / 1000 : (item.start || 0);
                                 const e = item.end_ms ? item.end_ms / 1000 : (item.end || 0);
-                                if (e > s && s >= 0) segments.push({ type, start: Math.round(s), end: Math.round(e) });
+                                if (e > s && s >= 0) {
+                                    segments.push({ type, start: Math.round(s), end: Math.round(e) });
+                                }
                             });
                         }
                     });
                 }
             } catch(e) {}
 
+            // IntroDB
             if (!segments.length) {
                 try {
                     const [intro, credits] = await Promise.all([
                         this._fetch(`${C.API_URL}/get_intros?tmdb=${tmdbId}&season=${season}&episode=${episode}`).catch(() => null),
                         this._fetch(`${C.API_URL}/get_credits?tmdb=${tmdbId}&season=${season}&episode=${episode}`).catch(() => null)
                     ]);
-                    if (intro && intro.start && intro.end) segments.push({ type: 'intro', start: Math.round(intro.start), end: Math.round(intro.end) });
-                    if (credits && credits.start && credits.end) segments.push({ type: 'credits', start: Math.round(credits.start), end: Math.round(credits.end) });
+                    if (intro && intro.start && intro.end) {
+                        segments.push({ type: 'intro', start: Math.round(intro.start), end: Math.round(intro.end) });
+                    }
+                    if (credits && credits.start && credits.end) {
+                        segments.push({ type: 'credits', start: Math.round(credits.start), end: Math.round(credits.end) });
+                    }
                 } catch(e) {}
             }
 
+            // IntroHater
             if (!segments.length && imdbId) {
                 try {
                     const data = await this._fetch(`https://introhater.com/api/segments/${imdbId}:${season}:${episode}`);
@@ -309,23 +346,22 @@
 
             if (segments.length) {
                 Cache.set(tmdbId, season, episode, segments);
-                return segments;
             }
-            return [];
+            return segments;
         }
     };
 
     // ===== ОСНОВНОЙ ПЛАГИН =====
     const Plugin = {
         _segments: [],
-        _active: null,
-        _last: null,
+        _lastSkipped: null,
         _data: null,
         _init: false,
 
         init() {
             if (this._init) return;
             this._init = true;
+            
             Settings.init();
             Marker.init();
 
@@ -335,17 +371,22 @@
             if (Lampa.PlayerVideo && Lampa.PlayerVideo.listener) {
                 Lampa.PlayerVideo.listener.follow('timeupdate', (data) => {
                     if (!Settings.isEnabled() || !this._segments.length) return;
+                    
                     const current = data.current;
-                    if (!current && current !== 0) return;
+                    if (current == null) return;
+                    
                     const seg = U.findSegment(this._segments, current);
                     Marker.highlight(seg);
-                    if (seg && Settings.isAutoSkip() && Settings.isTypeEnabled(seg.type) && this._last !== seg) {
-                        this._skip(seg);
+                    
+                    if (seg && Settings.isAutoSkip() && Settings.isTypeEnabled(seg.type)) {
+                        if (this._lastSkipped !== seg) {
+                            this._skip(seg);
+                        }
                     }
                 });
             }
 
-            console.log('[SkipIntro] Torrent-only version loaded');
+            console.log('[SkipIntro] Torrent version loaded');
         },
 
         _onStart(data) {
@@ -375,11 +416,13 @@
         _getMeta(data) {
             const meta = { tmdb_id: null, imdb_id: null, season: null, episode: null };
 
+            // Из данных плеера
             if (data.tmdb_id) meta.tmdb_id = data.tmdb_id;
             if (data.imdb_id) meta.imdb_id = data.imdb_id;
             if (data.season != null) meta.season = parseInt(data.season);
             if (data.episode != null) meta.episode = parseInt(data.episode);
 
+            // Из карточки
             if (!meta.tmdb_id || meta.season == null || meta.episode == null) {
                 try {
                     const card = Lampa.Activity.active()?.card || null;
@@ -390,14 +433,18 @@
                 } catch(e) {}
             }
 
+            // Из плейлиста
             if (data.playlist && Array.isArray(data.playlist)) {
                 const url = data.url || '';
                 for (const item of data.playlist) {
-                    if (item.url === url || !url) {
+                    const itemUrl = typeof item.url === 'string' ? item.url : '';
+                    if (itemUrl === url || item.active === true) {
                         if (item.season != null && meta.season == null) meta.season = parseInt(item.season);
                         if (item.episode != null && meta.episode == null) meta.episode = parseInt(item.episode);
                         if (item.s != null && meta.season == null) meta.season = parseInt(item.s);
                         if (item.e != null && meta.episode == null) meta.episode = parseInt(item.e);
+                        if (item.season_num != null && meta.season == null) meta.season = parseInt(item.season_num);
+                        if (item.episode_num != null && meta.episode == null) meta.episode = parseInt(item.episode_num);
                         break;
                     }
                 }
@@ -407,39 +454,33 @@
         },
 
         _updateMarkers(segments) {
-            let duration = 0;
-            try {
-                const v = U.getVideo();
-                if (v) duration = v.duration;
-            } catch(e) {}
+            const duration = U.getDuration();
             if (duration > 0) {
                 Marker.update(segments, duration);
-            } else {
-                let attempts = 0;
-                const check = () => {
-                    attempts++;
-                    try {
-                        const v = U.getVideo();
-                        if (v && v.duration) {
-                            Marker.update(segments, v.duration);
-                        } else if (attempts < 20) {
-                            setTimeout(check, 500);
-                        }
-                    } catch(e) { if (attempts < 20) setTimeout(check, 500); }
-                };
-                check();
+                return;
             }
+            
+            let attempts = 0;
+            const check = () => {
+                attempts++;
+                const dur = U.getDuration();
+                if (dur > 0) {
+                    Marker.update(segments, dur);
+                } else if (attempts < 20) {
+                    setTimeout(check, 500);
+                }
+            };
+            check();
         },
 
         _skip(seg) {
-            this._last = seg;
-            this._active = null;
-
+            this._lastSkipped = seg;
+            
             const labels = { intro: 'Заставка', recap: 'Рекап', credits: 'Титры', preview: 'Превью' };
             const label = labels[seg.type] || seg.type;
-            Notify.show(`⏭ ${label} пропущена`, `${Math.round(seg.end - seg.start)}с ⚡`);
+            Notify.show(`⏭ ${label} пропущена`, `${Math.round(seg.end - seg.start)}с`);
 
-            const target = Math.min(seg.end, U.getVideo()?.duration || seg.end);
+            const target = Math.min(seg.end, U.getDuration() || seg.end);
             try {
                 const v = U.getVideo();
                 if (v) v.currentTime = target;
@@ -448,8 +489,7 @@
 
         _cleanup() {
             this._segments = [];
-            this._active = null;
-            this._last = null;
+            this._lastSkipped = null;
             this._data = null;
             Notify.destroy();
         },
@@ -470,7 +510,9 @@
     }
 
     if (window.Lampa?.Listener) {
-        Lampa.Listener.follow('app', (data) => { if (data.type === 'ready') init(); });
+        Lampa.Listener.follow('app', (data) => {
+            if (data.type === 'ready') init();
+        });
     }
 
     setTimeout(init, 1000);
