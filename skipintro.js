@@ -1484,7 +1484,7 @@
             const time = Math.round(segment.end - segment.start);
             
             Notification.show(
-                `⏭ ${label} пропущена`,
+                `${label} пропущена`,
                 `${time}с${auto ? ' ⚡' : ''}`,
                 false
             );
