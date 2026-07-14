@@ -81,71 +81,33 @@
             return null;
         },
 
-        getVideoElement() {
-            try {
-                const video = Lampa.PlayerVideo.video();
-                if (video && video.tagName === 'VIDEO') return video;
-            } catch(e) {}
-            
-            const selectors = ['video', '.player video', '#player video', '[data-video]'];
-            for (const selector of selectors) {
-                const el = document.querySelector(selector);
-                if (el && el.tagName === 'VIDEO') return el;
+        // Универсальный парсер номеров сезона и серии из любых текстовых строк
+        parseSeasonEpisode(text) {
+            if (!text || typeof text !== 'string') return null;
+
+            // Шаблоны: "S01E05", "s1e5", "S01.E05"
+            let match = text.match(/[Ss](\d+)\s*[Ee](\d+)/);
+            if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
+
+            // Шаблоны: "1x05", "01x05"
+            match = text.match(/(\d+)\s*[xX]\s*(\d+)/);
+            if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
+
+            // Русскоязычные шаблоны: "1 сезон 5 серия", "сезон 1 серия 5"
+            match = text.match(/(?:сезон)?\s*(\d+)\s*(?:сезон\w*|серии\w*)?\s*(?:серия|эпизод)?\s*(\d+)\s*(?:сери\w*|эпизод\w*)?/i);
+            if (match && match[1] && match[2]) {
+                return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
             }
+
+            // Упрощенный поиск цифр: "EP 05", "Episode 5" (сезон считаем первым, если не найден)
+            match = text.match(/(?:ep|episode|серия|эпизод)\s*(\d+)/i);
+            if (match) return { season: 1, episode: parseInt(match[1], 10) };
+
             return null;
-        },
-
-        getPlayerDuration() {
-            try {
-                const video = this.getVideoElement();
-                if (video && video.duration && isFinite(video.duration)) {
-                    return video.duration;
-                }
-            } catch(e) {}
-            
-            try {
-                const duration = Lampa.PlayerVideo.duration();
-                if (duration && isFinite(duration)) return duration;
-            } catch(e) {}
-            
-            return 0;
-        },
-
-        getCurrentTime() {
-            try {
-                const video = this.getVideoElement();
-                if (video && video.currentTime && isFinite(video.currentTime)) {
-                    return video.currentTime;
-                }
-            } catch(e) {}
-            
-            try {
-                const time = Lampa.PlayerVideo.time();
-                if (time && isFinite(time)) return time;
-            } catch(e) {}
-            
-            return 0;
-        },
-
-        seekTo(time) {
-            try {
-                const video = this.getVideoElement();
-                if (video && isFinite(time)) {
-                    video.currentTime = time;
-                    return true;
-                }
-            } catch(e) {}
-            
-            try {
-                Lampa.PlayerVideo.seek(time);
-                return true;
-            } catch(e) {}
-            
-            return false;
         }
     };
 
-    // ===== УПРАВЛЕНИЕ НАСТРОЙКАМИ =====
+    // ===== УПРАВЛЕНИЕ ПЛАГИНОМ =====
     const PluginSettings = {
         isEnabled() {
             return Utils.getStorage('skip_intro_enabled', true) !== false;
@@ -171,13 +133,13 @@
             });
 
             const params = [
-                { name: 'skip_intro_enabled', type: 'trigger', default: true, label: 'Включить плагин' },
-                { name: 'skip_intro_auto', type: 'trigger', default: true, label: 'Автоматический пропуск' },
-                { name: 'skip_intro_detect', type: 'trigger', default: true, label: 'Умное обнаружение' },
-                { name: 'skip_intro_type_intro', type: 'trigger', default: true, label: 'Пропускать заставку' },
-                { name: 'skip_intro_type_recap', type: 'trigger', default: true, label: 'Пропускать рекап' },
-                { name: 'skip_intro_type_credits', type: 'trigger', default: true, label: 'Пропускать титры' },
-                { name: 'skip_intro_type_preview', type: 'trigger', default: false, label: 'Пропускать превью' }
+                { name: 'skip_intro_enabled', type: 'trigger', default: true, label: 'Включить плагин', desc: 'Показывать уведомления о пропуске' },
+                { name: 'skip_intro_auto', type: 'trigger', default: true, label: 'Автопропуск', desc: 'Автоматически пропускать заставки' },
+                { name: 'skip_intro_detect', type: 'trigger', default: true, label: 'Умное обнаружение', desc: 'Определять по субтитрам и звуку' },
+                { name: 'skip_intro_type_intro', type: 'trigger', default: true, label: 'Пропускать заставку (intro)' },
+                { name: 'skip_intro_type_recap', type: 'trigger', default: true, label: 'Пропускать рекап (recap)' },
+                { name: 'skip_intro_type_credits', type: 'trigger', default: true, label: 'Пропускать титры (credits)' },
+                { name: 'skip_intro_type_preview', type: 'trigger', default: false, label: 'Пропускать превью (preview)' }
             ];
 
             params.forEach(p => {
@@ -193,73 +155,57 @@
     // ===== КЭШИРОВАНИЕ =====
     const Cache = {
         _storageKey: 'skip_intro_cache',
-        _smartKey: 'skip_intro_smart',
+        _data: null,
 
-        getKey(tmdbId, season, episode) {
-            return `${tmdbId}_s${season}_e${episode}`;
+        _load() {
+            if (this._data) return this._data;
+            try {
+                const raw = Lampa.Storage.get(this._storageKey, '{}');
+                this._data = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                return this._data || {};
+            } catch(e) {
+                this._data = {};
+                return this._data;
+            }
+        },
+
+        _save() {
+            try {
+                Lampa.Storage.set(this._storageKey, JSON.stringify(this._data || {}));
+            } catch(e) {}
         },
 
         get(tmdbId, season, episode) {
-            try {
-                const key = this.getKey(tmdbId, season, episode);
-                const data = Lampa.Storage.get(this._storageKey, {});
-                const entry = data[key];
-                if (entry && entry._ts && Date.now() - entry._ts < CONFIG.CACHE_TTL) {
-                    return entry.segments || null;
-                }
-                if (entry) {
-                    delete data[key];
-                    Lampa.Storage.set(this._storageKey, data);
-                }
-                return null;
-            } catch(e) {
-                return null;
+            const key = `${tmdbId}_s${season}_e${episode}`;
+            const data = this._load();
+            const entry = data[key];
+            if (entry && entry._ts && Date.now() - entry._ts < CONFIG.CACHE_TTL) {
+                return entry.segments || null;
             }
+            if (entry) {
+                delete data[key];
+                this._save();
+            }
+            return null;
         },
 
         set(tmdbId, season, episode, segments) {
-            try {
-                const key = this.getKey(tmdbId, season, episode);
-                const data = Lampa.Storage.get(this._storageKey, {});
-                data[key] = {
-                    segments: segments,
-                    _ts: Date.now()
-                };
-                Lampa.Storage.set(this._storageKey, data);
-            } catch(e) {}
+            const key = `${tmdbId}_s${season}_e${episode}`;
+            const data = this._load();
+            data[key] = {
+                segments: segments,
+                _ts: Date.now()
+            };
+            this._save();
         },
 
         clear() {
-            Lampa.Storage.set(this._storageKey, {});
-        },
-
-        hasSkipped(tmdbId, type) {
-            try {
-                const data = Lampa.Storage.get(this._smartKey, {});
-                return data[`${tmdbId}_${type}`] === true;
-            } catch(e) {
-                return false;
-            }
-        },
-
-        rememberSkip(tmdbId, type) {
-            try {
-                const data = Lampa.Storage.get(this._smartKey, {});
-                data[`${tmdbId}_${type}`] = true;
-                Lampa.Storage.set(this._smartKey, data);
-            } catch(e) {}
-        },
-
-        forgetSkip(tmdbId, type) {
-            try {
-                const data = Lampa.Storage.get(this._smartKey, {});
-                delete data[`${tmdbId}_${type}`];
-                Lampa.Storage.set(this._smartKey, data);
-            } catch(e) {}
+            this._data = {};
+            this._save();
         }
     };
 
-    // ===== МАРКЕРЫ ПРОГРЕСС-БАРА =====
+    // ===== ВИЗУАЛЬНАЯ РАЗМЕТКА ПРОГРЕСС-БАРА =====
     const ProgressMarker = {
         _container: null,
         _markersContainer: null,
@@ -267,23 +213,12 @@
 
         init() {
             this._findProgressBar();
-            this._injectStyles();
         },
 
         _findProgressBar() {
             const selectors = [
-                '.player-progress',
-                '.video-progress',
-                '.progress-bar',
-                '.progress',
-                '.seek-bar',
-                '.timeline',
-                '.player-timeline',
-                '[class*="progress"]',
-                '[class*="timeline"]',
-                '.vjs-progress-holder',
-                '.vjs-slider',
-                '.jw-progress'
+                '.player-progress', '.video-progress', '.progress-bar', '.progress', 
+                '.seek-bar', '.timeline', '.player-timeline', '[class*="progress"]', '[class*="timeline"]'
             ];
 
             for (const selector of selectors) {
@@ -296,12 +231,10 @@
 
             if (!this._container) {
                 try {
-                    const player = document.querySelector('.player, .video-js, .jwplayer');
+                    const player = document.querySelector('.player');
                     if (player) {
                         const progress = player.querySelector('[class*="progress"]') || 
-                                       player.querySelector('[class*="timeline"]') ||
-                                       player.querySelector('.vjs-progress-holder') ||
-                                       player.querySelector('.jw-progress');
+                                       player.querySelector('[class*="timeline"]');
                         if (progress) this._container = progress;
                     }
                 } catch(e) {}
@@ -323,12 +256,12 @@
                     z-index: 10;
                     overflow: visible;
                 `;
-                if (this._container.style.position === 'static' || !this._container.style.position) {
-                    this._container.style.position = 'relative';
-                }
+                this._container.style.position = 'relative';
                 this._container.appendChild(markersContainer);
             }
             this._markersContainer = markersContainer;
+            
+            this._injectStyles();
         },
 
         _injectStyles() {
@@ -337,9 +270,6 @@
             const style = document.createElement('style');
             style.id = 'skip-intro-marker-styles';
             style.textContent = `
-                .skip-intro-markers {
-                    pointer-events: none !important;
-                }
                 .skip-intro-marker {
                     position: absolute;
                     top: 50%;
@@ -347,7 +277,7 @@
                     height: 70%;
                     border-radius: 3px;
                     transition: all 0.3s ease;
-                    pointer-events: none !important;
+                    pointer-events: none;
                     min-width: 4px;
                     opacity: 0.6;
                     z-index: 5;
@@ -400,13 +330,19 @@
             
             const marker = document.createElement('div');
             marker.className = `skip-intro-marker skip-intro-marker-${type}`;
-            marker.dataset.type = type;
-            marker.dataset.start = start;
-            marker.dataset.end = end;
-            
             marker.style.cssText = `
-                left: ${Math.min(startPercent, 100)}%;
-                width: ${Math.min(width, 100 - startPercent)}%;
+                position: absolute;
+                top: 50%;
+                transform: translateY(-50%);
+                left: ${startPercent}%;
+                width: ${width}%;
+                height: 70%;
+                border-radius: 3px;
+                transition: all 0.3s ease;
+                pointer-events: none;
+                min-width: 4px;
+                opacity: 0.6;
+                z-index: 5;
             `;
             
             this._markersContainer.appendChild(marker);
@@ -415,7 +351,7 @@
 
         updateMarkers(segments, duration) {
             this.clear();
-            if (!segments || !segments.length || !duration || duration < 60) return;
+            if (!segments || !segments.length || !duration) return;
             
             if (!this._container || !this._markersContainer) {
                 this._findProgressBar();
@@ -435,8 +371,7 @@
             markers.forEach((marker) => {
                 const data = this._markers.find(m => m.element === marker);
                 if (data && segment && data.type === segment.type && 
-                    Math.abs(data.start - segment.start) < 1 && 
-                    Math.abs(data.end - segment.end) < 1) {
+                    data.start === segment.start && data.end === segment.end) {
                     marker.classList.add('active');
                 } else {
                     marker.classList.remove('active');
@@ -456,7 +391,7 @@
         }
     };
 
-    // ===== УВЕДОМЛЕНИЕ =====
+    // ===== УВЕДОМЛЕНИЕ ПО ЦЕНТРУ ВВЕРХУ =====
     const Notification = {
         _element: null,
         _timer: null,
@@ -509,21 +444,6 @@
                     margin-left: 10px;
                     font-size: 13px;
                     opacity: 0.6;
-                    font-weight: 400;
-                }
-                .skip-intro-notification .progress-ring {
-                    display: inline-block;
-                    margin-left: 14px;
-                    width: 20px;
-                    height: 20px;
-                    border: 2px solid rgba(255,255,255,0.2);
-                    border-top-color: #4CAF50;
-                    border-radius: 50%;
-                    animation: skip-intro-spin 0.8s linear infinite;
-                    vertical-align: middle;
-                }
-                @keyframes skip-intro-spin {
-                    to { transform: rotate(360deg); }
                 }
                 @media (max-width: 720px) {
                     .skip-intro-notification {
@@ -537,7 +457,7 @@
             document.head.appendChild(style);
         },
 
-        show(text, badge, showProgress, duration) {
+        show(text, badge) {
             this._injectStyles();
             this.hide();
 
@@ -561,12 +481,6 @@
                 el.appendChild(badgeEl);
             }
 
-            if (showProgress) {
-                const progress = document.createElement('span');
-                progress.className = 'progress-ring';
-                el.appendChild(progress);
-            }
-
             document.body.appendChild(el);
             this._element = el;
 
@@ -576,7 +490,7 @@
 
             this._timer = setTimeout(() => {
                 this.hide();
-            }, duration || CONFIG.NOTIFICATION_DURATION);
+            }, CONFIG.NOTIFICATION_DURATION);
         },
 
         hide() {
@@ -618,7 +532,7 @@
                         }
                     }
 
-                    const subs = Lampa.PlayerVideo.subtitles ? 
+                    const subs = Lampa.PlayerVideo && Lampa.PlayerVideo.subtitles ? 
                         Lampa.PlayerVideo.subtitles() : null;
                     if (subs && subs.length) {
                         for (let i = 0; i < subs.length; i++) {
@@ -907,7 +821,7 @@
         }
     };
 
-    // ===== API КЛИЕНТ =====
+    // ===== API ЗАПРОСЫ =====
     const ApiClient = {
         _fetch(url, timeout) {
             return new Promise((resolve, reject) => {
@@ -955,29 +869,45 @@
         },
 
         async load(tmdbId, imdbId, season, episode) {
-            if (!tmdbId || season == null || episode == null) return [];
-
             const cached = Cache.get(tmdbId, season, episode);
             if (cached) return cached;
-
-            const segments = [];
 
             try {
                 const url = `${CONFIG.THEINTRODB_URL}?tmdb_id=${tmdbId}&season=${season}&episode=${episode}`;
                 const data = await this._fetch(url);
-                const parsed = this._parseTheIntroDB(data);
-                if (parsed.length) segments.push(...parsed);
+                const segments = this._parseTheIntroDB(data);
+                if (segments.length) {
+                    Cache.set(tmdbId, season, episode, segments);
+                    return segments;
+                }
             } catch(e) {}
 
             try {
-                const url = `${CONFIG.API_URL}/get_intros?tmdb=${tmdbId}&season=${season}&episode=${episode}`;
-                const data = await this._fetch(url);
-                if (data && data.start && data.end) {
+                const url1 = `${CONFIG.API_URL}/get_intros?tmdb=${tmdbId}&season=${season}&episode=${episode}`;
+                const url2 = `${CONFIG.API_URL}/get_credits?tmdb=${tmdbId}&season=${season}&episode=${episode}`;
+                const [intro, credits] = await Promise.all([
+                    this._fetch(url1).catch(() => null),
+                    this._fetch(url2).catch(() => null)
+                ]);
+                
+                const segments = [];
+                if (intro && intro.start && intro.end) {
                     segments.push({
                         type: 'intro',
-                        start: Math.round(data.start),
-                        end: Math.round(data.end)
+                        start: Math.round(intro.start),
+                        end: Math.round(intro.end)
                     });
+                }
+                if (credits && credits.start && credits.end) {
+                    segments.push({
+                        type: 'credits',
+                        start: Math.round(credits.start),
+                        end: Math.round(credits.end)
+                    });
+                }
+                if (segments.length) {
+                    Cache.set(tmdbId, season, episode, segments);
+                    return segments;
                 }
             } catch(e) {}
 
@@ -985,14 +915,12 @@
                 try {
                     const url = `https://introhater.com/api/segments/${imdbId}:${season}:${episode}`;
                     const data = await this._fetch(url);
-                    const parsed = this._parseIntroHater(data);
-                    if (parsed.length) segments.push(...parsed);
+                    const segments = this._parseIntroHater(data);
+                    if (segments.length) {
+                        Cache.set(tmdbId, season, episode, segments);
+                        return segments;
+                    }
                 } catch(e) {}
-            }
-
-            if (segments.length) {
-                Cache.set(tmdbId, season, episode, segments);
-                return segments;
             }
 
             return [];
@@ -1009,8 +937,8 @@
                     items.forEach(item => {
                         const start = item.start_ms ? item.start_ms / 1000 : (item.start || 0);
                         const end = item.end_ms ? item.end_ms / 1000 : (item.end || 0);
-                        if (end > start && start >= 0) {
-                            segments.push({ type, start: Math.round(start), end: Math.round(end) });
+                        if (end > start) {
+                            segments.push({ type, start, end });
                         }
                     });
                 }
@@ -1041,7 +969,7 @@
         }
     };
 
-    // ===== ОСНОВНОЙ ПЛАГИН =====
+    // ===== ОСНОВНОЙ КЛАСС =====
     const SkipIntroPlugin = {
         _segments: [],
         _activeSegment: null,
@@ -1067,7 +995,7 @@
                 );
             }
 
-            console.log('[SkipIntro] Plugin initialized');
+            console.log('[SkipIntro] Plugin initialized globally');
         },
 
         _onStart(data) {
@@ -1161,22 +1089,22 @@
                 is_series: false
             };
 
-            // 1. Из данных плеера
+            if (!data) return meta;
+
+            // 1. Попытка забрать данные напрямую из передаваемого Lampa события
             if (data.tmdb_id) meta.tmdb_id = data.tmdb_id;
             if (data.imdb_id) meta.imdb_id = data.imdb_id;
-            if (data.season != null) meta.season = parseInt(data.season);
-            if (data.episode != null) meta.episode = parseInt(data.episode);
+            if (data.season != null) meta.season = parseInt(data.season, 10);
+            if (data.episode != null) meta.episode = parseInt(data.episode, 10);
 
-            // 2. Из активности
+            // 2. Универсальное сканирование активной карточки контента в Lampa
             let card = data.card || null;
-            if (!card) {
-                try {
-                    const activity = Lampa.Activity.active();
-                    if (activity) {
-                        card = activity.card || activity.movie || null;
-                    }
-                } catch(e) {}
-            }
+            try {
+                const activity = Lampa.Activity.active();
+                if (activity) {
+                    card = activity.card || activity.movie || null;
+                }
+            } catch(e) {}
 
             if (card) {
                 if (!meta.tmdb_id) meta.tmdb_id = card.id || null;
@@ -1186,57 +1114,73 @@
                 }
             }
 
-            // 3. Из плейлиста
+            // 3. Сканирование плейлистов любого балансера или онлайн-модуля
+            // Мы ищем текущую серию в списке воспроизведения
             if (data.playlist && Array.isArray(data.playlist)) {
-                const url = data.url || '';
-                for (let i = 0; i < data.playlist.length; i++) {
-                    const item = data.playlist[i];
-                    const itemUrl = typeof item.url === 'string' ? item.url : '';
+                // Ищем элемент, помеченный как активный, либо используем первый
+                const activeItem = data.playlist.find(item => item.active === true) || data.playlist[0];
+                
+                if (activeItem) {
+                    // Универсальная проверка всевозможных ключей серий/сезонов, которые шлют разные балансеры
+                    const s = activeItem.season ?? activeItem.s ?? activeItem.season_num ?? activeItem.seasons;
+                    const e = activeItem.episode ?? activeItem.e ?? activeItem.episode_num ?? activeItem.episodes;
                     
-                    if (itemUrl === url || i === 0) {
-                        if (item.season != null && meta.season == null) meta.season = parseInt(item.season);
-                        if (item.episode != null && meta.episode == null) meta.episode = parseInt(item.episode);
-                        if (item.s != null && meta.season == null) meta.season = parseInt(item.s);
-                        if (item.e != null && meta.episode == null) meta.episode = parseInt(item.e);
-                        if (item.season_num != null && meta.season == null) meta.season = parseInt(item.season_num);
-                        if (item.episode_num != null && meta.episode == null) meta.episode = parseInt(item.episode_num);
+                    if (s != null && meta.season == null) meta.season = parseInt(s, 10);
+                    if (e != null && meta.episode == null) meta.episode = parseInt(e, 10);
+
+                    // Если в элементе плейлиста есть текстовый тайтл - пробуем его распарсить
+                    if ((meta.season == null || meta.episode == null) && activeItem.title) {
+                        const parsed = Utils.parseSeasonEpisode(activeItem.title);
+                        if (parsed) {
+                            if (meta.season == null) meta.season = parsed.season;
+                            if (meta.episode == null) meta.episode = parsed.episode;
+                        }
                     }
-                    if (itemUrl === url) break;
                 }
             }
 
-            // 4. Из URL
-            if (!meta.tmdb_id || !meta.season || !meta.episode) {
-                try {
-                    const url = data.url || '';
-                    // S01E02, s01e02
-                    let match = url.match(/[Ss](\d+)[Ee](\d+)/);
-                    if (match) {
-                        if (meta.season == null) meta.season = parseInt(match[1]);
-                        if (meta.episode == null) meta.episode = parseInt(match[2]);
-                        meta.is_series = true;
+            // 4. Универсальный прогон текстовых полей плеера через регулярные выражения
+            if (meta.season == null || meta.episode == null) {
+                // Сканируем все места, куда плеер мог положить название файла или серии
+                const fieldsToParse = [
+                    data.title,
+                    data.file ? data.file.title : null,
+                    data.video ? data.video.title : null,
+                    data.url
+                ];
+
+                for (const field of fieldsToParse) {
+                    if (field) {
+                        const parsed = Utils.parseSeasonEpisode(field);
+                        if (parsed) {
+                            if (meta.season == null) meta.season = parsed.season;
+                            if (meta.episode == null) meta.episode = parsed.episode;
+                            break;
+                        }
                     }
-                    // 1x02
-                    match = url.match(/(\d+)x(\d+)/);
-                    if (match) {
-                        if (meta.season == null) meta.season = parseInt(match[1]);
-                        if (meta.episode == null) meta.episode = parseInt(match[2]);
-                        meta.is_series = true;
+                }
+            }
+
+            // 5. Поиск скрытого ID фильма в системных хранилищах Lampa
+            if (!meta.tmdb_id) {
+                try {
+                    const keys = ['online_view_id', 'current_movie_id', 'player_movie_id'];
+                    for (const key of keys) {
+                        const id = Lampa.Storage.get(key);
+                        if (id) {
+                            meta.tmdb_id = id;
+                            break;
+                        }
+                    }
+                    
+                    const opened = Lampa.Storage.get('current', null);
+                    if (opened && opened.id) {
+                        meta.tmdb_id = opened.id;
                     }
                 } catch(e) {}
             }
 
-            // 5. Из заголовка
-            if (data.title) {
-                const parsed = this._parseTitle(data.title);
-                if (parsed) {
-                    if (meta.season == null) meta.season = parsed.season;
-                    if (meta.episode == null) meta.episode = parsed.episode;
-                    meta.is_series = true;
-                }
-            }
-
-            // 6. Если есть ID и сезон с серией
+            // Если нашли TMDB ID, сезон и серию — активируем логику сериала
             if (meta.tmdb_id && meta.season != null && meta.episode != null) {
                 meta.is_series = true;
             }
@@ -1244,41 +1188,10 @@
             return meta;
         },
 
-        _parseTitle(title) {
-            if (!title) return null;
-            
-            // 1 сезон 1 серия
-            let match = title.match(/(\d+)\s*сезон\s*(\d+)\s*серия/i);
-            if (match) {
-                return { season: parseInt(match[1]), episode: parseInt(match[2]) };
-            }
-            
-            // Season 1 Episode 2
-            match = title.match(/season\s*(\d+)\s*episode\s*(\d+)/i);
-            if (match) {
-                return { season: parseInt(match[1]), episode: parseInt(match[2]) };
-            }
-            
-            // S01E02
-            match = title.match(/[Ss](\d+)[Ee](\d+)/);
-            if (match) {
-                return { season: parseInt(match[1]), episode: parseInt(match[2]) };
-            }
-            
-            // 1x02
-            match = title.match(/(\d+)x(\d+)/);
-            if (match) {
-                return { season: parseInt(match[1]), episode: parseInt(match[2]) };
-            }
-            
-            return null;
-        },
-
         _runDetection(data, meta, callback) {
             if (this._detecting) return;
             this._detecting = true;
 
-            // Проверяем кэш
             const cached = Cache.get(meta.tmdb_id, meta.season, meta.episode);
             if (cached && cached.length) {
                 this._detecting = false;
@@ -1286,13 +1199,18 @@
                 return;
             }
 
-            let video = Utils.getVideoElement();
+            let video = null;
+            try {
+                video = Lampa.PlayerVideo.video();
+            } catch(e) {}
 
-            if (!video) {
+            if (!video || !video.duration) {
                 let attempts = 0;
                 const checkVideo = () => {
                     attempts++;
-                    video = Utils.getVideoElement();
+                    try {
+                        video = Lampa.PlayerVideo.video();
+                    } catch(e) {}
                     
                     if (video && video.duration) {
                         this._runDetectionInternal(video, meta, callback);
@@ -1310,7 +1228,7 @@
         },
 
         _runDetectionInternal(video, meta, callback) {
-            const duration = video.duration || Utils.getPlayerDuration();
+            const duration = video.duration;
             
             SubtitleDetector.detect(video, duration)
                 .then(subSegments => {
@@ -1344,7 +1262,11 @@
         },
 
         _updateProgressMarkers(segments) {
-            const duration = Utils.getPlayerDuration();
+            let duration = 0;
+            try {
+                const video = Lampa.PlayerVideo.video();
+                if (video) duration = video.duration;
+            } catch(e) {}
             
             if (duration > 0 && segments && segments.length) {
                 ProgressMarker.updateMarkers(segments, duration);
@@ -1355,11 +1277,15 @@
                 let attempts = 0;
                 const checkDuration = () => {
                     attempts++;
-                    const dur = Utils.getPlayerDuration();
-                    if (dur > 0) {
-                        ProgressMarker.updateMarkers(segments, dur);
-                    } else if (attempts < 20) {
-                        setTimeout(checkDuration, 500);
+                    try {
+                        const video = Lampa.PlayerVideo.video();
+                        if (video && video.duration) {
+                            ProgressMarker.updateMarkers(segments, video.duration);
+                        } else if (attempts < 20) {
+                            setTimeout(checkDuration, 500);
+                        }
+                    } catch(e) {
+                        if (attempts < 20) setTimeout(checkDuration, 500);
                     }
                 };
                 checkDuration();
@@ -1369,7 +1295,7 @@
         _onTimeUpdate(data) {
             if (!PluginSettings.isEnabled() || !this._segments.length) return;
             
-            const current = data.current || Utils.getCurrentTime();
+            const current = data.current;
             if (!Utils.isNumeric(current)) return;
             
             const segment = Utils.findSegment(this._segments, current);
@@ -1422,13 +1348,25 @@
             
             Notification.show(
                 `${label} пропущена`,
-                `${time}с${auto ? ' ⚡' : ''}`,
-                false
+                `${time}с${auto ? ' ⚡' : ''}`
             );
             
-            const target = Math.min(segment.end, Utils.getPlayerDuration() || segment.end);
-            Utils.seekTo(target);
-            console.log(`[SkipIntro] Skipped ${segment.type} to ${target}s${auto ? ' (auto)' : ''}`);
+            try {
+                const video = Lampa.PlayerVideo.video();
+                if (video) {
+                    const target = Math.min(segment.end, video.duration || segment.end);
+                    video.currentTime = target;
+                    console.log(`[SkipIntro] Skipped ${segment.type} to ${target}s${auto ? ' (auto)' : ''}`);
+                    
+                    setTimeout(() => {
+                        try {
+                            if (video.paused) video.play();
+                        } catch(e) {}
+                    }, 100);
+                }
+            } catch(e) {
+                console.log('[SkipIntro] Error seeking:', e);
+            }
         },
 
         _cleanup() {
