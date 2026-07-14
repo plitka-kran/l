@@ -22,7 +22,8 @@
         ENERGY_MIN_THRESHOLD: 0.8,
         MIN_ENERGY_PEAK_DURATION: 15,
         MAX_ENERGY_PEAK_DURATION: 150,
-        MIN_ENERGY_SAMPLES: 10
+        MIN_ENERGY_SAMPLES: 10,
+        NOTIFICATION_DURATION: 3000
     };
 
     // ===== УТИЛИТЫ =====
@@ -88,7 +89,7 @@
         },
 
         isAutoSkip() {
-            return Utils.getStorage('skip_intro_auto', false) === true;
+            return Utils.getStorage('skip_intro_auto', true) !== false;
         },
 
         isDetectEnabled() {
@@ -99,31 +100,6 @@
             return Utils.getStorage(`skip_intro_type_${type}`, true) !== false;
         },
 
-        getSkipKeys() {
-            const key = Utils.getStorage('skip_intro_key_skip', 'enter');
-            const map = {
-                enter: [13, 29443, 65385],
-                space: [32],
-                red: [403],
-                green: [404],
-                yellow: [405],
-                blue: [406]
-            };
-            return map[key] || map.enter;
-        },
-
-        getCancelKeys() {
-            const key = Utils.getStorage('skip_intro_key_cancel', 'back');
-            const map = {
-                back: [8, 27, 10009, 461, 4],
-                red: [403],
-                green: [404],
-                yellow: [405],
-                blue: [406]
-            };
-            return map[key] || map.back;
-        },
-
         initSettings() {
             Lampa.SettingsApi.addComponent({
                 component: 'skip_intro',
@@ -132,8 +108,8 @@
             });
 
             const params = [
-                { name: 'skip_intro_enabled', type: 'trigger', default: true, label: 'Включить плагин', desc: 'Показывать кнопку пропуска заставок и титров' },
-                { name: 'skip_intro_auto', type: 'trigger', default: false, label: 'Всегда автопропуск', desc: 'Всегда перематывать без кнопки' },
+                { name: 'skip_intro_enabled', type: 'trigger', default: true, label: 'Включить плагин', desc: 'Показывать уведомления о пропуске' },
+                { name: 'skip_intro_auto', type: 'trigger', default: true, label: 'Автопропуск', desc: 'Автоматически пропускать заставки' },
                 { name: 'skip_intro_detect', type: 'trigger', default: true, label: 'Умное обнаружение', desc: 'Определять по субтитрам и звуку' },
                 { name: 'skip_intro_type_intro', type: 'trigger', default: true, label: 'Пропускать заставку (intro)' },
                 { name: 'skip_intro_type_recap', type: 'trigger', default: true, label: 'Пропускать рекап (recap)' },
@@ -147,28 +123,6 @@
                     param: { name: p.name, type: p.type, default: p.default },
                     field: { name: p.label, description: p.desc || '' }
                 });
-            });
-
-            Lampa.SettingsApi.addParam({
-                component: 'skip_intro',
-                param: {
-                    name: 'skip_intro_key_skip',
-                    type: 'select',
-                    values: { enter: 'Enter / OK', space: 'Пробел', red: 'Красная (403)', green: 'Зелёная (404)', yellow: 'Жёлтая (405)', blue: 'Синяя (406)' },
-                    default: 'enter'
-                },
-                field: { name: 'Кнопка «Пропустить»' }
-            });
-
-            Lampa.SettingsApi.addParam({
-                component: 'skip_intro',
-                param: {
-                    name: 'skip_intro_key_cancel',
-                    type: 'select',
-                    values: { back: 'Назад', red: 'Красная (403)', green: 'Зелёная (404)', yellow: 'Жёлтая (405)', blue: 'Синяя (406)' },
-                    default: 'back'
-                },
-                field: { name: 'Кнопка «Отменить»' }
             });
         }
     };
@@ -274,7 +228,41 @@
         },
 
         init() {
-            this._container = document.querySelector('.player-progress, .video-progress, .progress-bar, [class*="progress"]');
+            this._findProgressBar();
+        },
+
+        _findProgressBar() {
+            const selectors = [
+                '.player-progress',
+                '.video-progress',
+                '.progress-bar',
+                '.progress',
+                '.seek-bar',
+                '.timeline',
+                '.player-timeline',
+                '[class*="progress"]',
+                '[class*="timeline"]'
+            ];
+
+            for (const selector of selectors) {
+                const el = document.querySelector(selector);
+                if (el) {
+                    this._container = el;
+                    break;
+                }
+            }
+
+            if (!this._container) {
+                try {
+                    const player = document.querySelector('.player');
+                    if (player) {
+                        const progress = player.querySelector('[class*="progress"]') || 
+                                       player.querySelector('[class*="timeline"]');
+                        if (progress) this._container = progress;
+                    }
+                } catch(e) {}
+            }
+
             if (!this._container) return;
 
             let markersContainer = this._container.querySelector('.skip-intro-markers');
@@ -288,8 +276,8 @@
                     width: 100%;
                     height: 100%;
                     pointer-events: none;
-                    z-index: 5;
-                    overflow: hidden;
+                    z-index: 10;
+                    overflow: visible;
                 `;
                 this._container.style.position = 'relative';
                 this._container.appendChild(markersContainer);
@@ -307,79 +295,41 @@
             style.textContent = `
                 .skip-intro-marker {
                     position: absolute;
-                    top: 0;
-                    height: 100%;
-                    border-radius: 2px;
+                    top: 50%;
+                    transform: translateY(-50%);
+                    height: 70%;
+                    border-radius: 3px;
                     transition: all 0.3s ease;
-                    pointer-events: auto;
-                    min-width: 3px;
-                    cursor: pointer;
-                }
-                .skip-intro-marker:hover {
-                    opacity: 0.8 !important;
-                    transform: scaleY(1.5) !important;
-                    z-index: 10;
+                    pointer-events: none;
+                    min-width: 4px;
+                    opacity: 0.6;
+                    z-index: 5;
                 }
                 .skip-intro-marker-intro {
-                    background: linear-gradient(90deg, rgba(76, 175, 80, 0.3), rgba(76, 175, 80, 0.6));
-                    border: 1px solid rgba(76, 175, 80, 0.4);
+                    background: linear-gradient(180deg, rgba(76, 175, 80, 0.8), rgba(76, 175, 80, 0.3));
+                    border: 1px solid rgba(76, 175, 80, 0.5);
                 }
                 .skip-intro-marker-recap {
-                    background: linear-gradient(90deg, rgba(255, 152, 0, 0.3), rgba(255, 152, 0, 0.6));
-                    border: 1px solid rgba(255, 152, 0, 0.4);
+                    background: linear-gradient(180deg, rgba(255, 152, 0, 0.8), rgba(255, 152, 0, 0.3));
+                    border: 1px solid rgba(255, 152, 0, 0.5);
                 }
                 .skip-intro-marker-credits {
-                    background: linear-gradient(90deg, rgba(33, 150, 243, 0.3), rgba(33, 150, 243, 0.6));
-                    border: 1px solid rgba(33, 150, 243, 0.4);
+                    background: linear-gradient(180deg, rgba(33, 150, 243, 0.8), rgba(33, 150, 243, 0.3));
+                    border: 1px solid rgba(33, 150, 243, 0.5);
                 }
                 .skip-intro-marker-preview {
-                    background: linear-gradient(90deg, rgba(156, 39, 176, 0.3), rgba(156, 39, 176, 0.6));
-                    border: 1px solid rgba(156, 39, 176, 0.4);
-                }
-                .skip-intro-marker-label {
-                    position: absolute;
-                    bottom: 100%;
-                    left: 50%;
-                    transform: translateX(-50%);
-                    background: rgba(0, 0, 0, 0.85);
-                    color: #fff;
-                    padding: 3px 10px;
-                    border-radius: 4px;
-                    font-size: 10px;
-                    white-space: nowrap;
-                    opacity: 0;
-                    transition: opacity 0.3s ease;
-                    pointer-events: none;
-                    font-family: system-ui, sans-serif;
-                    box-shadow: 0 2px 10px rgba(0,0,0,0.3);
-                }
-                .skip-intro-marker:hover .skip-intro-marker-label {
-                    opacity: 1;
+                    background: linear-gradient(180deg, rgba(156, 39, 176, 0.8), rgba(156, 39, 176, 0.3));
+                    border: 1px solid rgba(156, 39, 176, 0.5);
                 }
                 .skip-intro-marker.active {
-                    opacity: 0.7 !important;
-                    transform: scaleY(1.5) !important;
+                    opacity: 0.9 !important;
+                    height: 100% !important;
                     animation: skip-intro-pulse 1s ease-in-out infinite;
-                    box-shadow: 0 0 20px rgba(255,255,255,0.3);
-                }
-                .skip-intro-marker.skipped {
-                    opacity: 0.2 !important;
-                    transform: scaleY(0.6) !important;
-                }
-                .skip-intro-marker.skipped::after {
-                    content: '✓';
-                    position: absolute;
-                    top: 50%;
-                    left: 50%;
-                    transform: translate(-50%, -50%);
-                    color: #fff;
-                    font-size: 12px;
-                    font-weight: bold;
-                    text-shadow: 0 0 10px rgba(0,0,0,0.8);
+                    box-shadow: 0 0 20px rgba(255,255,255,0.2);
                 }
                 @keyframes skip-intro-pulse {
-                    0%, 100% { opacity: 0.5; transform: scaleY(1.3); }
-                    50% { opacity: 0.9; transform: scaleY(1.8); }
+                    0%, 100% { opacity: 0.6; transform: translateY(-50%) scaleY(1); }
+                    50% { opacity: 1; transform: translateY(-50%) scaleY(1.2); }
                 }
             `;
             document.head.appendChild(style);
@@ -393,12 +343,11 @@
         },
 
         addMarker(start, end, type, duration) {
-            if (!this._markersContainer || !duration) return;
+            if (!this._markersContainer || !duration || !this._container) return;
             
-            const color = this._colors[type] || '#FFFFFF';
             const startPercent = (start / duration) * 100;
             const endPercent = (end / duration) * 100;
-            const width = Math.max(endPercent - startPercent, 0.3);
+            const width = Math.max(endPercent - startPercent, 0.5);
             
             if (width <= 0) return;
             
@@ -410,48 +359,31 @@
             
             marker.style.cssText = `
                 position: absolute;
-                top: 0;
+                top: 50%;
+                transform: translateY(-50%);
                 left: ${startPercent}%;
                 width: ${width}%;
-                height: 100%;
-                opacity: 0.35;
-                border-radius: 2px;
+                height: 70%;
+                border-radius: 3px;
                 transition: all 0.3s ease;
-                pointer-events: auto;
-                min-width: 3px;
+                pointer-events: none;
+                min-width: 4px;
+                opacity: 0.6;
+                z-index: 5;
             `;
-            
-            const label = document.createElement('div');
-            label.className = 'skip-intro-marker-label';
-            label.textContent = this._typeNames[type] || type;
-            marker.appendChild(label);
-            
-            // Клик для перемотки
-            marker.addEventListener('click', (e) => {
-                e.stopPropagation();
-                try {
-                    const video = Lampa.PlayerVideo.video();
-                    if (video) {
-                        video.currentTime = start;
-                    }
-                } catch(err) {}
-            });
             
             this._markersContainer.appendChild(marker);
             this._markers.push({ start, end, type, element: marker });
-            
-            // Анимация появления
-            requestAnimationFrame(() => {
-                marker.style.transform = 'scaleY(0)';
-                setTimeout(() => {
-                    marker.style.transform = 'scaleY(1)';
-                }, 50);
-            });
         },
 
         updateMarkers(segments, duration) {
             this.clear();
             if (!segments || !segments.length || !duration) return;
+            
+            if (!this._container || !this._markersContainer) {
+                this._findProgressBar();
+                if (!this._markersContainer) return;
+            }
             
             const sorted = [...segments].sort((a, b) => a.start - b.start);
             sorted.forEach(seg => {
@@ -474,27 +406,166 @@
             });
         },
 
-        markSkipped(segment) {
-            const markers = this._markersContainer?.querySelectorAll('.skip-intro-marker') || [];
-            markers.forEach(marker => {
-                const data = this._markers.find(m => m.element === marker);
-                if (data && segment && data.type === segment.type && 
-                    data.start === segment.start && data.end === segment.end) {
-                    marker.classList.add('skipped');
-                    setTimeout(() => {
-                        marker.classList.remove('skipped');
-                        marker.style.opacity = '0.15';
-                    }, 3000);
-                }
-            });
-        },
-
         resetHighlights() {
             const markers = this._markersContainer?.querySelectorAll('.skip-intro-marker') || [];
-            markers.forEach(m => {
-                m.classList.remove('active', 'skipped');
-                m.style.opacity = '';
+            markers.forEach(m => m.classList.remove('active'));
+        },
+
+        destroy() {
+            this.clear();
+            this._container = null;
+            this._markersContainer = null;
+        }
+    };
+
+    // ===== УВЕДОМЛЕНИЕ ПО ЦЕНТРУ ВВЕРХУ =====
+    const Notification = {
+        _element: null,
+        _timer: null,
+
+        _injectStyles() {
+            if (document.getElementById('skip-intro-notification-styles')) return;
+            
+            const style = document.createElement('style');
+            style.id = 'skip-intro-notification-styles';
+            style.textContent = `
+                .skip-intro-notification {
+                    position: fixed;
+                    top: 30px;
+                    left: 50%;
+                    transform: translateX(-50%) translateY(-20px);
+                    background: rgba(0, 0, 0, 0.85);
+                    backdrop-filter: blur(12px);
+                    -webkit-backdrop-filter: blur(12px);
+                    color: #fff;
+                    padding: 16px 40px;
+                    border-radius: 12px;
+                    font-size: 18px;
+                    font-weight: 500;
+                    z-index: 99999;
+                    opacity: 0;
+                    pointer-events: none;
+                    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+                    font-family: system-ui, -apple-system, sans-serif;
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+                    text-align: center;
+                    min-width: 200px;
+                    max-width: 80vw;
+                    letter-spacing: 0.3px;
+                }
+                .skip-intro-notification.show {
+                    opacity: 1;
+                    transform: translateX(-50%) translateY(0);
+                    pointer-events: none;
+                }
+                .skip-intro-notification .icon {
+                    display: inline-block;
+                    margin-right: 12px;
+                    font-size: 22px;
+                }
+                .skip-intro-notification .label {
+                    display: inline-block;
+                }
+                .skip-intro-notification .badge {
+                    display: inline-block;
+                    margin-left: 10px;
+                    font-size: 13px;
+                    opacity: 0.6;
+                    font-weight: 400;
+                }
+                .skip-intro-notification .progress-ring {
+                    display: inline-block;
+                    margin-left: 14px;
+                    width: 20px;
+                    height: 20px;
+                    border: 2px solid rgba(255,255,255,0.2);
+                    border-top-color: #4CAF50;
+                    border-radius: 50%;
+                    animation: skip-intro-spin 0.8s linear infinite;
+                    vertical-align: middle;
+                }
+                @keyframes skip-intro-spin {
+                    to { transform: rotate(360deg); }
+                }
+                @media (max-width: 720px) {
+                    .skip-intro-notification {
+                        top: 20px;
+                        padding: 12px 24px;
+                        font-size: 15px;
+                        min-width: 150px;
+                    }
+                }
+            `;
+            document.head.appendChild(style);
+        },
+
+        show(text, badge, showProgress) {
+            this._injectStyles();
+            this.hide();
+
+            const el = document.createElement('div');
+            el.className = 'skip-intro-notification';
+            
+            // Иконка
+            const icon = document.createElement('span');
+            icon.className = 'icon';
+            icon.textContent = '⏭';
+            el.appendChild(icon);
+
+            // Текст
+            const label = document.createElement('span');
+            label.className = 'label';
+            label.textContent = text;
+            el.appendChild(label);
+
+            // Бейдж
+            if (badge) {
+                const badgeEl = document.createElement('span');
+                badgeEl.className = 'badge';
+                badgeEl.textContent = badge;
+                el.appendChild(badgeEl);
+            }
+
+            // Прогресс
+            if (showProgress) {
+                const progress = document.createElement('span');
+                progress.className = 'progress-ring';
+                el.appendChild(progress);
+            }
+
+            document.body.appendChild(el);
+            this._element = el;
+
+            // Анимация появления
+            requestAnimationFrame(() => {
+                el.classList.add('show');
             });
+
+            // Автоскрытие
+            this._timer = setTimeout(() => {
+                this.hide();
+            }, CONFIG.NOTIFICATION_DURATION);
+        },
+
+        hide() {
+            if (this._timer) {
+                clearTimeout(this._timer);
+                this._timer = null;
+            }
+            if (this._element) {
+                this._element.classList.remove('show');
+                setTimeout(() => {
+                    if (this._element && this._element.parentNode) {
+                        this._element.parentNode.removeChild(this._element);
+                    }
+                    this._element = null;
+                }, 400);
+            }
+        },
+
+        destroy() {
+            this.hide();
         }
     };
 
@@ -977,346 +1048,6 @@
         }
     };
 
-    // ===== UI КНОПКА =====
-    const SkipButton = {
-        _element: null,
-        _progressBar: null,
-        _visible: false,
-        _timer: null,
-        _skipCallback: null,
-        _cancelCallback: null,
-        _lampaKeyHandler: null,
-        _domKeyHandler: null,
-
-        _injectCSS() {
-            if (document.getElementById('skip-intro-css')) return;
-            
-            const style = document.createElement('style');
-            style.id = 'skip-intro-css';
-            style.textContent = `
-                .skip-intro-btn {
-                    position: absolute;
-                    right: 30px;
-                    bottom: 160px;
-                    padding: 12px 24px;
-                    background: rgba(0,0,0,0.75);
-                    backdrop-filter: blur(8px);
-                    -webkit-backdrop-filter: blur(8px);
-                    border: 2px solid rgba(255,255,255,0.15);
-                    border-radius: 10px;
-                    color: #fff;
-                    font-size: 0.9em;
-                    cursor: pointer;
-                    z-index: 9999;
-                    opacity: 0;
-                    pointer-events: none;
-                    transform: translateX(15px);
-                    transition: opacity 0.3s ease, transform 0.3s ease;
-                    font-family: system-ui, -apple-system, sans-serif;
-                    line-height: 1.4;
-                    display: flex;
-                    flex-direction: column;
-                    min-width: 160px;
-                    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-                }
-                .skip-intro-btn.visible {
-                    opacity: 1;
-                    pointer-events: auto;
-                    transform: translateX(0);
-                }
-                .skip-intro-btn:focus {
-                    border-color: rgba(255,255,255,0.5);
-                    outline: none;
-                }
-                .skip-intro-content {
-                    display: flex;
-                    align-items: center;
-                    gap: 10px;
-                    padding: 2px 0;
-                }
-                .skip-intro-icon {
-                    width: 18px;
-                    height: 18px;
-                    flex-shrink: 0;
-                    opacity: 0.8;
-                }
-                .skip-intro-progress {
-                    width: 100%;
-                    height: 2px;
-                    background: rgba(255,255,255,0.15);
-                    border-radius: 2px;
-                    margin-top: 8px;
-                    overflow: hidden;
-                    position: relative;
-                }
-                .skip-intro-progress-bar {
-                    height: 100%;
-                    background: linear-gradient(90deg, rgba(255,255,255,0.8), rgba(200,200,255,0.5));
-                    width: 0%;
-                    transition: width 0.1s linear;
-                }
-                .skip-intro-hint {
-                    font-size: 0.65em;
-                    opacity: 0.5;
-                    margin-left: 6px;
-                    font-weight: 300;
-                }
-                @media (max-width: 720px) {
-                    .skip-intro-btn {
-                        right: 20px;
-                        bottom: 140px;
-                        padding: 10px 18px;
-                        font-size: 0.8em;
-                        min-width: 120px;
-                    }
-                }
-            `;
-            document.head.appendChild(style);
-        },
-
-        show(label, onSkip, onCancel, badge, isCountdown) {
-            this._cleanup();
-            this._injectCSS();
-
-            if (this._element) {
-                this._updateLabel(label, badge);
-                if (isCountdown) {
-                    this._element.classList.add('countdown');
-                    this._element._withCancel = true;
-                } else {
-                    this._element.classList.remove('countdown');
-                    this._element._withCancel = false;
-                }
-                this._skipCallback = onSkip;
-                this._cancelCallback = onCancel || null;
-                if (!this._visible) this._setVisible(true);
-                if (isCountdown) this._startProgress();
-                return;
-            }
-
-            this._createElement(label, onSkip, onCancel, badge, isCountdown);
-            this._setVisible(true);
-            if (isCountdown) this._startProgress();
-        },
-
-        _createElement(label, onSkip, onCancel, badge, isCountdown) {
-            const btn = document.createElement('div');
-            btn.className = 'skip-intro-btn' + (isCountdown ? ' countdown' : '');
-            btn.setAttribute('tabindex', '1');
-            btn._withCancel = !!onCancel;
-            btn._skipCallback = onSkip;
-            btn._cancelCallback = onCancel || null;
-
-            const content = document.createElement('div');
-            content.className = 'skip-intro-content';
-
-            const textSpan = document.createElement('span');
-            textSpan.className = 'skip-intro-label';
-            textSpan.textContent = label;
-            content.appendChild(textSpan);
-
-            if (badge) {
-                const badgeSpan = document.createElement('span');
-                badgeSpan.className = 'skip-intro-hint';
-                badgeSpan.textContent = badge;
-                content.appendChild(badgeSpan);
-            }
-
-            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-            svg.setAttribute('class', 'skip-intro-icon');
-            svg.setAttribute('viewBox', '0 0 24 24');
-            svg.setAttribute('fill', 'currentColor');
-            const path1 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-            path1.setAttribute('d', 'M5.5 18.5V5.5L14 12L5.5 18.5Z');
-            const path2 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-            path2.setAttribute('d', 'M14 18.5V5.5L22.5 12L14 18.5Z');
-            svg.appendChild(path1);
-            svg.appendChild(path2);
-            content.appendChild(svg);
-
-            const hintSpan = document.createElement('span');
-            hintSpan.className = 'skip-intro-hint';
-            const hintText = isCountdown ? 
-                this._getCancelHint() : 
-                this._getSkipHint();
-            hintSpan.textContent = hintText;
-            content.appendChild(hintSpan);
-
-            btn.appendChild(content);
-
-            const progressContainer = document.createElement('div');
-            progressContainer.className = 'skip-intro-progress';
-            const progressBar = document.createElement('div');
-            progressBar.className = 'skip-intro-progress-bar';
-            progressContainer.appendChild(progressBar);
-            btn.appendChild(progressContainer);
-
-            this._progressBar = progressBar;
-            
-            content.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                if (btn._skipCallback) btn._skipCallback();
-            });
-
-            this._lampaKeyHandler = (event) => {
-                if (!btn.classList.contains('visible')) return;
-                const code = event.code || event.keyCode;
-                const skipKeys = PluginSettings.getSkipKeys();
-                const cancelKeys = PluginSettings.getCancelKeys();
-                const okKeys = [13, 29443, 65385];
-
-                if (skipKeys.includes(code) && !okKeys.includes(code)) {
-                    event.event && event.event.preventDefault();
-                    if (btn._skipCallback) btn._skipCallback();
-                    return;
-                }
-
-                if (btn._withCancel && cancelKeys.includes(code)) {
-                    event.event && event.event.preventDefault();
-                    if (btn._cancelCallback) btn._cancelCallback();
-                }
-            };
-
-            this._domKeyHandler = (e) => {
-                if (!btn.classList.contains('visible')) return;
-                const code = e.keyCode;
-                const skipKeys = PluginSettings.getSkipKeys();
-                const cancelKeys = PluginSettings.getCancelKeys();
-
-                if (skipKeys.includes(code)) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (btn._skipCallback) btn._skipCallback();
-                    return;
-                }
-
-                if (btn._withCancel && cancelKeys.includes(code)) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (btn._cancelCallback) btn._cancelCallback();
-                }
-            };
-
-            if (Lampa.Keypad && Lampa.Keypad.listener) {
-                Lampa.Keypad.listener.follow('keydown', this._lampaKeyHandler);
-            }
-            document.addEventListener('keydown', this._domKeyHandler, true);
-
-            const player = document.querySelector('.player');
-            (player || document.body).appendChild(btn);
-            this._element = btn;
-            this._skipCallback = onSkip;
-            this._cancelCallback = onCancel || null;
-        },
-
-        _updateLabel(label, badge) {
-            if (!this._element) return;
-            const labelEl = this._element.querySelector('.skip-intro-label');
-            if (labelEl) labelEl.textContent = label;
-            
-            const badgeEl = this._element.querySelector('.skip-intro-hint');
-            if (badgeEl && badge) {
-                badgeEl.textContent = badge;
-            }
-        },
-
-        _getSkipHint() {
-            const keys = PluginSettings.getSkipKeys();
-            const map = {
-                13: 'OK', 29443: 'OK', 65385: 'OK',
-                32: 'Пробел', 403: 'Красная', 404: 'Зелёная',
-                405: 'Жёлтая', 406: 'Синяя'
-            };
-            const label = keys.find(k => map[k]) || 'OK';
-            return `нажмите ${map[label] || label}`;
-        },
-
-        _getCancelHint() {
-            const keys = PluginSettings.getCancelKeys();
-            const map = {
-                8: 'Назад', 27: 'Назад', 10009: 'Назад', 461: 'Назад', 4: 'Назад',
-                403: 'Красная', 404: 'Зелёная', 405: 'Жёлтая', 406: 'Синяя'
-            };
-            const label = keys.find(k => map[k]) || 'Назад';
-            return `нажмите ${map[label] || label} для отмены`;
-        },
-
-        _startProgress() {
-            const start = Date.now();
-            const duration = CONFIG.AUTO_SKIP_DELAY;
-            
-            this._timer = setInterval(() => {
-                if (!this._progressBar) {
-                    this._cleanup();
-                    return;
-                }
-                const elapsed = Date.now() - start;
-                const progress = Math.min(elapsed / duration, 1);
-                this._progressBar.style.width = `${progress * 100}%`;
-                
-                if (progress >= 1) {
-                    this._cleanup();
-                    if (this._skipCallback) this._skipCallback();
-                }
-            }, 50);
-        },
-
-        _cleanup() {
-            if (this._timer) {
-                clearInterval(this._timer);
-                this._timer = null;
-            }
-        },
-
-        hide() {
-            this._cleanup();
-            if (this._element) {
-                this._setVisible(false);
-                if (this._lampaKeyHandler && Lampa.Keypad && Lampa.Keypad.listener) {
-                    Lampa.Keypad.listener.remove('keydown', this._lampaKeyHandler);
-                }
-                if (this._domKeyHandler) {
-                    document.removeEventListener('keydown', this._domKeyHandler, true);
-                }
-                
-                setTimeout(() => {
-                    if (this._element && this._element.parentNode) {
-                        this._element.parentNode.removeChild(this._element);
-                    }
-                    this._element = null;
-                    this._progressBar = null;
-                    this._skipCallback = null;
-                    this._cancelCallback = null;
-                    this._lampaKeyHandler = null;
-                    this._domKeyHandler = null;
-                }, 350);
-            }
-            this._visible = false;
-        },
-
-        destroy() {
-            this._cleanup();
-            this.hide();
-        },
-
-        _setVisible(visible) {
-            this._visible = visible;
-            if (this._element) {
-                if (visible) {
-                    this._element.classList.add('visible');
-                    setTimeout(() => this._element && this._element.focus(), 100);
-                } else {
-                    this._element.classList.remove('visible');
-                }
-            }
-        },
-
-        isVisible() {
-            return this._visible;
-        }
-    };
-
     // ===== ОСНОВНОЙ КЛАСС =====
     const SkipIntroPlugin = {
         _segments: [],
@@ -1611,87 +1342,54 @@
             
             if (segment) {
                 if (!PluginSettings.isTypeEnabled(segment.type)) {
-                    if (this._activeSegment) this._hideButton();
+                    if (this._activeSegment) this._hideNotification();
                     return;
                 }
                 
                 if (this._lastSkipped === segment) return;
                 
-                if (PluginSettings.isAutoSkip()) {
-                    this._doSkip(segment, true);
-                    return;
-                }
-                
                 if (this._activeSegment !== segment) {
                     this._activeSegment = segment;
-                    const label = {
-                        intro: 'Пропустить заставку',
-                        recap: 'Пропустить рекап',
-                        credits: 'Пропустить титры',
-                        preview: 'Пропустить превью'
-                    }[segment.type] || 'Пропустить';
                     
-                    const badge = segment._source === 'subs' ? '(субтитры)' :
-                                 segment._source === 'audio' ? '(звук)' : null;
-                    
-                    const tmdb = this._currentTmdb;
-                    const hasSkipped = tmdb && Cache.hasSkipped(tmdb, segment.type);
-                    
-                    if (hasSkipped) {
-                        this._showCountdown(label, segment, badge);
-                    } else {
-                        this._showNormal(label, segment, badge);
+                    if (PluginSettings.isAutoSkip()) {
+                        this._doSkip(segment, true);
+                        return;
                     }
                 }
             } else if (this._activeSegment) {
-                this._hideButton();
+                this._hideNotification();
             }
         },
 
-        _showNormal(label, segment, badge) {
-            SkipButton.show(
-                label,
-                () => {
-                    if (this._currentTmdb) {
-                        Cache.rememberSkip(this._currentTmdb, segment.type);
-                    }
-                    this._doSkip(segment, false);
-                },
-                null,
-                badge,
-                false
-            );
+        _showNotification(text, badge, showProgress) {
+            Notification.show(text, badge, showProgress);
         },
 
-        _showCountdown(label, segment, badge) {
-            SkipButton.show(
-                label,
-                () => this._doSkip(segment, true),
-                () => {
-                    console.log('[SkipIntro] Auto-skip cancelled');
-                    if (this._currentTmdb) {
-                        Cache.forgetSkip(this._currentTmdb, segment.type);
-                    }
-                    this._lastSkipped = segment;
-                    SkipButton.destroy();
-                    this._activeSegment = null;
-                },
-                badge,
-                true
-            );
-        },
-
-        _hideButton() {
+        _hideNotification() {
             this._activeSegment = null;
-            SkipButton.hide();
+            Notification.hide();
         },
 
         _doSkip(segment, auto) {
             this._lastSkipped = segment;
             this._activeSegment = null;
-            SkipButton.destroy();
             
-            ProgressMarker.markSkipped(segment);
+            const labels = {
+                intro: 'Заставка',
+                recap: 'Рекап',
+                credits: 'Титры',
+                preview: 'Превью'
+            };
+            
+            const label = labels[segment.type] || segment.type;
+            const time = Math.round(segment.end - segment.start);
+            
+            // Показываем уведомление о пропуске
+            Notification.show(
+                `⏭ ${label} пропущена`,
+                `${time}с${auto ? ' ⚡' : ''}`,
+                false
+            );
             
             try {
                 const video = Lampa.PlayerVideo.video();
@@ -1718,14 +1416,13 @@
             this._currentData = null;
             this._currentTmdb = null;
             this._detecting = false;
-            SkipButton.destroy();
+            Notification.destroy();
             AudioDetector.destroy();
-            ProgressMarker.clear();
         },
 
         _onDestroy() {
             this._cleanup();
-            ProgressMarker.clear();
+            ProgressMarker.destroy();
         }
     };
 
