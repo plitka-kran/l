@@ -728,7 +728,7 @@
             const label = labels[segment.type] || segment.type;
             const time = Math.round(segment.end - segment.start);
             
-            Notification.show(`⏭ ${label} пропущена`, `${time}с${auto ? ' ⚡' : ''}`, false);
+            Notification.show(`${label} пропущена`, `${time}с${auto ? ' ⚡' : ''}`, false);
             
             try {
                 const video = Lampa.PlayerVideo.video();
