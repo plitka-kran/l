@@ -81,29 +81,49 @@
             return null;
         },
 
-        // Универсальный парсер номеров сезона и серии из любых текстовых строк
-        parseSeasonEpisode(text) {
-            if (!text || typeof text !== 'string') return null;
-
-            // Шаблоны: "S01E05", "s1e5", "S01.E05"
-            let match = text.match(/[Ss](\d+)\s*[Ee](\d+)/);
-            if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
-
-            // Шаблоны: "1x05", "01x05"
-            match = text.match(/(\d+)\s*[xX]\s*(\d+)/);
-            if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
-
-            // Русскоязычные шаблоны: "1 сезон 5 серия", "сезон 1 серия 5"
-            match = text.match(/(?:сезон)?\s*(\d+)\s*(?:сезон\w*|серии\w*)?\s*(?:серия|эпизод)?\s*(\d+)\s*(?:сери\w*|эпизод\w*)?/i);
-            if (match && match[1] && match[2]) {
-                return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
+        // Универсальный парсинг номера сезона/серии из заголовка —
+        // подходит для любых источников (торренты, HDrezka, Kodik, Alloha и т.д.)
+        parseEpisodeTitle(title) {
+            if (!title) return null;
+            // 1 сезон 1 серия
+            let match = title.match(/(\d+)\s*сезон\s*(\d+)\s*серия/i);
+            if (match) {
+                return { season: parseInt(match[1]), episode: parseInt(match[2]) };
             }
-
-            // Упрощенный поиск цифр: "EP 05", "Episode 5" (сезон считаем первым, если не найден)
-            match = text.match(/(?:ep|episode|серия|эпизод)\s*(\d+)/i);
-            if (match) return { season: 1, episode: parseInt(match[1], 10) };
-
+            // Сезон 1 Серия 1
+            match = title.match(/Сезон\s*(\d+)\s*Серия\s*(\d+)/i);
+            if (match) {
+                return { season: parseInt(match[1]), episode: parseInt(match[2]) };
+            }
+            // S01E01
+            match = title.match(/[Ss](\d+)[Ee](\d+)/);
+            if (match) {
+                return { season: parseInt(match[1]), episode: parseInt(match[2]) };
+            }
+            // 1x01
+            match = title.match(/(\d+)x(\d+)/);
+            if (match) {
+                return { season: parseInt(match[1]), episode: parseInt(match[2]) };
+            }
             return null;
+        },
+
+        // Определение источника: важно только "torrent" (свой локальный сервер,
+        // без CORS-ограничений) или "online" (любой внешний балансер/плеер —
+        // HDrezka, Kodik, Alloha, Collaps и т.д. — все они грузят видео с чужого
+        // домена и попадают под одни и те же CORS-ограничения).
+        getSourceType() {
+            try {
+                const url = Lampa.Player.getUrl ? Lampa.Player.getUrl() : '';
+                if (url.startsWith('blob:') || url.includes('127.0.0.1') ||
+                    url.includes('localhost') || url.includes('torrent') ||
+                    url.includes('.torrent') || url.includes('magnet')) {
+                    return 'torrent';
+                }
+                return 'online';
+            } catch(e) {
+                return 'online';
+            }
         }
     };
 
@@ -202,6 +222,35 @@
         clear() {
             this._data = {};
             this._save();
+        },
+
+        _smartKey: 'skip_intro_smart',
+        hasSkipped(tmdbId, type) {
+            try {
+                const data = Lampa.Storage.get(this._smartKey, '{}');
+                const parsed = typeof data === 'string' ? JSON.parse(data) : data;
+                return parsed[`${tmdbId}_${type}`] === true;
+            } catch(e) {
+                return false;
+            }
+        },
+
+        rememberSkip(tmdbId, type) {
+            try {
+                let data = Lampa.Storage.get(this._smartKey, '{}');
+                data = typeof data === 'string' ? JSON.parse(data) : data;
+                data[`${tmdbId}_${type}`] = true;
+                Lampa.Storage.set(this._smartKey, JSON.stringify(data));
+            } catch(e) {}
+        },
+
+        forgetSkip(tmdbId, type) {
+            try {
+                let data = Lampa.Storage.get(this._smartKey, '{}');
+                data = typeof data === 'string' ? JSON.parse(data) : data;
+                delete data[`${tmdbId}_${type}`];
+                Lampa.Storage.set(this._smartKey, JSON.stringify(data));
+            } catch(e) {}
         }
     };
 
@@ -210,6 +259,18 @@
         _container: null,
         _markersContainer: null,
         _markers: [],
+        _colors: {
+            intro: '#4CAF50',
+            recap: '#FF9800',
+            credits: '#2196F3',
+            preview: '#9C27B0'
+        },
+        _typeNames: {
+            intro: 'Заставка',
+            recap: 'Рекап',
+            credits: 'Титры',
+            preview: 'Превью'
+        },
 
         init() {
             this._findProgressBar();
@@ -217,8 +278,15 @@
 
         _findProgressBar() {
             const selectors = [
-                '.player-progress', '.video-progress', '.progress-bar', '.progress', 
-                '.seek-bar', '.timeline', '.player-timeline', '[class*="progress"]', '[class*="timeline"]'
+                '.player-progress',
+                '.video-progress',
+                '.progress-bar',
+                '.progress',
+                '.seek-bar',
+                '.timeline',
+                '.player-timeline',
+                '[class*="progress"]',
+                '[class*="timeline"]'
             ];
 
             for (const selector of selectors) {
@@ -330,6 +398,10 @@
             
             const marker = document.createElement('div');
             marker.className = `skip-intro-marker skip-intro-marker-${type}`;
+            marker.dataset.type = type;
+            marker.dataset.start = start;
+            marker.dataset.end = end;
+            
             marker.style.cssText = `
                 position: absolute;
                 top: 50%;
@@ -430,6 +502,7 @@
                 .skip-intro-notification.show {
                     opacity: 1;
                     transform: translateX(-50%) translateY(0);
+                    pointer-events: none;
                 }
                 .skip-intro-notification .icon {
                     display: inline-block;
@@ -444,6 +517,21 @@
                     margin-left: 10px;
                     font-size: 13px;
                     opacity: 0.6;
+                    font-weight: 400;
+                }
+                .skip-intro-notification .progress-ring {
+                    display: inline-block;
+                    margin-left: 14px;
+                    width: 20px;
+                    height: 20px;
+                    border: 2px solid rgba(255,255,255,0.2);
+                    border-top-color: #4CAF50;
+                    border-radius: 50%;
+                    animation: skip-intro-spin 0.8s linear infinite;
+                    vertical-align: middle;
+                }
+                @keyframes skip-intro-spin {
+                    to { transform: rotate(360deg); }
                 }
                 @media (max-width: 720px) {
                     .skip-intro-notification {
@@ -457,7 +545,7 @@
             document.head.appendChild(style);
         },
 
-        show(text, badge) {
+        show(text, badge, showProgress) {
             this._injectStyles();
             this.hide();
 
@@ -479,6 +567,12 @@
                 badgeEl.className = 'badge';
                 badgeEl.textContent = badge;
                 el.appendChild(badgeEl);
+            }
+
+            if (showProgress) {
+                const progress = document.createElement('span');
+                progress.className = 'progress-ring';
+                el.appendChild(progress);
             }
 
             document.body.appendChild(el);
@@ -644,6 +738,30 @@
                         type: 'credits',
                         start: Math.round(lastCue.end),
                         end: Math.round(duration),
+                        _source: 'subs'
+                    });
+                }
+
+                const threshold = Math.max(0, duration - 600);
+                let maxGap2 = 0;
+                let creditsStart = 0;
+                let creditsEnd = 0;
+
+                for (let i = 0; i < cues.length - 1; i++) {
+                    if (cues[i].end < threshold) continue;
+                    const gap2 = cues[i + 1].start - cues[i].end;
+                    if (gap2 >= CONFIG.CREDITS_MIN_GAP && gap2 > maxGap2) {
+                        maxGap2 = gap2;
+                        creditsStart = Math.round(cues[i].end);
+                        creditsEnd = Math.round(cues[i + 1].start);
+                    }
+                }
+
+                if (creditsStart && creditsEnd && maxGap2 > gap) {
+                    segments.push({
+                        type: 'credits',
+                        start: creditsStart,
+                        end: creditsEnd,
                         _source: 'subs'
                     });
                 }
@@ -995,7 +1113,7 @@
                 );
             }
 
-            console.log('[SkipIntro] Plugin initialized globally');
+            console.log('[SkipIntro] Plugin initialized for Tizen');
         },
 
         _onStart(data) {
@@ -1089,22 +1207,22 @@
                 is_series: false
             };
 
-            if (!data) return meta;
-
-            // 1. Попытка забрать данные напрямую из передаваемого Lampa события
+            // 1. Пробуем получить из data напрямую
             if (data.tmdb_id) meta.tmdb_id = data.tmdb_id;
             if (data.imdb_id) meta.imdb_id = data.imdb_id;
-            if (data.season != null) meta.season = parseInt(data.season, 10);
-            if (data.episode != null) meta.episode = parseInt(data.episode, 10);
+            if (data.season != null) meta.season = parseInt(data.season);
+            if (data.episode != null) meta.episode = parseInt(data.episode);
 
-            // 2. Универсальное сканирование активной карточки контента в Lampa
+            // 2. Из карточки
             let card = data.card || null;
-            try {
-                const activity = Lampa.Activity.active();
-                if (activity) {
-                    card = activity.card || activity.movie || null;
-                }
-            } catch(e) {}
+            if (!card) {
+                try {
+                    const activity = Lampa.Activity.active();
+                    if (activity) {
+                        card = activity.card || activity.movie || null;
+                    }
+                } catch(e) {}
+            }
 
             if (card) {
                 if (!meta.tmdb_id) meta.tmdb_id = card.id || null;
@@ -1114,75 +1232,98 @@
                 }
             }
 
-            // 3. Сканирование плейлистов любого балансера или онлайн-модуля
-            // Мы ищем текущую серию в списке воспроизведения
+            // 3. Универсально: ищем season/episode в playlist (актуально для
+            // ЛЮБОГО источника — торрент, HDrezka, Kodik, Alloha, Collaps и т.д.,
+            // все они кладут номер сезона/серии в playlist в том или ином виде)
             if (data.playlist && Array.isArray(data.playlist)) {
-                // Ищем элемент, помеченный как активный, либо используем первый
-                const activeItem = data.playlist.find(item => item.active === true) || data.playlist[0];
-                
-                if (activeItem) {
-                    // Универсальная проверка всевозможных ключей серий/сезонов, которые шлют разные балансеры
-                    const s = activeItem.season ?? activeItem.s ?? activeItem.season_num ?? activeItem.seasons;
-                    const e = activeItem.episode ?? activeItem.e ?? activeItem.episode_num ?? activeItem.episodes;
-                    
-                    if (s != null && meta.season == null) meta.season = parseInt(s, 10);
-                    if (e != null && meta.episode == null) meta.episode = parseInt(e, 10);
+                const url = data.url;
+                for (let i = 0; i < data.playlist.length; i++) {
+                    const item = data.playlist[i];
+                    const itemUrl = typeof item.url === 'string' ? item.url : '';
 
-                    // Если в элементе плейлиста есть текстовый тайтл - пробуем его распарсить
-                    if ((meta.season == null || meta.episode == null) && activeItem.title) {
-                        const parsed = Utils.parseSeasonEpisode(activeItem.title);
-                        if (parsed) {
-                            if (meta.season == null) meta.season = parsed.season;
-                            if (meta.episode == null) meta.episode = parsed.episode;
-                        }
+                    if (itemUrl === url || i === 0) {
+                        if (item.season != null && meta.season == null) meta.season = parseInt(item.season);
+                        if (item.episode != null && meta.episode == null) meta.episode = parseInt(item.episode);
+                        if (item.s != null && meta.season == null) meta.season = parseInt(item.s);
+                        if (item.e != null && meta.episode == null) meta.episode = parseInt(item.e);
+                        if (item.season_num != null && meta.season == null) meta.season = parseInt(item.season_num);
+                        if (item.episode_num != null && meta.episode == null) meta.episode = parseInt(item.episode_num);
                     }
+                    if (itemUrl === url) break;
                 }
             }
 
-            // 4. Универсальный прогон текстовых полей плеера через регулярные выражения
-            if (meta.season == null || meta.episode == null) {
-                // Сканируем все места, куда плеер мог положить название файла или серии
-                const fieldsToParse = [
-                    data.title,
-                    data.file ? data.file.title : null,
-                    data.video ? data.video.title : null,
-                    data.url
-                ];
-
-                for (const field of fieldsToParse) {
-                    if (field) {
-                        const parsed = Utils.parseSeasonEpisode(field);
-                        if (parsed) {
-                            if (meta.season == null) meta.season = parsed.season;
-                            if (meta.episode == null) meta.episode = parsed.episode;
-                            break;
-                        }
-                    }
+            // 4. Универсально: из заголовка эпизода (работает для любого
+            // источника, где серия называется в стандартном формате)
+            if ((meta.season == null || meta.episode == null) && data.title) {
+                const parsed = Utils.parseEpisodeTitle(data.title);
+                if (parsed) {
+                    if (meta.season == null) meta.season = parsed.season;
+                    if (meta.episode == null) meta.episode = parsed.episode;
                 }
             }
 
-            // 5. Поиск скрытого ID фильма в системных хранилищах Lampa
+            // 5. Универсально: из названия файла
+            if ((meta.season == null || meta.episode == null) && data.file && data.file.title) {
+                const parsed = Utils.parseEpisodeTitle(data.file.title);
+                if (parsed) {
+                    if (meta.season == null) meta.season = parsed.season;
+                    if (meta.episode == null) meta.episode = parsed.episode;
+                }
+            }
+
+            // 6. TMDB ID из активности Lampa — не зависит от того, что за
+            // балансер сейчас крутит видео, карточка (activity.movie) всегда одна
             if (!meta.tmdb_id) {
                 try {
-                    const keys = ['online_view_id', 'current_movie_id', 'player_movie_id'];
-                    for (const key of keys) {
-                        const id = Lampa.Storage.get(key);
-                        if (id) {
-                            meta.tmdb_id = id;
-                            break;
-                        }
+                    const activity = Lampa.Activity.active();
+                    if (activity && activity.movie && activity.movie.id) {
+                        meta.tmdb_id = activity.movie.id;
                     }
-                    
-                    const opened = Lampa.Storage.get('current', null);
-                    if (opened && opened.id) {
-                        meta.tmdb_id = opened.id;
+                    // 6b. Многие балансеры передают текущий сезон/серию через
+                    // query-параметры активности (Lampa сама рулит навигацией
+                    // по сезонам/сериям поверх любого балансера)
+                    const query = activity && (activity.query || (activity.activity && activity.activity.query));
+                    if (query) {
+                        if (meta.season == null && query.season != null) meta.season = parseInt(query.season);
+                        if (meta.episode == null && query.episode != null) meta.episode = parseInt(query.episode);
                     }
                 } catch(e) {}
             }
 
-            // Если нашли TMDB ID, сезон и серию — активируем логику сериала
+            // 7. Если есть ID, это сериал
             if (meta.tmdb_id && meta.season != null && meta.episode != null) {
                 meta.is_series = true;
+            }
+
+            // 8. Универсально: пробуем извлечь season/episode прямо из URL
+            // плеера — работает не только для HDrezka, у большинства балансеров
+            // тоже встречается паттерн вида /123-1-5 или ?season=1&episode=5
+            if (meta.season == null || meta.episode == null) {
+                try {
+                    const url = Lampa.Player.getUrl ? Lampa.Player.getUrl() : '';
+                    let match = url.match(/\/\d+-(\d+)-(\d+)(?:\/|\?|$)/);
+                    if (!match) match = url.match(/[?&]season=(\d+)[^&]*&episode=(\d+)/i);
+                    if (!match) match = url.match(/[?&]s=(\d+)[^&]*&e=(\d+)/i);
+                    if (match) {
+                        if (meta.season == null) meta.season = parseInt(match[1]);
+                        if (meta.episode == null) meta.episode = parseInt(match[2]);
+                    }
+                } catch(e) {}
+            }
+
+            if (meta.tmdb_id && meta.season != null && meta.episode != null) {
+                meta.is_series = true;
+            }
+
+            // Финальный fallback — сохранённая ранее карточка в Storage
+            if (!meta.tmdb_id) {
+                try {
+                    const current = Lampa.Storage.get('current', null);
+                    if (current && current.id) {
+                        meta.tmdb_id = current.id;
+                    }
+                } catch(e) {}
             }
 
             return meta;
@@ -1236,6 +1377,18 @@
                         Cache.set(meta.tmdb_id, meta.season, meta.episode, subSegments);
                         this._detecting = false;
                         callback(subSegments);
+                        return;
+                    }
+
+                    // Анализ звука через Web Audio API работает только когда
+                    // видео с того же источника (локальный сервер торрента).
+                    // Для онлайн-балансеров (HDrezka, Kodik, Alloha и т.п.)
+                    // браузер блокирует чтение "чужого" видео по CORS, поэтому
+                    // там смысла тратить время на попытку нет — сразу отдаём
+                    // результат наверх и полагаемся на API/субтитры.
+                    if (Utils.getSourceType() !== 'torrent') {
+                        this._detecting = false;
+                        callback([]);
                         return;
                     }
 
@@ -1348,7 +1501,8 @@
             
             Notification.show(
                 `${label} пропущена`,
-                `${time}с${auto ? ' ⚡' : ''}`
+                `${time}с${auto ? ' ⚡' : ''}`,
+                false
             );
             
             try {
