@@ -20,7 +20,8 @@
         MIN_ENERGY_PEAK_DURATION: 15,
         MAX_ENERGY_PEAK_DURATION: 150,
         MIN_ENERGY_SAMPLES: 10,
-        NOTIFICATION_DURATION: 3000
+        NOTIFICATION_DURATION: 3000,
+        DEBUG_MODE: true
     };
 
     // ===== УТИЛИТЫ =====
@@ -50,17 +51,77 @@
         }
     };
 
+    // ===== ДЕБАГ ЛОГГЕР =====
+    const Debug = {
+        _element: null,
+        _lines: [],
+        _maxLines: 10,
+
+        init() {
+            if (!CONFIG.DEBUG_MODE) return;
+            this._createElement();
+            this.log('🐛 ПЛАГИН ЗАПУЩЕН');
+        },
+
+        _createElement() {
+            if (this._element) return;
+            const el = document.createElement('div');
+            el.id = 'skip-debug';
+            el.style.cssText = `
+                position: fixed;
+                bottom: 10px;
+                left: 10px;
+                right: 10px;
+                background: rgba(0,0,0,0.9);
+                color: #00ff88;
+                font-family: monospace;
+                font-size: 11px;
+                padding: 8px 12px;
+                border-radius: 8px;
+                z-index: 999999;
+                max-height: 200px;
+                overflow-y: auto;
+                border: 1px solid rgba(0,255,136,0.2);
+                pointer-events: none;
+                line-height: 1.5;
+            `;
+            document.body.appendChild(el);
+            this._element = el;
+        },
+
+        log(msg) {
+            if (!CONFIG.DEBUG_MODE) return;
+            if (!this._element) this._createElement();
+            
+            const time = new Date().toLocaleTimeString();
+            this._lines.push(`[${time}] ${msg}`);
+            if (this._lines.length > this._maxLines) {
+                this._lines.shift();
+            }
+            this._element.textContent = this._lines.join('\n');
+            this._element.scrollTop = this._element.scrollHeight;
+        },
+
+        clear() {
+            this._lines = [];
+            if (this._element) {
+                this._element.textContent = '';
+            }
+        },
+
+        destroy() {
+            if (this._element) {
+                this._element.parentNode.removeChild(this._element);
+                this._element = null;
+            }
+        }
+    };
+
     // ===== ВИЗУАЛЬНАЯ РАЗМЕТКА ПРОГРЕСС-БАРА =====
     const ProgressMarker = {
         _container: null,
         _markersContainer: null,
         _markers: [],
-        _colors: {
-            intro: '#4CAF50',
-            recap: '#FF9800',
-            credits: '#2196F3',
-            preview: '#9C27B0'
-        },
 
         init() {
             this._findProgressBar();
@@ -74,31 +135,22 @@
                 '.progress',
                 '.seek-bar',
                 '.timeline',
-                '.player-timeline',
-                '[class*="progress"]',
-                '[class*="timeline"]'
+                '.player-timeline'
             ];
 
             for (const selector of selectors) {
                 const el = document.querySelector(selector);
                 if (el) {
                     this._container = el;
+                    Debug.log(`✅ Найден прогресс-бар: ${selector}`);
                     break;
                 }
             }
 
             if (!this._container) {
-                try {
-                    const player = document.querySelector('.player');
-                    if (player) {
-                        const progress = player.querySelector('[class*="progress"]') || 
-                                       player.querySelector('[class*="timeline"]');
-                        if (progress) this._container = progress;
-                    }
-                } catch(e) {}
+                Debug.log('⚠️ Прогресс-бар не найден');
+                return;
             }
-
-            if (!this._container) return;
 
             let markersContainer = this._container.querySelector('.skip-intro-markers');
             if (!markersContainer) {
@@ -118,7 +170,6 @@
                 this._container.appendChild(markersContainer);
             }
             this._markersContainer = markersContainer;
-            
             this._injectStyles();
         },
 
@@ -224,6 +275,8 @@
             sorted.forEach(seg => {
                 this.addMarker(seg.start, seg.end, seg.type, duration);
             });
+            
+            Debug.log(`📊 Добавлено ${sorted.length} маркеров на прогресс-бар`);
         },
 
         highlightActive(segment) {
@@ -271,7 +324,6 @@
                     transform: translateX(-50%) translateY(-20px);
                     background: rgba(0, 0, 0, 0.85);
                     backdrop-filter: blur(12px);
-                    -webkit-backdrop-filter: blur(12px);
                     color: #fff;
                     padding: 16px 40px;
                     border-radius: 12px;
@@ -281,33 +333,16 @@
                     opacity: 0;
                     pointer-events: none;
                     transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-                    font-family: system-ui, -apple-system, sans-serif;
+                    font-family: system-ui, sans-serif;
                     border: 1px solid rgba(255, 255, 255, 0.1);
                     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
                     text-align: center;
                     min-width: 200px;
                     max-width: 80vw;
-                    letter-spacing: 0.3px;
                 }
                 .skip-intro-notification.show {
                     opacity: 1;
                     transform: translateX(-50%) translateY(0);
-                    pointer-events: none;
-                }
-                .skip-intro-notification .icon {
-                    display: inline-block;
-                    margin-right: 12px;
-                    font-size: 22px;
-                }
-                .skip-intro-notification .label {
-                    display: inline-block;
-                }
-                .skip-intro-notification .badge {
-                    display: inline-block;
-                    margin-left: 10px;
-                    font-size: 13px;
-                    opacity: 0.6;
-                    font-weight: 400;
                 }
                 @media (max-width: 720px) {
                     .skip-intro-notification {
@@ -327,23 +362,11 @@
 
             const el = document.createElement('div');
             el.className = 'skip-intro-notification';
-            
-            const icon = document.createElement('span');
-            icon.className = 'icon';
-            icon.textContent = '⏭';
-            el.appendChild(icon);
-
-            const label = document.createElement('span');
-            label.className = 'label';
-            label.textContent = text;
-            el.appendChild(label);
-
-            if (badge) {
-                const badgeEl = document.createElement('span');
-                badgeEl.className = 'badge';
-                badgeEl.textContent = badge;
-                el.appendChild(badgeEl);
-            }
+            el.innerHTML = `
+                <span style="margin-right:12px;">⏭</span>
+                ${text}
+                ${badge ? `<span style="margin-left:10px;font-size:13px;opacity:0.6;">${badge}</span>` : ''}
+            `;
 
             document.body.appendChild(el);
             this._element = el;
@@ -382,14 +405,19 @@
     const SubtitleDetector = {
         detect(video, duration) {
             return new Promise((resolve) => {
+                Debug.log('🔍 Поиск субтитров...');
+                
                 try {
-                    // Пробуем textTracks
+                    // Проверяем textTracks
                     if (video.textTracks && video.textTracks.length) {
+                        Debug.log(`📺 Найдено ${video.textTracks.length} textTrack-ов`);
                         for (let i = 0; i < video.textTracks.length; i++) {
                             const track = video.textTracks[i];
                             if (track.cues && track.cues.length > CONFIG.MIN_SUBTITLES) {
+                                Debug.log(`📝 Track ${i}: ${track.cues.length} субтитров`);
                                 const segments = this._analyzeCues(track.cues, duration);
                                 if (segments.length) {
+                                    Debug.log(`✅ Найдено ${segments.length} сегментов по субтитрам`);
                                     resolve(segments);
                                     return;
                                 }
@@ -397,21 +425,31 @@
                         }
                     }
 
-                    // Пробуем Lampa субтитры
+                    // Проверяем Lampa субтитры
                     const subs = Lampa.PlayerVideo && Lampa.PlayerVideo.subtitles ? 
                         Lampa.PlayerVideo.subtitles() : null;
                     if (subs && subs.length) {
+                        Debug.log(`📝 Найдено ${subs.length} субтитров в Lampa`);
                         for (let i = 0; i < subs.length; i++) {
                             if (subs[i].url) {
+                                Debug.log(`📥 Загрузка субтитров: ${subs[i].url}`);
                                 this._fetchSubtitle(subs[i].url, duration)
-                                    .then(segments => resolve(segments))
+                                    .then(segments => {
+                                        if (segments.length) {
+                                            Debug.log(`✅ Найдено ${segments.length} сегментов по субтитрам`);
+                                        }
+                                        resolve(segments);
+                                    })
                                     .catch(() => resolve([]));
                                 return;
                             }
                         }
                     }
+                    
+                    Debug.log('⚠️ Субтитры не найдены');
                     resolve([]);
                 } catch(e) {
+                    Debug.log(`❌ Ошибка: ${e.message}`);
                     resolve([]);
                 }
             });
@@ -422,8 +460,8 @@
                 const xhr = new XMLHttpRequest();
                 xhr.open('GET', url, true);
                 xhr.timeout = CONFIG.DETECTION_TIMEOUT;
-                xhr.ontimeout = () => resolve([]);
-                xhr.onerror = () => resolve([]);
+                xhr.ontimeout = () => { Debug.log('⏱️ Таймаут загрузки субтитров'); resolve([]); };
+                xhr.onerror = () => { Debug.log('❌ Ошибка загрузки субтитров'); resolve([]); };
                 xhr.onload = () => {
                     if (xhr.status >= 200 && xhr.status < 300 && xhr.responseText) {
                         const segments = this._parseSrt(xhr.responseText, duration);
@@ -465,7 +503,10 @@
         },
 
         _analyzeCues(cues, duration) {
-            if (cues.length < CONFIG.MIN_SUBTITLES) return [];
+            if (cues.length < CONFIG.MIN_SUBTITLES) {
+                Debug.log(`⚠️ Мало субтитров: ${cues.length} < ${CONFIG.MIN_SUBTITLES}`);
+                return [];
+            }
 
             cues.sort((a, b) => a.start - b.start);
             const segments = [];
@@ -478,6 +519,7 @@
                     end: Math.round(cues[0].start),
                     _source: 'subs'
                 });
+                Debug.log(`🎯 Найден INTRO в начале: 0 → ${Math.round(cues[0].start)}с`);
             }
 
             // Ищем INTRO по гэпам между субтитрами
@@ -501,6 +543,7 @@
                     end: introEnd,
                     _source: 'subs'
                 });
+                Debug.log(`🎯 Найден INTRO по гэпу: ${introStart} → ${introEnd}с (${maxGap}с)`);
             }
 
             // Ищем CREDITS (большой гэп в конце)
@@ -515,9 +558,9 @@
                         end: Math.round(duration),
                         _source: 'subs'
                     });
+                    Debug.log(`🎯 Найден CREDITS в конце: ${Math.round(lastCue.end)} → ${Math.round(duration)}с`);
                 }
 
-                // Ищем гэп в последних 10 минутах
                 const threshold = Math.max(0, duration - 600);
                 let maxGap2 = 0;
                 let creditsStart = 0;
@@ -540,6 +583,7 @@
                         end: creditsEnd,
                         _source: 'subs'
                     });
+                    Debug.log(`🎯 Найден CREDITS по гэпу: ${creditsStart} → ${creditsEnd}с`);
                 }
             }
 
@@ -558,10 +602,12 @@
 
         detect(video) {
             return new Promise((resolve) => {
+                Debug.log('🔊 Запуск аудио-детекции...');
                 this._cleanup();
 
                 try {
                     if (!window.AudioContext && !window.webkitAudioContext) {
+                        Debug.log('❌ Web Audio API не доступен');
                         resolve(null);
                         return;
                     }
@@ -577,6 +623,7 @@
                         this._source.connect(this._analyser);
                         this._analyser.connect(this._context.destination);
                         this._connected = true;
+                        Debug.log('✅ AudioContext создан');
                     }
 
                     if (!this._analyser) {
@@ -593,7 +640,8 @@
                             const currentTime = video.currentTime;
                             if (currentTime - startTime > CONFIG.AUDIO_MAX_TIME) {
                                 this._cleanup();
-                                resolve(this._analyze(samples));
+                                const result = this._analyze(samples);
+                                resolve(result);
                                 return;
                             }
 
@@ -614,10 +662,12 @@
 
                     this._timeout = setTimeout(() => {
                         this._cleanup();
-                        resolve(this._analyze(samples));
+                        const result = this._analyze(samples);
+                        resolve(result);
                     }, CONFIG.AUDIO_MAX_TIME * 1000);
 
                 } catch(e) {
+                    Debug.log(`❌ Ошибка аудио: ${e.message}`);
                     this._cleanup();
                     resolve(null);
                 }
@@ -625,9 +675,11 @@
         },
 
         _analyze(samples) {
-            if (samples.length < CONFIG.AUDIO_MIN_SAMPLES) return null;
+            if (samples.length < CONFIG.AUDIO_MIN_SAMPLES) {
+                Debug.log(`⚠️ Мало сэмплов: ${samples.length}`);
+                return null;
+            }
 
-            // Сглаживание
             const smoothed = [];
             for (let i = 2; i < samples.length - 2; i++) {
                 const avg = (samples[i-2].energy + samples[i-1].energy + samples[i].energy + 
@@ -640,7 +692,6 @@
 
             if (smoothed.length < CONFIG.MIN_ENERGY_SAMPLES) return null;
 
-            // Находим медиану
             const energies = smoothed.map(s => s.energy).sort((a, b) => a - b);
             const median = energies[Math.floor(energies.length / 2)];
             const threshold = median * CONFIG.ENERGY_THRESHOLD_MULTIPLIER;
@@ -675,6 +726,7 @@
             }
 
             if (peakStart && peakEnd) {
+                Debug.log(`🎵 Найден INTRO по звуку: ${Math.round(peakStart)} → ${Math.round(peakEnd)}с`);
                 return {
                     type: 'intro',
                     start: Math.round(peakStart),
@@ -683,6 +735,7 @@
                 };
             }
 
+            Debug.log('⚠️ Аудио-детекция не нашла сегментов');
             return null;
         },
 
@@ -724,95 +777,115 @@
         _lastSkipped: null,
         _detecting: false,
         _initialized: false,
-        _videoLoaded: false,
+        _videoChecked: false,
 
         init() {
             if (this._initialized) return;
             this._initialized = true;
 
+            Debug.init();
             ProgressMarker.init();
 
-            Lampa.Player.listener.follow('start', () => this._onStart());
-            Lampa.Player.listener.follow('destroy', () => this._onDestroy());
+            Lampa.Player.listener.follow('start', () => {
+                Debug.log('🎬 Событие "start"');
+                this._onStart();
+            });
+            
+            Lampa.Player.listener.follow('destroy', () => {
+                Debug.log('🛑 Событие "destroy"');
+                this._onDestroy();
+            });
             
             if (Lampa.PlayerVideo && Lampa.PlayerVideo.listener) {
                 Lampa.PlayerVideo.listener.follow('timeupdate', 
-                    Utils.throttle((data) => this._onTimeUpdate(data), 300)
+                    Utils.throttle((data) => {
+                        if (this._segments.length) {
+                            this._onTimeUpdate(data);
+                        }
+                    }, 500)
                 );
             }
 
-            console.log('[SkipIntro] Plugin started (no API, pure detection)');
+            // Пробуем инициализировать сразу если видео уже есть
+            setTimeout(() => {
+                if (!this._videoChecked) {
+                    this._checkVideo();
+                }
+            }, 2000);
+
+            Debug.log('✅ Плагин инициализирован');
+        },
+
+        _checkVideo() {
+            if (this._videoChecked) return;
+            this._videoChecked = true;
+
+            let video = null;
+            try {
+                video = Lampa.PlayerVideo.video();
+            } catch(e) {}
+
+            if (video && video.duration > 0) {
+                Debug.log(`🎥 Видео уже загружено (${Math.round(video.duration)}с)`);
+                this._runDetection(video);
+            } else {
+                Debug.log('⏳ Видео еще не загружено, ждем...');
+                // Пробуем еще раз через секунду
+                setTimeout(() => {
+                    this._videoChecked = false;
+                    this._checkVideo();
+                }, 1000);
+            }
         },
 
         _onStart() {
             this._cleanup();
-            this._videoLoaded = false;
-            
-            console.log('[SkipIntro] Player started, waiting for video...');
-            
-            // Ждем загрузки видео
-            let attempts = 0;
-            const checkVideo = () => {
-                attempts++;
-                let video = null;
-                try {
-                    video = Lampa.PlayerVideo.video();
-                } catch(e) {}
-                
-                if (video && video.duration > 0) {
-                    this._videoLoaded = true;
-                    console.log(`[SkipIntro] Video loaded (${Math.round(video.duration)}s)`);
-                    this._runDetection(video);
-                } else if (attempts < 30) {
-                    setTimeout(checkVideo, 500);
-                } else {
-                    console.log('[SkipIntro] Video load timeout');
-                }
-            };
-            checkVideo();
+            this._videoChecked = false;
+            this._checkVideo();
         },
 
         _runDetection(video) {
-            if (this._detecting) return;
+            if (this._detecting) {
+                Debug.log('⏳ Детекция уже запущена');
+                return;
+            }
             this._detecting = true;
 
             const duration = video.duration;
+            Debug.log(`🔍 Запуск детекции (длительность: ${Math.round(duration)}с)`);
             
-            console.log('[SkipIntro] Starting subtitle detection...');
-            
+            // Сначала субтитры
             SubtitleDetector.detect(video, duration)
                 .then(subSegments => {
                     if (subSegments && subSegments.length) {
                         this._segments = subSegments;
                         this._updateProgressMarkers(subSegments);
                         this._detecting = false;
-                        console.log(`[SkipIntro] Subtitle detection: ${subSegments.length} segments found`);
-                        subSegments.forEach(seg => {
-                            console.log(`  - ${seg.type}: ${seg.start}s → ${seg.end}s (${seg.end - seg.start}s)`);
-                        });
+                        Debug.log(`✅ Детекция завершена: ${subSegments.length} сегментов`);
                         return;
                     }
 
-                    console.log('[SkipIntro] No subtitle segments, trying audio...');
+                    // Если субтитры не дали результата - пробуем звук
+                    Debug.log('🔄 Субтитры не дали результата, пробуем звук...');
                     AudioDetector.detect(video)
                         .then(audioSegment => {
                             this._detecting = false;
                             if (audioSegment) {
                                 this._segments = [audioSegment];
                                 this._updateProgressMarkers([audioSegment]);
-                                console.log(`[SkipIntro] Audio detection: ${audioSegment.type} ${audioSegment.start}s → ${audioSegment.end}s`);
+                                Debug.log('✅ Детекция по звуку успешна');
                             } else {
-                                console.log('[SkipIntro] No segments found');
+                                Debug.log('⚠️ Детекция не нашла сегментов');
                             }
                         })
                         .catch(() => {
                             this._detecting = false;
-                            console.log('[SkipIntro] Audio detection failed');
+                            Debug.log('❌ Ошибка аудио-детекции');
                         });
                 })
                 .catch(() => {
                     this._detecting = false;
-                    console.log('[SkipIntro] Subtitle detection failed');
+                    Debug.log('❌ Ошибка детекции субтитров');
                 });
         },
 
@@ -825,10 +898,8 @@
             
             if (duration > 0 && segments && segments.length) {
                 ProgressMarker.updateMarkers(segments, duration);
-                return;
-            }
-            
-            if (!duration) {
+            } else if (!duration) {
+                // Ждем загрузки видео
                 let attempts = 0;
                 const checkDuration = () => {
                     attempts++;
@@ -881,17 +952,14 @@
             const label = labels[segment.type] || segment.type;
             const time = Math.round(segment.end - segment.start);
             
-            Notification.show(
-                `⏭ ${label} пропущена`,
-                `${time}с`
-            );
+            Debug.log(`⏭ Пропуск: ${label} (${time}с)`);
+            Notification.show(`⏭ ${label} пропущена`, `${time}с`);
             
             try {
                 const video = Lampa.PlayerVideo.video();
                 if (video) {
                     const target = Math.min(segment.end, video.duration || segment.end);
                     video.currentTime = target;
-                    console.log(`[SkipIntro] Skipped ${segment.type} to ${target}s`);
                     
                     setTimeout(() => {
                         try {
@@ -900,7 +968,7 @@
                     }, 100);
                 }
             } catch(e) {
-                console.log('[SkipIntro] Error seeking:', e);
+                Debug.log(`❌ Ошибка перемотки: ${e.message}`);
             }
         },
 
@@ -909,13 +977,12 @@
             this._activeSegment = null;
             this._lastSkipped = null;
             this._detecting = false;
-            this._videoLoaded = false;
             Notification.destroy();
             AudioDetector.destroy();
         },
 
         _onDestroy() {
-            console.log('[SkipIntro] Player destroyed');
+            Debug.log('🧹 Очистка');
             this._cleanup();
             ProgressMarker.destroy();
         }
@@ -932,10 +999,13 @@
 
     if (window.Lampa && Lampa.Listener) {
         Lampa.Listener.follow('app', (data) => {
-            if (data.type === 'ready') initPlugin();
+            if (data.type === 'ready') {
+                Debug.log('📱 Lampa готова');
+                initPlugin();
+            }
         });
     }
 
-    setTimeout(initPlugin, 1000);
+    setTimeout(initPlugin, 2000);
 
 }();
