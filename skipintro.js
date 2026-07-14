@@ -105,6 +105,11 @@
             if (match) {
                 return { season: parseInt(match[1]), episode: parseInt(match[2]) };
             }
+            // 2 сезон 3 серия (другой вариант)
+            match = title.match(/(\d+)\s*сезон\s*(\d+)\s*серия/i);
+            if (match) {
+                return { season: parseInt(match[1]), episode: parseInt(match[2]) };
+            }
             return null;
         },
 
@@ -118,6 +123,10 @@
                     return 'hdrezka';
                 }
                 if (document.querySelector('.hdrezka-player, .rezka-player')) {
+                    return 'hdrezka';
+                }
+                // Проверяем по наличию сезона в URL
+                if (url.match(/[Ss]\d+[Ee]\d+/) || url.match(/сезон/i)) {
                     return 'hdrezka';
                 }
                 return 'other';
@@ -147,6 +156,10 @@
                     if (m) return m[1];
                 }
                 
+                // Для HDrezka из URL
+                const hdMatch = url.match(/https?:\/\/[^\/]+\/(\d+)-/);
+                if (hdMatch) return hdMatch[1];
+                
                 return null;
             } catch(e) {
                 return null;
@@ -158,9 +171,11 @@
             let episode = null;
             
             try {
+                // 1. Из data напрямую
                 if (data.season != null) season = parseInt(data.season);
                 if (data.episode != null) episode = parseInt(data.episode);
                 
+                // 2. Из playlist
                 if (data.playlist && Array.isArray(data.playlist)) {
                     const url = data.url;
                     for (let i = 0; i < data.playlist.length; i++) {
@@ -178,6 +193,7 @@
                     }
                 }
                 
+                // 3. Из title
                 if (data.title) {
                     const parsed = this.parseHDrezkaTitle(data.title);
                     if (parsed) {
@@ -186,6 +202,7 @@
                     }
                 }
                 
+                // 4. Из file.title
                 if (data.file && data.file.title) {
                     const parsed = this.parseHDrezkaTitle(data.file.title);
                     if (parsed) {
@@ -194,6 +211,7 @@
                     }
                 }
                 
+                // 5. Из URL
                 if (season == null || episode == null) {
                     const url = Lampa.Player.getUrl ? Lampa.Player.getUrl() : '';
                     const match = url.match(/[Ss](\d+)[Ee](\d+)/i);
@@ -203,6 +221,7 @@
                     }
                 }
                 
+                // 6. Из Activity
                 if (season == null || episode == null) {
                     try {
                         const activity = Lampa.Activity.active();
@@ -210,6 +229,19 @@
                             const movie = activity.movie;
                             if (movie.season != null && season == null) season = parseInt(movie.season);
                             if (movie.episode != null && episode == null) episode = parseInt(movie.episode);
+                            if (movie.s != null && season == null) season = parseInt(movie.s);
+                            if (movie.e != null && episode == null) episode = parseInt(movie.e);
+                        }
+                    } catch(e) {}
+                }
+                
+                // 7. Из Lampa Storage (важно для HDrezka)
+                if (season == null || episode == null) {
+                    try {
+                        const last = Lampa.Storage.get('last_watch', null);
+                        if (last) {
+                            if (last.season != null && season == null) season = parseInt(last.season);
+                            if (last.episode != null && episode == null) episode = parseInt(last.episode);
                         }
                     } catch(e) {}
                 }
@@ -224,6 +256,7 @@
             try {
                 if (data.is_series === true) return true;
                 if (data.series === true) return true;
+                if (data.type === 'series') return true;
                 
                 const card = data.card || null;
                 if (card) {
@@ -231,6 +264,7 @@
                     if (card.number_of_seasons) return true;
                     if (card.first_air_date) return true;
                     if (card.seasons) return true;
+                    if (card.type === 'series') return true;
                 }
                 
                 const activity = Lampa.Activity.active();
@@ -240,11 +274,18 @@
                         if (movie.name && !movie.title) return true;
                         if (movie.number_of_seasons) return true;
                         if (movie.seasons) return true;
+                        if (movie.type === 'series') return true;
                     }
                 }
                 
                 const se = this.getSeasonEpisode(data);
                 if (se.season != null && se.episode != null) return true;
+                
+                // Проверка URL на признаки сериала
+                const url = Lampa.Player.getUrl ? Lampa.Player.getUrl() : '';
+                if (url.match(/[Ss]\d+[Ee]\d+/) || url.match(/сезон/i) || url.match(/series/i)) {
+                    return true;
+                }
                 
                 return false;
             } catch(e) {
@@ -253,11 +294,11 @@
         }
     };
 
-    // ===== ДЕБАГ ЛОГГЕР В ПЛЕЕРЕ (ВСЕГДА ВИДИМ) =====
+    // ===== ДЕБАГ ЛОГГЕР =====
     const DebugLogger = {
         _element: null,
         _lines: [],
-        _maxLines: 12,
+        _maxLines: 15,
         _visible: true,
 
         init() {
@@ -270,13 +311,6 @@
             this.log('🐛 РЕЖИМ ОТЛАДКИ');
             this.log('📺 Источник: ' + Utils.getSourceType());
             this.log('⏳ Ожидание воспроизведения...');
-            
-            // Скрываем через 60 секунд если ничего не произошло
-            setTimeout(() => {
-                if (this._lines.length < 3) {
-                    this.log('⚠️ Нет активности, проверьте плеер');
-                }
-            }, 10000);
         },
 
         _injectStyles() {
@@ -287,39 +321,39 @@
             style.textContent = `
                 .skip-intro-debug {
                     position: fixed;
-                    bottom: 30px;
+                    bottom: 20px;
                     left: 50%;
                     transform: translateX(-50%);
-                    width: 90%;
-                    max-width: 800px;
-                    background: rgba(0, 0, 0, 0.92);
+                    width: 92%;
+                    max-width: 900px;
+                    background: rgba(0, 0, 0, 0.93);
                     backdrop-filter: blur(16px);
                     -webkit-backdrop-filter: blur(16px);
-                    border: 2px solid rgba(0, 255, 136, 0.3);
-                    border-radius: 16px;
-                    padding: 14px 18px;
+                    border: 2px solid rgba(0, 255, 136, 0.25);
+                    border-radius: 14px;
+                    padding: 12px 16px;
                     z-index: 999999;
                     font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
                     font-size: 13px;
-                    line-height: 1.7;
+                    line-height: 1.6;
                     color: #00ff88;
-                    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.9);
-                    max-height: 350px;
+                    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.95);
+                    max-height: 380px;
                     overflow: hidden;
                     pointer-events: none;
-                    text-shadow: 0 0 10px rgba(0,255,136,0.1);
+                    text-shadow: 0 0 10px rgba(0,255,136,0.05);
                 }
                 .skip-intro-debug .header {
                     display: flex;
                     justify-content: space-between;
                     align-items: center;
-                    margin-bottom: 8px;
-                    padding-bottom: 8px;
-                    border-bottom: 1px solid rgba(0,255,136,0.1);
-                    font-size: 11px;
-                    color: rgba(0,255,136,0.5);
+                    margin-bottom: 6px;
+                    padding-bottom: 6px;
+                    border-bottom: 1px solid rgba(0,255,136,0.08);
+                    font-size: 10px;
+                    color: rgba(0,255,136,0.4);
                     text-transform: uppercase;
-                    letter-spacing: 2px;
+                    letter-spacing: 1.5px;
                     font-weight: bold;
                 }
                 .skip-intro-debug .header .status {
@@ -329,8 +363,8 @@
                 }
                 .skip-intro-debug .header .dot {
                     display: inline-block;
-                    width: 8px;
-                    height: 8px;
+                    width: 6px;
+                    height: 6px;
                     border-radius: 50%;
                     background: #00ff88;
                     animation: skip-intro-blink 1s infinite;
@@ -340,51 +374,52 @@
                     50% { opacity: 0.2; }
                 }
                 .skip-intro-debug .scroll-area {
-                    max-height: 270px;
+                    max-height: 300px;
                     overflow-y: auto;
                     scrollbar-width: thin;
-                    scrollbar-color: rgba(0,255,136,0.2) transparent;
+                    scrollbar-color: rgba(0,255,136,0.15) transparent;
                     padding-right: 4px;
                 }
                 .skip-intro-debug .scroll-area::-webkit-scrollbar {
-                    width: 4px;
+                    width: 3px;
                 }
                 .skip-intro-debug .scroll-area::-webkit-scrollbar-thumb {
-                    background: rgba(0,255,136,0.3);
+                    background: rgba(0,255,136,0.25);
                     border-radius: 2px;
                 }
-                .skip-intro-debug .scroll-area::-webkit-scrollbar-track {
-                    background: transparent;
-                }
                 .skip-intro-debug .log-line {
-                    padding: 2px 0;
+                    padding: 1px 0;
                     opacity: 0;
-                    animation: skip-intro-log-fade 0.3s ease forwards;
+                    animation: skip-intro-log-fade 0.25s ease forwards;
                     white-space: nowrap;
                     overflow: hidden;
                     text-overflow: ellipsis;
                     font-size: 12px;
+                    border-bottom: 1px solid rgba(255,255,255,0.02);
                 }
                 .skip-intro-debug .log-line .time {
-                    color: rgba(0,255,136,0.2);
-                    margin-right: 10px;
-                    font-size: 10px;
+                    color: rgba(0,255,136,0.15);
+                    margin-right: 8px;
+                    font-size: 9px;
                     font-weight: bold;
                 }
                 .skip-intro-debug .log-line.error {
                     color: #ff6b6b;
                     border-left: 2px solid #ff6b6b;
                     padding-left: 8px;
+                    background: rgba(255,107,107,0.05);
                 }
                 .skip-intro-debug .log-line.warn {
                     color: #ffd93d;
                     border-left: 2px solid #ffd93d;
                     padding-left: 8px;
+                    background: rgba(255,217,61,0.05);
                 }
                 .skip-intro-debug .log-line.success {
                     color: #6bcb6b;
                     border-left: 2px solid #6bcb6b;
                     padding-left: 8px;
+                    background: rgba(107,203,107,0.05);
                 }
                 .skip-intro-debug .log-line.info {
                     color: #6bc5ff;
@@ -405,40 +440,26 @@
                     background: rgba(255,169,77,0.05);
                 }
                 .skip-intro-debug .log-line .emoji {
-                    margin-right: 6px;
+                    margin-right: 4px;
                 }
                 @keyframes skip-intro-log-fade {
-                    from { opacity: 0; transform: translateY(-5px); }
+                    from { opacity: 0; transform: translateY(-3px); }
                     to { opacity: 1; transform: translateY(0); }
                 }
                 @media (max-width: 720px) {
                     .skip-intro-debug {
-                        bottom: 20px;
-                        padding: 10px 14px;
-                        font-size: 11px;
-                        max-height: 250px;
-                        width: 95%;
-                        border-radius: 12px;
-                    }
-                    .skip-intro-debug .log-line {
-                        font-size: 10px;
-                    }
-                    .skip-intro-debug .scroll-area {
-                        max-height: 190px;
-                    }
-                }
-                @media (max-width: 480px) {
-                    .skip-intro-debug {
                         bottom: 10px;
-                        padding: 8px 10px;
-                        font-size: 10px;
-                        max-height: 200px;
+                        padding: 8px 12px;
+                        font-size: 11px;
+                        max-height: 280px;
+                        width: 96%;
+                        border-radius: 10px;
                     }
                     .skip-intro-debug .log-line {
-                        font-size: 9px;
+                        font-size: 10px;
                     }
                     .skip-intro-debug .scroll-area {
-                        max-height: 150px;
+                        max-height: 220px;
                     }
                 }
             `;
@@ -453,20 +474,13 @@
                     <span>🐛 SKIP INTRO DEBUG</span>
                     <div class="status">
                         <span class="dot"></span>
-                        <span style="font-size:9px;opacity:0.5;">LIVE</span>
+                        <span style="font-size:8px;opacity:0.4;">LIVE</span>
                     </div>
                 </div>
                 <div class="scroll-area" id="skip-intro-debug-logs"></div>
             `;
             document.body.appendChild(el);
             this._element = el;
-            
-            // Автоматически показываем
-            setTimeout(() => {
-                if (this._element) {
-                    this._element.style.opacity = '1';
-                }
-            }, 100);
         },
 
         log(message, type = 'info') {
@@ -509,7 +523,6 @@
                 `;
             }).join('');
             
-            // Автоскролл
             container.scrollTop = container.scrollHeight;
         },
 
@@ -862,7 +875,7 @@
         }
     };
 
-    // ===== УВЕДОМЛЕНИЕ ПО ЦЕНТРУ ВВЕРХУ =====
+    // ===== УВЕДОМЛЕНИЕ =====
     const Notification = {
         _element: null,
         _timer: null,
@@ -1500,7 +1513,6 @@
             this._initialized = true;
 
             DebugLogger.init();
-
             PluginSettings.initSettings();
             ProgressMarker.init();
 
@@ -1525,7 +1537,28 @@
             }
 
             DebugLogger.log('🎬 Воспроизведение начато', 'info');
-            DebugLogger.log(`📺 Источник: ${Utils.getSourceType()}`, 'meta');
+            
+            // Определяем источник
+            const source = Utils.getSourceType();
+            DebugLogger.log(`📺 Источник: ${source}`, 'meta');
+            
+            // Логируем все данные для отладки
+            DebugLogger.log('📊 ДАННЫЕ ПЛЕЕРА:', 'highlight');
+            try {
+                DebugLogger.log(`  title: ${data.title || 'нет'}`, 'info');
+                DebugLogger.log(`  url: ${data.url || 'нет'}`, 'info');
+                DebugLogger.log(`  season: ${data.season || 'нет'}`, 'info');
+                DebugLogger.log(`  episode: ${data.episode || 'нет'}`, 'info');
+                DebugLogger.log(`  card: ${data.card ? 'есть' : 'нет'}`, 'info');
+                if (data.playlist) {
+                    DebugLogger.log(`  playlist: ${data.playlist.length} эл.`, 'info');
+                    // Показываем первый элемент плейлиста
+                    if (data.playlist[0]) {
+                        const first = data.playlist[0];
+                        DebugLogger.log(`  playlist[0]: season=${first.season || first.s || first.season_num || 'нет'}, episode=${first.episode || first.e || first.episode_num || 'нет'}`, 'info');
+                    }
+                }
+            } catch(e) {}
 
             const meta = this._extractMeta(data);
             
@@ -1537,7 +1570,10 @@
             
             if (!meta.tmdb_id || !meta.is_series || meta.season == null || meta.episode == null) {
                 DebugLogger.log('❌ НЕ УДАЛОСЬ ОПРЕДЕЛИТЬ МЕТАДАННЫЕ', 'error');
-                DebugLogger.log('💡 Проверьте: включен ли плагин для сериалов', 'warn');
+                DebugLogger.log('💡 Для HDrezka попробуйте:', 'warn');
+                DebugLogger.log('  1. Обновить страницу', 'warn');
+                DebugLogger.log('  2. Проверить настройки плагина', 'warn');
+                DebugLogger.log('  3. Убедиться что это сериал', 'warn');
                 return;
             }
 
@@ -1575,6 +1611,7 @@
                 
                 if (merged.length === 0) {
                     DebugLogger.log('⚠️ СЕГМЕНТЫ НЕ НАЙДЕНЫ', 'warn');
+                    DebugLogger.log('💡 Будет использована детекция', 'warn');
                 } else {
                     DebugLogger.log(`📊 НАЙДЕНО ${merged.length} СЕГМЕНТОВ:`, 'highlight');
                     const typeNames = { intro: 'Заставка', recap: 'Рекап', credits: 'Титры', preview: 'Превью' };
@@ -1632,11 +1669,13 @@
                 is_series: false
             };
 
+            // 1. Прямые данные
             if (data.tmdb_id) meta.tmdb_id = data.tmdb_id;
             if (data.imdb_id) meta.imdb_id = data.imdb_id;
             if (data.season != null) meta.season = parseInt(data.season);
             if (data.episode != null) meta.episode = parseInt(data.episode);
 
+            // 2. Из карточки
             let card = data.card || null;
             if (!card) {
                 try {
@@ -1655,6 +1694,7 @@
                 if (card.number_of_seasons) meta.is_series = true;
                 if (card.first_air_date) meta.is_series = true;
                 if (card.seasons) meta.is_series = true;
+                if (card.type === 'series') meta.is_series = true;
                 
                 if (meta.season == null && card.season != null) meta.season = parseInt(card.season);
                 if (meta.episode == null && card.episode != null) meta.episode = parseInt(card.episode);
@@ -1662,33 +1702,33 @@
                 if (meta.episode == null && card.e != null) meta.episode = parseInt(card.e);
             }
 
+            // 3. Из playlist (ВАЖНО ДЛЯ HDREZKA)
             if (data.playlist && Array.isArray(data.playlist)) {
                 const url = data.url;
                 for (let i = 0; i < data.playlist.length; i++) {
                     const item = data.playlist[i];
                     const itemUrl = typeof item.url === 'string' ? item.url : '';
                     
-                    if (itemUrl === url || i === 0 || !url) {
-                        const fields = ['season', 'episode', 's', 'e', 'season_num', 'episode_num', 'season_number', 'episode_number', 'season_index', 'episode_index'];
-                        fields.forEach(f => {
-                            if (item[f] != null) {
-                                if (f.includes('season') && meta.season == null) {
-                                    meta.season = parseInt(item[f]);
-                                }
-                                if (f.includes('episode') && meta.episode == null) {
-                                    meta.episode = parseInt(item[f]);
-                                }
-                            }
-                        });
-                        
-                        if (meta.season != null && meta.episode != null) {
-                            meta.is_series = true;
-                        }
+                    // Проверяем все возможные поля
+                    if (item.season != null && meta.season == null) meta.season = parseInt(item.season);
+                    if (item.episode != null && meta.episode == null) meta.episode = parseInt(item.episode);
+                    if (item.s != null && meta.season == null) meta.season = parseInt(item.s);
+                    if (item.e != null && meta.episode == null) meta.episode = parseInt(item.e);
+                    if (item.season_num != null && meta.season == null) meta.season = parseInt(item.season_num);
+                    if (item.episode_num != null && meta.episode == null) meta.episode = parseInt(item.episode_num);
+                    if (item.season_number != null && meta.season == null) meta.season = parseInt(item.season_number);
+                    if (item.episode_number != null && meta.episode == null) meta.episode = parseInt(item.episode_number);
+                    
+                    // Если нашли оба - это сериал
+                    if (meta.season != null && meta.episode != null) {
+                        meta.is_series = true;
+                        break;
                     }
                 }
             }
 
-            if ((meta.season == null || meta.episode == null) && data.title) {
+            // 4. Из title
+            if (data.title) {
                 const parsed = Utils.parseHDrezkaTitle(data.title);
                 if (parsed) {
                     if (meta.season == null) meta.season = parsed.season;
@@ -1697,7 +1737,8 @@
                 }
             }
 
-            if ((meta.season == null || meta.episode == null) && data.file && data.file.title) {
+            // 5. Из file.title (HDrezka)
+            if (data.file && data.file.title) {
                 const parsed = Utils.parseHDrezkaTitle(data.file.title);
                 if (parsed) {
                     if (meta.season == null) meta.season = parsed.season;
@@ -1706,55 +1747,67 @@
                 }
             }
 
-            if (!meta.tmdb_id || !meta.is_series) {
-                try {
-                    const activity = Lampa.Activity.active();
-                    if (activity && activity.movie) {
-                        const movie = activity.movie;
-                        if (!meta.tmdb_id && movie.id) meta.tmdb_id = movie.id;
-                        if (meta.season == null && movie.season != null) meta.season = parseInt(movie.season);
-                        if (meta.episode == null && movie.episode != null) meta.episode = parseInt(movie.episode);
-                        if (meta.season == null && movie.s != null) meta.season = parseInt(movie.s);
-                        if (meta.episode == null && movie.e != null) meta.episode = parseInt(movie.e);
-                        if (movie.name && !movie.title) meta.is_series = true;
-                    }
-                } catch(e) {}
-            }
+            // 6. Из Activity
+            try {
+                const activity = Lampa.Activity.active();
+                if (activity && activity.movie) {
+                    const movie = activity.movie;
+                    if (!meta.tmdb_id && movie.id) meta.tmdb_id = movie.id;
+                    if (meta.season == null && movie.season != null) meta.season = parseInt(movie.season);
+                    if (meta.episode == null && movie.episode != null) meta.episode = parseInt(movie.episode);
+                    if (meta.season == null && movie.s != null) meta.season = parseInt(movie.s);
+                    if (meta.episode == null && movie.e != null) meta.episode = parseInt(movie.e);
+                    if (movie.name && !movie.title) meta.is_series = true;
+                    if (movie.type === 'series') meta.is_series = true;
+                }
+            } catch(e) {}
 
+            // 7. Universal TMDB ID
             if (!meta.tmdb_id) {
                 meta.tmdb_id = Utils.getTMDBId();
                 if (meta.tmdb_id) meta.is_series = true;
             }
 
-            if ((meta.season == null || meta.episode == null) || !meta.tmdb_id) {
-                try {
-                    const url = Lampa.Player.getUrl ? Lampa.Player.getUrl() : '';
-                    
-                    if (!meta.tmdb_id) {
-                        const tmdbMatch = url.match(/[?&]tmdb_id=(\d+)/) || url.match(/\/tmdb\/(\d+)/);
-                        if (tmdbMatch) meta.tmdb_id = tmdbMatch[1];
-                    }
-                    
+            // 8. Из URL (HDrezka)
+            try {
+                const url = Lampa.Player.getUrl ? Lampa.Player.getUrl() : '';
+                DebugLogger.log(`🔗 URL: ${url}`, 'info');
+                
+                // TMDB ID из URL
+                if (!meta.tmdb_id) {
+                    const tmdbMatch = url.match(/[?&]tmdb_id=(\d+)/) || url.match(/\/tmdb\/(\d+)/);
+                    if (tmdbMatch) meta.tmdb_id = tmdbMatch[1];
+                }
+                
+                // Сезон и серия из URL
+                if (meta.season == null || meta.episode == null) {
+                    // S01E01
                     const seMatch = url.match(/[Ss](\d+)[Ee](\d+)/i);
                     if (seMatch) {
                         if (meta.season == null) meta.season = parseInt(seMatch[1]);
                         if (meta.episode == null) meta.episode = parseInt(seMatch[2]);
                         meta.is_series = true;
                     }
-                    
-                    const hdMatch = url.match(/\/\d+-(\d+)-(\d+)/);
-                    if (hdMatch && (meta.season == null || meta.episode == null)) {
-                        if (meta.season == null) meta.season = parseInt(hdMatch[1]);
-                        if (meta.episode == null) meta.episode = parseInt(hdMatch[2]);
-                        meta.is_series = true;
+                }
+                
+                // HDrezka специфичный паттерн /123-1-2/
+                if (meta.season == null || meta.episode == null) {
+                    const hdMatch = url.match(/\/(\d+)-(\d+)-(\d+)/);
+                    if (hdMatch) {
+                        // В HDrezka формат: /id-сезон-серия/
+                        if (meta.season == null) meta.season = parseInt(hdMatch[2]);
+                        if (meta.episode == null) meta.episode = parseInt(hdMatch[3]);
+                        if (meta.season != null && meta.episode != null) meta.is_series = true;
                     }
-                } catch(e) {}
-            }
+                }
+            } catch(e) {}
 
+            // 9. Если есть сезон и серия - это сериал
             if (meta.season != null && meta.episode != null) {
                 meta.is_series = true;
             }
 
+            // 10. Из Lampa Storage
             if (!meta.tmdb_id || meta.season == null || meta.episode == null) {
                 try {
                     const current = Lampa.Storage.get('current', null);
@@ -1763,6 +1816,21 @@
                         if (meta.season == null && current.season != null) meta.season = parseInt(current.season);
                         if (meta.episode == null && current.episode != null) meta.episode = parseInt(current.episode);
                         if (meta.season != null && meta.episode != null) meta.is_series = true;
+                    }
+                } catch(e) {}
+            }
+
+            // 11. Проверка через Lampa API для HDrezka
+            if (meta.tmdb_id && !meta.is_series) {
+                try {
+                    // Пробуем получить информацию о сериале
+                    const info = Lampa.Api.request({
+                        url: `https://api.tmdb.org/3/tv/${meta.tmdb_id}`,
+                        method: 'GET'
+                    });
+                    // Если это сериал - будет ответ с сезонами
+                    if (info && info.seasons) {
+                        meta.is_series = true;
                     }
                 } catch(e) {}
             }
