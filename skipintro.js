@@ -4,630 +4,190 @@
     if (window.__skipIntroLoaded) return;
     window.__skipIntroLoaded = !0;
 
-    // ===== КОНФИГУРАЦИЯ =====
     const CONFIG = {
         API_URL: 'https://api.introdb.app',
         THEINTRODB_URL: 'https://api.theintrodb.org/v2/media',
         CACHE_TTL: 7 * 24 * 60 * 60 * 1000,
-        DETECTION_TIMEOUT: 5000,
+        DETECTION_TIMEOUT: 4000,
         INTRO_MAX_START: 150,
         INTRO_MAX_END: 300,
         CREDITS_MIN_GAP: 30,
         MIN_SUBTITLES: 5,
-        AUTO_SKIP_DELAY: 4000,
-        AUDIO_SAMPLE_INTERVAL: 500,
-        AUDIO_MAX_TIME: 420,
-        AUDIO_MIN_SAMPLES: 20,
-        ENERGY_THRESHOLD_MULTIPLIER: 1.3,
-        ENERGY_MIN_THRESHOLD: 0.8,
-        MIN_ENERGY_PEAK_DURATION: 15,
-        MAX_ENERGY_PEAK_DURATION: 150,
-        MIN_ENERGY_SAMPLES: 10,
         NOTIFICATION_DURATION: 3000
     };
 
-    // ===== УТИЛИТЫ =====
     const Utils = {
-        _storageCache: {},
-        
-        getStorage(key, def) {
-            try {
-                if (this._storageCache[key] !== undefined) {
-                    return this._storageCache[key];
-                }
-                const val = Lampa.Storage.get(key, def);
-                if (typeof val === 'string' && (val.startsWith('{') || val.startsWith('['))) {
-                    try {
-                        const parsed = JSON.parse(val);
-                        this._storageCache[key] = parsed;
-                        return parsed;
-                    } catch(e) {}
-                }
-                this._storageCache[key] = val;
-                return val;
-            } catch(e) {
-                return def;
-            }
-        },
-
-        setStorage(key, val) {
-            try {
-                this._storageCache[key] = val;
-                Lampa.Storage.set(key, typeof val === 'string' ? val : JSON.stringify(val));
-            } catch(e) {}
-        },
-
         throttle(fn, delay) {
-            let lastCall = 0;
+            let last = 0;
             return function(...args) {
                 const now = Date.now();
-                if (now - lastCall >= delay) {
-                    lastCall = now;
-                    fn.apply(this, args);
-                }
+                if (now - last >= delay) { last = now; fn.apply(this, args); }
             };
-        },
-
-        isNumeric(val) {
-            return typeof val === 'number' && !isNaN(val) && isFinite(val);
-        },
-
-        findSegment(segments, time) {
-            for (let i = 0, len = segments.length; i < len; i++) {
-                const seg = segments[i];
-                if (time >= seg.start && time < seg.end) return seg;
-                if (seg.start > time) break;
-            }
-            return null;
-        },
-
-        // Определение источника
-        getSourceType() {
-            try {
-                const url = Lampa.Player.getUrl ? Lampa.Player.getUrl() : '';
-                if (url.includes('torrent') || url.includes('.torrent') || url.includes('magnet')) {
-                    return 'torrent';
-                }
-                return 'other';
-            } catch(e) {
-                return 'unknown';
-            }
         }
     };
 
-    // ===== УПРАВЛЕНИЕ ПЛАГИНОМ =====
-    const PluginSettings = {
-        isEnabled() {
-            return Utils.getStorage('skip_intro_enabled', true) !== false;
-        },
-
-        isAutoSkip() {
-            return Utils.getStorage('skip_intro_auto', true) !== false;
-        },
-
-        isDetectEnabled() {
-            return Utils.getStorage('skip_intro_detect', true) !== false;
-        },
-
-        isTypeEnabled(type) {
-            return Utils.getStorage(`skip_intro_type_${type}`, true) !== false;
-        },
-
-        initSettings() {
-            Lampa.SettingsApi.addComponent({
-                component: 'skip_intro',
-                name: 'Пропуск заставок',
-                icon: '<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>'
-            });
-
-            const params = [
-                { name: 'skip_intro_enabled', type: 'trigger', default: true, label: 'Включить плагин', desc: 'Показывать уведомления о пропуске' },
-                { name: 'skip_intro_auto', type: 'trigger', default: true, label: 'Автопропуск', desc: 'Автоматически пропускать заставки' },
-                { name: 'skip_intro_detect', type: 'trigger', default: true, label: 'Умное обнаружение', desc: 'Определять по субтитрам и звуку' },
-                { name: 'skip_intro_type_intro', type: 'trigger', default: true, label: 'Пропускать заставку (intro)' },
-                { name: 'skip_intro_type_recap', type: 'trigger', default: true, label: 'Пропускать рекап (recap)' },
-                { name: 'skip_intro_type_credits', type: 'trigger', default: true, label: 'Пропускать титры (credits)' },
-                { name: 'skip_intro_type_preview', type: 'trigger', default: false, label: 'Пропускать превью (preview)' }
-            ];
-
-            params.forEach(p => {
-                Lampa.SettingsApi.addParam({
-                    component: 'skip_intro',
-                    param: { name: p.name, type: p.type, default: p.default },
-                    field: { name: p.label, description: p.desc || '' }
-                });
-            });
-        }
-    };
-
-    // ===== КЭШИРОВАНИЕ =====
+    // ===== КЭШ ВРЕМЕННЫХ ИНТЕРВАЛОВ =====
     const Cache = {
-        _storageKey: 'skip_intro_cache',
         _data: null,
-
         _load() {
             if (this._data) return this._data;
             try {
-                const raw = Lampa.Storage.get(this._storageKey, '{}');
+                const raw = Lampa.Storage.get('skip_intro_cache', '{}');
                 this._data = typeof raw === 'string' ? JSON.parse(raw) : raw;
                 return this._data || {};
-            } catch(e) {
-                this._data = {};
-                return this._data;
-            }
+            } catch(e) { return (this._data = {}); }
         },
-
-        _save() {
-            try {
-                Lampa.Storage.set(this._storageKey, JSON.stringify(this._data || {}));
-            } catch(e) {}
-        },
-
-        get(tmdbId, season, episode) {
-            const key = `${tmdbId}_s${season}_e${episode}`;
-            const data = this._load();
-            const entry = data[key];
-            if (entry && entry._ts && Date.now() - entry._ts < CONFIG.CACHE_TTL) {
-                return entry.segments || null;
-            }
-            if (entry) {
-                delete data[key];
-                this._save();
-            }
+        get(tmdbId, s, e) {
+            const entry = this._load()[`${tmdbId}_s${s}_e${e}`];
+            if (entry && Date.now() - entry._ts < CONFIG.CACHE_TTL) return entry.segments;
             return null;
         },
-
-        set(tmdbId, season, episode, segments) {
-            const key = `${tmdbId}_s${season}_e${episode}`;
+        set(tmdbId, s, e, segments) {
             const data = this._load();
-            data[key] = {
-                segments: segments,
-                _ts: Date.now()
-            };
-            this._save();
-        },
-
-        clear() {
-            this._data = {};
-            this._save();
-        },
-
-        _smartKey: 'skip_intro_smart',
-        hasSkipped(tmdbId, type) {
-            try {
-                const data = Lampa.Storage.get(this._smartKey, '{}');
-                const parsed = typeof data === 'string' ? JSON.parse(data) : data;
-                return parsed[`${tmdbId}_${type}`] === true;
-            } catch(e) {
-                return false;
-            }
-        },
-
-        rememberSkip(tmdbId, type) {
-            try {
-                let data = Lampa.Storage.get(this._smartKey, '{}');
-                data = typeof data === 'string' ? JSON.parse(data) : data;
-                data[`${tmdbId}_${type}`] = true;
-                Lampa.Storage.set(this._smartKey, JSON.stringify(data));
-            } catch(e) {}
-        },
-
-        forgetSkip(tmdbId, type) {
-            try {
-                let data = Lampa.Storage.get(this._smartKey, '{}');
-                data = typeof data === 'string' ? JSON.parse(data) : data;
-                delete data[`${tmdbId}_${type}`];
-                Lampa.Storage.set(this._smartKey, JSON.stringify(data));
-            } catch(e) {}
+            data[`${tmdbId}_s${s}_e${e}`] = { segments, _ts: Date.now() };
+            Lampa.Storage.set('skip_intro_cache', JSON.stringify(data));
         }
     };
 
-    // ===== ВИЗУАЛЬНАЯ РАЗМЕТКА ПРОГРЕСС-БАРА =====
+    // ===== МАРКЕРЫ НА ШКАЛЕ ПРОГРЕССА =====
     const ProgressMarker = {
         _container: null,
-        _markersContainer: null,
         _markers: [],
-        _colors: {
-            intro: '#4CAF50',
-            recap: '#FF9800',
-            credits: '#2196F3',
-            preview: '#9C27B0'
-        },
-        _typeNames: {
-            intro: 'Заставка',
-            recap: 'Рекап',
-            credits: 'Титры',
-            preview: 'Превью'
-        },
 
         init() {
-            this._findProgressBar();
-        },
-
-        _findProgressBar() {
-            const selectors = [
-                '.player-progress',
-                '.video-progress',
-                '.progress-bar',
-                '.progress',
-                '.seek-bar',
-                '.timeline',
-                '.player-timeline',
-                '[class*="progress"]',
-                '[class*="timeline"]'
-            ];
-
-            for (const selector of selectors) {
-                const el = document.querySelector(selector);
-                if (el) {
-                    this._container = el;
-                    break;
-                }
+            const progressSelectors = ['.player-progress', '.video-progress', '.progress-bar', '.player-timeline'];
+            for (const sel of progressSelectors) {
+                const el = document.querySelector(sel);
+                if (el) { this._container = el; break; }
             }
-
-            if (!this._container) {
-                try {
-                    const player = document.querySelector('.player');
-                    if (player) {
-                        const progress = player.querySelector('[class*="progress"]') || 
-                                       player.querySelector('[class*="timeline"]');
-                        if (progress) this._container = progress;
-                    }
-                } catch(e) {}
-            }
-
             if (!this._container) return;
 
-            let markersContainer = this._container.querySelector('.skip-intro-markers');
-            if (!markersContainer) {
-                markersContainer = document.createElement('div');
-                markersContainer.className = 'skip-intro-markers';
-                markersContainer.style.cssText = `
-                    position: absolute;
-                    top: 0;
-                    left: 0;
-                    width: 100%;
-                    height: 100%;
-                    pointer-events: none;
-                    z-index: 10;
-                    overflow: visible;
-                `;
+            let mBox = this._container.querySelector('.skip-intro-markers');
+            if (!mBox) {
+                mBox = document.createElement('div');
+                mBox.className = 'skip-intro-markers';
+                mBox.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10;';
                 this._container.style.position = 'relative';
-                this._container.appendChild(markersContainer);
+                this._container.appendChild(mBox);
             }
-            this._markersContainer = markersContainer;
-            
             this._injectStyles();
         },
 
         _injectStyles() {
-            if (document.getElementById('skip-intro-marker-styles')) return;
-            
+            if (document.getElementById('skip-styles')) return;
             const style = document.createElement('style');
-            style.id = 'skip-intro-marker-styles';
+            style.id = 'skip-styles';
             style.textContent = `
-                .skip-intro-marker {
-                    position: absolute;
-                    top: 50%;
-                    transform: translateY(-50%);
-                    height: 70%;
-                    border-radius: 3px;
-                    transition: all 0.3s ease;
-                    pointer-events: none;
-                    min-width: 4px;
-                    opacity: 0.6;
-                    z-index: 5;
-                }
-                .skip-intro-marker-intro {
-                    background: linear-gradient(180deg, rgba(76, 175, 80, 0.8), rgba(76, 175, 80, 0.3));
-                    border: 1px solid rgba(76, 175, 80, 0.5);
-                }
-                .skip-intro-marker-recap {
-                    background: linear-gradient(180deg, rgba(255, 152, 0, 0.8), rgba(255, 152, 0, 0.3));
-                    border: 1px solid rgba(255, 152, 0, 0.5);
-                }
-                .skip-intro-marker-credits {
-                    background: linear-gradient(180deg, rgba(33, 150, 243, 0.8), rgba(33, 150, 243, 0.3));
-                    border: 1px solid rgba(33, 150, 243, 0.5);
-                }
-                .skip-intro-marker-preview {
-                    background: linear-gradient(180deg, rgba(156, 39, 176, 0.8), rgba(156, 39, 176, 0.3));
-                    border: 1px solid rgba(156, 39, 176, 0.5);
-                }
-                .skip-intro-marker.active {
-                    opacity: 0.9 !important;
-                    height: 100% !important;
-                    animation: skip-intro-pulse 1s ease-in-out infinite;
-                    box-shadow: 0 0 20px rgba(255,255,255,0.2);
-                }
-                @keyframes skip-intro-pulse {
-                    0%, 100% { opacity: 0.6; transform: translateY(-50%) scaleY(1); }
-                    50% { opacity: 1; transform: translateY(-50%) scaleY(1.2); }
-                }
+                .skip-marker { position: absolute; top: 50%; transform: translateY(-50%); height: 70%; border-radius: 2px; transition: all 0.2s; opacity: 0.5; min-width: 4px; }
+                .skip-marker-intro { background: rgba(76, 175, 80, 0.8); }
+                .skip-marker-recap { background: rgba(255, 152, 0, 0.8); }
+                .skip-marker-credits { background: rgba(33, 150, 243, 0.8); }
+                .skip-marker.active { opacity: 0.95; height: 100%; box-shadow: 0 0 10px rgba(255,255,255,0.4); }
             `;
             document.head.appendChild(style);
+        },
+
+        draw(segments, duration) {
+            this.clear();
+            if (!this._container) this.init();
+            const mBox = this._container?.querySelector('.skip-intro-markers');
+            if (!mBox || !duration) return;
+
+            segments.forEach(seg => {
+                const startPct = (seg.start / duration) * 100;
+                const widthPct = Math.max(((seg.end - seg.start) / duration) * 100, 0.6);
+                
+                const m = document.createElement('div');
+                m.className = `skip-marker skip-marker-${seg.type}`;
+                m.style.left = startPct + '%';
+                m.style.width = widthPct + '%';
+                
+                mBox.appendChild(m);
+                this._markers.push({ seg, el: m });
+            });
+        },
+
+        highlight(activeSeg) {
+            this._markers.forEach(item => {
+                if (activeSeg && item.seg.start === activeSeg.start && item.seg.type === activeSeg.type) {
+                    item.el.classList.add('active');
+                } else {
+                    item.el.classList.remove('active');
+                }
+            });
         },
 
         clear() {
-            if (this._markersContainer) {
-                this._markersContainer.innerHTML = '';
-            }
+            const mBox = this._container?.querySelector('.skip-intro-markers');
+            if (mBox) mBox.innerHTML = '';
             this._markers = [];
-        },
-
-        addMarker(start, end, type, duration) {
-            if (!this._markersContainer || !duration || !this._container) return;
-            
-            const startPercent = (start / duration) * 100;
-            const endPercent = (end / duration) * 100;
-            const width = Math.max(endPercent - startPercent, 0.5);
-            
-            if (width <= 0) return;
-            
-            const marker = document.createElement('div');
-            marker.className = `skip-intro-marker skip-intro-marker-${type}`;
-            marker.dataset.type = type;
-            marker.dataset.start = start;
-            marker.dataset.end = end;
-            
-            marker.style.cssText = `
-                position: absolute;
-                top: 50%;
-                transform: translateY(-50%);
-                left: ${startPercent}%;
-                width: ${width}%;
-                height: 70%;
-                border-radius: 3px;
-                transition: all 0.3s ease;
-                pointer-events: none;
-                min-width: 4px;
-                opacity: 0.6;
-                z-index: 5;
-            `;
-            
-            this._markersContainer.appendChild(marker);
-            this._markers.push({ start, end, type, element: marker });
-        },
-
-        updateMarkers(segments, duration) {
-            this.clear();
-            if (!segments || !segments.length || !duration) return;
-            
-            if (!this._container || !this._markersContainer) {
-                this._findProgressBar();
-                if (!this._markersContainer) return;
-            }
-            
-            const sorted = [...segments].sort((a, b) => a.start - b.start);
-            sorted.forEach(seg => {
-                this.addMarker(seg.start, seg.end, seg.type, duration);
-            });
-        },
-
-        highlightActive(segment) {
-            if (!this._markersContainer) return;
-            
-            const markers = this._markersContainer.querySelectorAll('.skip-intro-marker');
-            markers.forEach((marker) => {
-                const data = this._markers.find(m => m.element === marker);
-                if (data && segment && data.type === segment.type && 
-                    data.start === segment.start && data.end === segment.end) {
-                    marker.classList.add('active');
-                } else {
-                    marker.classList.remove('active');
-                }
-            });
-        },
-
-        resetHighlights() {
-            const markers = this._markersContainer?.querySelectorAll('.skip-intro-marker') || [];
-            markers.forEach(m => m.classList.remove('active'));
-        },
-
-        destroy() {
-            this.clear();
-            this._container = null;
-            this._markersContainer = null;
         }
     };
 
-    // ===== УВЕДОМЛЕНИЕ ПО ЦЕНТРУ ВВЕРХУ =====
+    // ===== УВЕДОМЛЕНИЯ =====
     const Notification = {
-        _element: null,
+        _el: null,
         _timer: null,
 
-        _injectStyles() {
-            if (document.getElementById('skip-intro-notification-styles')) return;
-            
-            const style = document.createElement('style');
-            style.id = 'skip-intro-notification-styles';
-            style.textContent = `
-                .skip-intro-notification {
-                    position: fixed;
-                    top: 30px;
-                    left: 50%;
-                    transform: translateX(-50%) translateY(-20px);
-                    background: rgba(0, 0, 0, 0.85);
-                    backdrop-filter: blur(12px);
-                    -webkit-backdrop-filter: blur(12px);
-                    color: #fff;
-                    padding: 16px 40px;
-                    border-radius: 12px;
-                    font-size: 18px;
-                    font-weight: 500;
-                    z-index: 99999;
-                    opacity: 0;
-                    pointer-events: none;
-                    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-                    font-family: system-ui, -apple-system, sans-serif;
-                    border: 1px solid rgba(255, 255, 255, 0.1);
-                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
-                    text-align: center;
-                    min-width: 200px;
-                    max-width: 80vw;
-                    letter-spacing: 0.3px;
-                }
-                .skip-intro-notification.show {
-                    opacity: 1;
-                    transform: translateX(-50%) translateY(0);
-                    pointer-events: none;
-                }
-                .skip-intro-notification .icon {
-                    display: inline-block;
-                    margin-right: 12px;
-                    font-size: 22px;
-                }
-                .skip-intro-notification .label {
-                    display: inline-block;
-                }
-                .skip-intro-notification .badge {
-                    display: inline-block;
-                    margin-left: 10px;
-                    font-size: 13px;
-                    opacity: 0.6;
-                    font-weight: 400;
-                }
-                .skip-intro-notification .progress-ring {
-                    display: inline-block;
-                    margin-left: 14px;
-                    width: 20px;
-                    height: 20px;
-                    border: 2px solid rgba(255,255,255,0.2);
-                    border-top-color: #4CAF50;
-                    border-radius: 50%;
-                    animation: skip-intro-spin 0.8s linear infinite;
-                    vertical-align: middle;
-                }
-                @keyframes skip-intro-spin {
-                    to { transform: rotate(360deg); }
-                }
-                @media (max-width: 720px) {
-                    .skip-intro-notification {
-                        top: 20px;
-                        padding: 12px 24px;
-                        font-size: 15px;
-                        min-width: 150px;
-                    }
-                }
-            `;
-            document.head.appendChild(style);
-        },
-
-        show(text, badge, showProgress) {
-            this._injectStyles();
+        show(text, subText) {
             this.hide();
+            if (!document.getElementById('skip-notif-styles')) {
+                const style = document.createElement('style');
+                style.id = 'skip-notif-styles';
+                style.textContent = `
+                    .skip-notif { position: fixed; top: 35px; left: 50%; transform: translateX(-50%); background: rgba(10,10,10,0.9); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); color: #fff; padding: 12px 30px; border-radius: 8px; font-size: 16px; font-weight: 500; z-index: 99999; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 10px 25px rgba(0,0,0,0.5); font-family: sans-serif; display: flex; align-items: center; gap: 10px; }
+                    .skip-notif .badge { opacity: 0.6; font-size: 13px; background: rgba(255,255,255,0.15); padding: 2px 6px; border-radius: 4px; }
+                `;
+                document.head.appendChild(style);
+            }
 
             const el = document.createElement('div');
-            el.className = 'skip-intro-notification';
-            
-            const icon = document.createElement('span');
-            icon.className = 'icon';
-            icon.textContent = '⏭';
-            el.appendChild(icon);
-
-            const label = document.createElement('span');
-            label.className = 'label';
-            label.textContent = text;
-            el.appendChild(label);
-
-            if (badge) {
-                const badgeEl = document.createElement('span');
-                badgeEl.className = 'badge';
-                badgeEl.textContent = badge;
-                el.appendChild(badgeEl);
-            }
-
-            if (showProgress) {
-                const progress = document.createElement('span');
-                progress.className = 'progress-ring';
-                el.appendChild(progress);
-            }
-
+            el.className = 'skip-notif';
+            el.innerHTML = `<span>⏭ ${text}</span> <span class="badge">${subText}</span>`;
             document.body.appendChild(el);
-            this._element = el;
+            this._el = el;
 
-            requestAnimationFrame(() => {
-                el.classList.add('show');
-            });
-
-            this._timer = setTimeout(() => {
-                this.hide();
-            }, CONFIG.NOTIFICATION_DURATION);
+            this._timer = setTimeout(() => this.hide(), CONFIG.NOTIFICATION_DURATION);
         },
 
         hide() {
-            if (this._timer) {
-                clearTimeout(this._timer);
-                this._timer = null;
+            if (this._timer) clearTimeout(this._timer);
+            if (this._el) {
+                this._el.parentNode?.removeChild(this._el);
+                this._el = null;
             }
-            if (this._element) {
-                this._element.classList.remove('show');
-                setTimeout(() => {
-                    if (this._element && this._element.parentNode) {
-                        this._element.parentNode.removeChild(this._element);
-                    }
-                    this._element = null;
-                }, 400);
-            }
-        },
-
-        destroy() {
-            this.hide();
         }
     };
 
-    // ===== ДЕТЕКЦИЯ ПО СУБТИТРАМ =====
+    // ===== АНАЛИЗАТОР СУБТИТРОВ =====
     const SubtitleDetector = {
-        detect(video, duration) {
-            return new Promise((resolve) => {
-                try {
-                    if (video.textTracks && video.textTracks.length) {
-                        for (let i = 0; i < video.textTracks.length; i++) {
-                            const track = video.textTracks[i];
-                            if (track.cues && track.cues.length > CONFIG.MIN_SUBTITLES) {
-                                const segments = this._analyzeCues(track.cues, duration);
-                                if (segments.length) {
-                                    resolve(segments);
-                                    return;
-                                }
-                            }
+        async detect(video, duration) {
+            try {
+                if (video.textTracks?.length) {
+                    for (let i = 0; i < video.textTracks.length; i++) {
+                        const track = video.textTracks[i];
+                        if (track.cues?.length > CONFIG.MIN_SUBTITLES) {
+                            return this._analyze(track.cues, duration);
                         }
                     }
-
-                    const subs = Lampa.PlayerVideo && Lampa.PlayerVideo.subtitles ? 
-                        Lampa.PlayerVideo.subtitles() : null;
-                    if (subs && subs.length) {
-                        for (let i = 0; i < subs.length; i++) {
-                            if (subs[i].url) {
-                                this._fetchSubtitle(subs[i].url, duration)
-                                    .then(segments => resolve(segments))
-                                    .catch(() => resolve([]));
-                                return;
-                            }
-                        }
-                    }
-                    resolve([]);
-                } catch(e) {
-                    resolve([]);
                 }
-            });
+                const subs = Lampa.PlayerVideo?.subtitles?.() || [];
+                const firstSub = subs.find(s => s.url);
+                if (firstSub) {
+                    const text = await this._fetch(firstSub.url);
+                    if (text) return this._parseSrt(text, duration);
+                }
+            } catch(e) {}
+            return [];
         },
 
-        _fetchSubtitle(url, duration) {
-            return new Promise((resolve) => {
+        _fetch(url) {
+            return new Promise(resolve => {
                 const xhr = new XMLHttpRequest();
-                xhr.open('GET', url, true);
+                xhr.open('GET', url);
                 xhr.timeout = CONFIG.DETECTION_TIMEOUT;
-                xhr.ontimeout = () => resolve([]);
-                xhr.onerror = () => resolve([]);
-                xhr.onload = () => {
-                    if (xhr.status >= 200 && xhr.status < 300 && xhr.responseText) {
-                        const segments = this._parseSrt(xhr.responseText, duration);
-                        resolve(segments);
-                    } else {
-                        resolve([]);
-                    }
-                };
+                xhr.onload = () => resolve(xhr.status === 200 ? xhr.responseText : null);
+                xhr.onerror = () => resolve(null);
                 xhr.send();
             });
         },
@@ -635,845 +195,235 @@
         _parseSrt(text, duration) {
             const cues = [];
             const lines = text.replace(/\r\n/g, '\n').split('\n');
-            
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i].trim();
-                const timeMatch = line.match(/(\d{1,2}:\d{2}:\d{2}[.,]\d{3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[.,]\d{3})/);
-                if (timeMatch) {
-                    const start = this._parseTime(timeMatch[1]);
-                    const end = this._parseTime(timeMatch[2]);
-                    if (end > start) {
-                        cues.push({ start, end });
-                    }
+            const timeReg = /(\d{1,2}:\d{2}:\d{2}[.,]\d{3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[.,]\d{3})/;
+
+            lines.forEach(line => {
+                const m = line.match(timeReg);
+                if (m) {
+                    const start = this._toSec(m[1]), end = this._toSec(m[2]);
+                    if (end > start) cues.push({ start, end });
                 }
-            }
-
-            return this._analyzeCues(cues, duration);
+            });
+            return this._analyze(cues, duration);
         },
 
-        _parseTime(str) {
-            const parts = str.match(/(\d+):(\d{2}):(\d{2})[.,](\d{3})/);
-            if (!parts) return 0;
-            return parseInt(parts[1]) * 3600 + 
-                   parseInt(parts[2]) * 60 + 
-                   parseInt(parts[3]) + 
-                   parseInt(parts[4]) / 1000;
+        _toSec(str) {
+            const p = str.match(/(\d+):(\d{2}):(\d{2})[.,](\d{3})/);
+            return p ? parseInt(p[1])*3600 + parseInt(p[2])*60 + parseInt(p[3]) + parseInt(p[4])/1000 : 0;
         },
 
-        _analyzeCues(cues, duration) {
+        _analyze(cues, duration) {
             if (cues.length < CONFIG.MIN_SUBTITLES) return [];
-
-            cues.sort((a, b) => a.start - b.start);
+            cues.sort((a,b) => a.start - b.start);
             const segments = [];
-            
+
             if (cues[0].start >= 15 && cues[0].start <= CONFIG.INTRO_MAX_START) {
-                segments.push({
-                    type: 'intro',
-                    start: 0,
-                    end: Math.round(cues[0].start),
-                    _source: 'subs'
-                });
+                segments.push({ type: 'intro', start: 0, end: Math.round(cues[0].start) });
             }
 
-            let maxGap = 0;
-            let introStart = 0;
-            let introEnd = 0;
-            
-            for (let i = 0; i < cues.length - 1 && cues[i].end < CONFIG.INTRO_MAX_END; i++) {
-                const gap = cues[i + 1].start - cues[i].end;
-                if (gap >= 15 && gap <= CONFIG.INTRO_MAX_END && gap > maxGap) {
-                    maxGap = gap;
-                    introStart = Math.round(cues[i].end);
-                    introEnd = Math.round(cues[i + 1].start);
-                }
+            const lastCue = cues[cues.length - 1];
+            if (duration > 600 && (duration - lastCue.end) >= CONFIG.CREDITS_MIN_GAP) {
+                segments.push({ type: 'credits', start: Math.round(lastCue.end), end: Math.round(duration) });
             }
-
-            if (introStart && introEnd) {
-                segments.push({
-                    type: 'intro',
-                    start: introStart,
-                    end: introEnd,
-                    _source: 'subs'
-                });
-            }
-
-            if (duration > 600 && cues.length > 0) {
-                const lastCue = cues[cues.length - 1];
-                const gap = duration - lastCue.end;
-                
-                if (gap >= CONFIG.CREDITS_MIN_GAP) {
-                    segments.push({
-                        type: 'credits',
-                        start: Math.round(lastCue.end),
-                        end: Math.round(duration),
-                        _source: 'subs'
-                    });
-                }
-
-                const threshold = Math.max(0, duration - 600);
-                let maxGap2 = 0;
-                let creditsStart = 0;
-                let creditsEnd = 0;
-
-                for (let i = 0; i < cues.length - 1; i++) {
-                    if (cues[i].end < threshold) continue;
-                    const gap2 = cues[i + 1].start - cues[i].end;
-                    if (gap2 >= CONFIG.CREDITS_MIN_GAP && gap2 > maxGap2) {
-                        maxGap2 = gap2;
-                        creditsStart = Math.round(cues[i].end);
-                        creditsEnd = Math.round(cues[i + 1].start);
-                    }
-                }
-
-                if (creditsStart && creditsEnd && maxGap2 > gap) {
-                    segments.push({
-                        type: 'credits',
-                        start: creditsStart,
-                        end: creditsEnd,
-                        _source: 'subs'
-                    });
-                }
-            }
-
             return segments;
         }
     };
 
-    // ===== ДЕТЕКЦИЯ ПО ЗВУКУ =====
-    const AudioDetector = {
-        _context: null,
-        _analyser: null,
-        _source: null,
-        _connected: false,
-        _timer: null,
-        _timeout: null,
-
-        detect(video) {
-            return new Promise((resolve) => {
-                this._cleanup();
-
-                try {
-                    if (!window.AudioContext && !window.webkitAudioContext) {
-                        resolve(null);
-                        return;
-                    }
-
-                    if (!this._context || this._context.state === 'closed') {
-                        this._context = new (window.AudioContext || window.webkitAudioContext)();
-                    }
-
-                    if (!this._connected || !this._analyser) {
-                        this._source = this._context.createMediaElementSource(video);
-                        this._analyser = this._context.createAnalyser();
-                        this._analyser.fftSize = 1024;
-                        this._source.connect(this._analyser);
-                        this._analyser.connect(this._context.destination);
-                        this._connected = true;
-                    }
-
-                    if (!this._analyser) {
-                        resolve(null);
-                        return;
-                    }
-
-                    const samples = [];
-                    const data = new Uint8Array(this._analyser.frequencyBinCount);
-                    const startTime = video.currentTime;
-
-                    this._timer = setInterval(() => {
-                        try {
-                            const currentTime = video.currentTime;
-                            if (currentTime - startTime > CONFIG.AUDIO_MAX_TIME) {
-                                this._cleanup();
-                                resolve(this._analyze(samples));
-                                return;
-                            }
-
-                            this._analyser.getByteFrequencyData(data);
-                            let sum = 0;
-                            for (let i = 0; i < data.length; i++) {
-                                sum += data[i];
-                            }
-                            samples.push({
-                                time: currentTime,
-                                energy: sum / data.length
-                            });
-                        } catch(e) {
-                            this._cleanup();
-                            resolve(null);
-                        }
-                    }, CONFIG.AUDIO_SAMPLE_INTERVAL);
-
-                    this._timeout = setTimeout(() => {
-                        this._cleanup();
-                        resolve(this._analyze(samples));
-                    }, CONFIG.AUDIO_MAX_TIME * 1000);
-
-                } catch(e) {
-                    this._cleanup();
-                    resolve(null);
-                }
-            });
-        },
-
-        _analyze(samples) {
-            if (samples.length < CONFIG.AUDIO_MIN_SAMPLES) return null;
-
-            const smoothed = [];
-            for (let i = 2; i < samples.length - 2; i++) {
-                const avg = (samples[i-2].energy + samples[i-1].energy + samples[i].energy + 
-                            samples[i+1].energy + samples[i+2].energy) / 5;
-                smoothed.push({
-                    time: samples[i].time,
-                    energy: avg
-                });
-            }
-
-            if (smoothed.length < CONFIG.MIN_ENERGY_SAMPLES) return null;
-
-            const energies = smoothed.map(s => s.energy).sort((a, b) => a - b);
-            const median = energies[Math.floor(energies.length / 2)];
-            const threshold = median * CONFIG.ENERGY_THRESHOLD_MULTIPLIER;
-            const minThreshold = median * CONFIG.ENERGY_MIN_THRESHOLD;
-
-            let peakStart = null;
-            let peakCount = 0;
-            let peakEnd = null;
-
-            for (let i = 0; i < smoothed.length; i++) {
-                const sample = smoothed[i];
-                if (sample.time > CONFIG.INTRO_MAX_END) break;
-
-                if (sample.energy > threshold) {
-                    if (!peakStart) {
-                        peakStart = sample.time;
-                        peakCount = 1;
-                    } else {
-                        peakCount++;
-                    }
-                } else if (peakStart && sample.energy < minThreshold) {
-                    const duration = sample.time - peakStart;
-                    if (duration >= CONFIG.MIN_ENERGY_PEAK_DURATION && 
-                        duration <= CONFIG.MAX_ENERGY_PEAK_DURATION && 
-                        peakCount >= CONFIG.MIN_ENERGY_SAMPLES) {
-                        peakEnd = sample.time;
-                        break;
-                    }
-                    peakStart = null;
-                    peakCount = 0;
-                }
-            }
-
-            if (peakStart && peakEnd) {
-                return {
-                    type: 'intro',
-                    start: Math.round(peakStart),
-                    end: Math.round(peakEnd),
-                    _source: 'audio'
-                };
-            }
-
-            return null;
-        },
-
-        _cleanup() {
-            if (this._timer) {
-                clearInterval(this._timer);
-                this._timer = null;
-            }
-            if (this._timeout) {
-                clearTimeout(this._timeout);
-                this._timeout = null;
-            }
-        },
-
-        destroy() {
-            this._cleanup();
-            try {
-                if (this._source) {
-                    this._source.disconnect();
-                    this._source = null;
-                }
-                if (this._analyser) {
-                    this._analyser.disconnect();
-                    this._analyser = null;
-                }
-                if (this._context && this._context.state !== 'closed') {
-                    this._context.close();
-                    this._context = null;
-                }
-                this._connected = false;
-            } catch(e) {}
-        }
-    };
-
-    // ===== API ЗАПРОСЫ =====
-    const ApiClient = {
-        _fetch(url, timeout) {
-            return new Promise((resolve, reject) => {
+    // ===== СЕТЕВЫЕ ЗАПРОСЫ (API) =====
+    const Api = {
+        _req(url) {
+            return new Promise(resolve => {
                 const xhr = new XMLHttpRequest();
-                let completed = false;
-
-                const timer = setTimeout(() => {
-                    if (!completed) {
-                        completed = true;
-                        xhr.abort();
-                        reject(new Error('timeout'));
-                    }
-                }, timeout || CONFIG.DETECTION_TIMEOUT);
-
-                xhr.open('GET', url, true);
-                xhr.setRequestHeader('Accept', 'application/json');
-                xhr.onreadystatechange = () => {
-                    if (xhr.readyState === 4) {
-                        if (completed) return;
-                        completed = true;
-                        clearTimeout(timer);
-                        
-                        if (xhr.status >= 200 && xhr.status < 300) {
-                            try {
-                                resolve(JSON.parse(xhr.responseText));
-                            } catch(e) {
-                                reject(e);
-                            }
-                        } else if (xhr.status === 204 || xhr.status === 404) {
-                            resolve(null);
-                        } else {
-                            reject(new Error(`HTTP ${xhr.status}`));
-                        }
-                    }
+                xhr.open('GET', url);
+                xhr.timeout = CONFIG.DETECTION_TIMEOUT;
+                xhr.onload = () => {
+                    try { resolve(xhr.status === 200 ? JSON.parse(xhr.responseText) : null); } catch(e) { resolve(null); }
                 };
-                xhr.onerror = () => {
-                    if (!completed) {
-                        completed = true;
-                        clearTimeout(timer);
-                        reject(new Error('network'));
-                    }
-                };
+                xhr.onerror = () => resolve(null);
                 xhr.send();
             });
         },
 
-        async load(tmdbId, imdbId, season, episode) {
-            const cached = Cache.get(tmdbId, season, episode);
+        async load(tmdbId, imdbId, s, e) {
+            const cached = Cache.get(tmdbId, s, e);
             if (cached) return cached;
 
+            // 1. Запрос к TheIntroDB
             try {
-                const url = `${CONFIG.THEINTRODB_URL}?tmdb_id=${tmdbId}&season=${season}&episode=${episode}`;
-                const data = await this._fetch(url);
-                const segments = this._parseTheIntroDB(data);
-                if (segments.length) {
-                    Cache.set(tmdbId, season, episode, segments);
-                    return segments;
-                }
-            } catch(e) {}
-
-            try {
-                const url1 = `${CONFIG.API_URL}/get_intros?tmdb=${tmdbId}&season=${season}&episode=${episode}`;
-                const url2 = `${CONFIG.API_URL}/get_credits?tmdb=${tmdbId}&season=${season}&episode=${episode}`;
-                const [intro, credits] = await Promise.all([
-                    this._fetch(url1).catch(() => null),
-                    this._fetch(url2).catch(() => null)
-                ]);
-                
-                const segments = [];
-                if (intro && intro.start && intro.end) {
-                    segments.push({
-                        type: 'intro',
-                        start: Math.round(intro.start),
-                        end: Math.round(intro.end)
-                    });
-                }
-                if (credits && credits.start && credits.end) {
-                    segments.push({
-                        type: 'credits',
-                        start: Math.round(credits.start),
-                        end: Math.round(credits.end)
-                    });
-                }
-                if (segments.length) {
-                    Cache.set(tmdbId, season, episode, segments);
-                    return segments;
-                }
-            } catch(e) {}
-
-            if (imdbId) {
-                try {
-                    const url = `https://introhater.com/api/segments/${imdbId}:${season}:${episode}`;
-                    const data = await this._fetch(url);
-                    const segments = this._parseIntroHater(data);
-                    if (segments.length) {
-                        Cache.set(tmdbId, season, episode, segments);
-                        return segments;
-                    }
-                } catch(e) {}
-            }
-
-            return [];
-        },
-
-        _parseTheIntroDB(data) {
-            const segments = [];
-            if (!data) return segments;
-            
-            const types = ['intro', 'recap', 'credits', 'preview'];
-            types.forEach(type => {
-                const items = data[type];
-                if (Array.isArray(items)) {
-                    items.forEach(item => {
-                        const start = item.start_ms ? item.start_ms / 1000 : (item.start || 0);
-                        const end = item.end_ms ? item.end_ms / 1000 : (item.end || 0);
-                        if (end > start) {
-                            segments.push({ type, start, end });
+                const data = await this._req(`${CONFIG.THEINTRODB_URL}?tmdb_id=${tmdbId}&season=${s}&episode=${e}`);
+                if (data) {
+                    const segments = [];
+                    ['intro', 'recap', 'credits'].forEach(type => {
+                        if (Array.isArray(data[type])) {
+                            data[type].forEach(item => {
+                                const start = item.start_ms ? item.start_ms / 1000 : (item.start || 0);
+                                const end = item.end_ms ? item.end_ms / 1000 : (item.end || 0);
+                                if (end > start) segments.push({ type, start: Math.round(start), end: Math.round(end) });
+                            });
                         }
                     });
+                    if (segments.length) { Cache.set(tmdbId, s, e, segments); return segments; }
                 }
-            });
-            return segments;
-        },
+            } catch(e) {}
 
-        _parseIntroHater(data) {
-            const segments = [];
-            if (!Array.isArray(data)) return segments;
-            
-            data.forEach(item => {
-                if (item.start != null && item.end != null && item.end > item.start) {
-                    let type = 'intro';
-                    const label = (item.label || '').toLowerCase();
-                    if (label.includes('credit') || label === 'ed') type = 'credits';
-                    else if (label.includes('recap')) type = 'recap';
-                    else if (label.includes('preview')) type = 'preview';
-                    
-                    segments.push({
-                        type,
-                        start: Math.round(item.start),
-                        end: Math.round(item.end)
-                    });
-                }
-            });
-            return segments;
+            // 2. Запрос к Альтернативному API
+            try {
+                const [intro, credits] = await Promise.all([
+                    this._req(`${CONFIG.API_URL}/get_intros?tmdb=${tmdbId}&season=${s}&episode=${e}`),
+                    this._req(`${CONFIG.API_URL}/get_credits?tmdb=${tmdbId}&season=${s}&episode=${e}`)
+                ]);
+                const segments = [];
+                if (intro?.start && intro?.end) segments.push({ type: 'intro', start: Math.round(intro.start), end: Math.round(intro.end) });
+                if (credits?.start && credits?.end) segments.push({ type: 'credits', start: Math.round(credits.start), end: Math.round(credits.end) });
+                
+                if (segments.length) { Cache.set(tmdbId, s, e, segments); return segments; }
+            } catch(e) {}
+
+            return [];
         }
     };
 
-    // ===== ОСНОВНОЙ КЛАСС =====
-    const SkipIntroPlugin = {
+    // ===== ЯДРО ПЛАГИНА =====
+    const Core = {
         _segments: [],
-        _activeSegment: null,
+        _active: null,
         _lastSkipped: null,
-        _currentData: null,
-        _currentTmdb: null,
-        _detecting: false,
-        _initialized: false,
+        _curId: null,
 
         init() {
-            if (this._initialized) return;
-            this._initialized = true;
-
-            PluginSettings.initSettings();
-            ProgressMarker.init();
-
             Lampa.Player.listener.follow('start', (data) => this._onStart(data));
             Lampa.Player.listener.follow('destroy', () => this._onDestroy());
             
-            if (Lampa.PlayerVideo && Lampa.PlayerVideo.listener) {
-                Lampa.PlayerVideo.listener.follow('timeupdate', 
-                    Utils.throttle((data) => this._onTimeUpdate(data), 300)
-                );
+            if (Lampa.PlayerVideo?.listener) {
+                Lampa.PlayerVideo.listener.follow('timeupdate', Utils.throttle((d) => this._onTick(d), 350));
             }
-
-            console.log('[SkipIntro] Plugin initialized for Tizen');
         },
 
-        _onStart(data) {
+        async _onStart(data) {
             this._cleanup();
 
-            if (!PluginSettings.isEnabled()) return;
-
             const meta = this._extractMeta(data);
-            
-            console.log('[SkipIntro] Extracted meta:', meta);
-            
-            if (!meta.tmdb_id || !meta.is_series || meta.season == null || meta.episode == null) {
-                console.log('[SkipIntro] Not a series or missing metadata');
-                return;
-            }
+            if (!meta.tmdb_id || meta.season == null || meta.episode == null) return;
 
-            this._currentData = data;
-            this._currentTmdb = meta.tmdb_id;
-            
-            console.log(`[SkipIntro] Loading segments for S${meta.season}E${meta.episode} (TMDB: ${meta.tmdb_id})`);
-            
-            let apiDone = false;
-            let detectDone = false;
-            let apiSegments = [];
-            let detectSegments = [];
+            this._curId = meta.tmdb_id;
 
-            const mergeSegments = () => {
-                if (!apiDone || !detectDone) return;
-                if (this._currentData !== data) return;
+            const [apiSegs, subSegs] = await Promise.all([
+                Api.load(meta.tmdb_id, meta.imdb_id, meta.season, meta.episode),
+                this._detectLocal(meta)
+            ]);
 
-                const merged = [...apiSegments];
-                detectSegments.forEach(detSeg => {
-                    let exists = false;
-                    for (let i = 0; i < merged.length; i++) {
-                        if (merged[i].type === detSeg.type) {
-                            if (detSeg.start < merged[i].start) {
-                                merged[i] = detSeg;
-                            }
-                            exists = true;
-                            break;
-                        }
-                    }
-                    if (!exists) merged.push(detSeg);
-                });
+            if (this._curId !== meta.tmdb_id) return;
 
-                this._segments = merged;
-                this._updateProgressMarkers(merged);
-                console.log(`[SkipIntro] Loaded ${merged.length} segments`);
-            };
+            const merged = [...apiSegs];
+            subSegs.forEach(sSeg => {
+                if (!merged.some(m => m.type === sSeg.type)) merged.push(sSeg);
+            });
 
-            ApiClient.load(meta.tmdb_id, meta.imdb_id, meta.season, meta.episode)
-                .then(segments => {
-                    if (this._currentData === data) {
-                        apiSegments = segments || [];
-                        apiDone = true;
-                        if (apiSegments.length) {
-                            this._segments = apiSegments;
-                        }
-                        mergeSegments();
-                    }
-                })
-                .catch((err) => {
-                    console.log('[SkipIntro] API error:', err);
-                    apiDone = true;
-                    mergeSegments();
-                });
+            this._segments = merged;
 
-            if (PluginSettings.isDetectEnabled()) {
-                this._runDetection(data, meta, (segments) => {
-                    if (this._currentData === data && segments && segments.length) {
-                        detectSegments = segments;
-                        detectDone = true;
-                        mergeSegments();
-                    } else {
-                        detectDone = true;
-                        mergeSegments();
-                    }
-                });
-            } else {
-                detectDone = true;
-                mergeSegments();
-            }
-        },
-
-        _extractMeta(data) {
-            const meta = {
-                tmdb_id: null,
-                imdb_id: null,
-                season: null,
-                episode: null,
-                is_series: false
-            };
-
-            // 1. Пробуем получить из data напрямую
-            if (data.tmdb_id) meta.tmdb_id = data.tmdb_id;
-            if (data.imdb_id) meta.imdb_id = data.imdb_id;
-            if (data.season != null) meta.season = parseInt(data.season);
-            if (data.episode != null) meta.episode = parseInt(data.episode);
-
-            // 2. Из карточки
-            let card = data.card || null;
-            if (!card) {
+            setTimeout(() => {
                 try {
-                    const activity = Lampa.Activity.active();
-                    if (activity) {
-                        card = activity.card || activity.movie || null;
-                    }
+                    const video = Lampa.PlayerVideo.video();
+                    if (video && video.duration) ProgressMarker.draw(this._segments, video.duration);
                 } catch(e) {}
-            }
-
-            if (card) {
-                if (!meta.tmdb_id) meta.tmdb_id = card.id || null;
-                if (!meta.imdb_id) meta.imdb_id = card.imdb_id || null;
-                if (card.name || card.title || card.number_of_seasons || card.first_air_date) {
-                    meta.is_series = true;
-                }
-            }
-
-            // 3. Пытаемся найти в playlist
-            if (data.playlist && Array.isArray(data.playlist)) {
-                const url = data.url;
-                for (let i = 0; i < data.playlist.length; i++) {
-                    const item = data.playlist[i];
-                    const itemUrl = typeof item.url === 'string' ? item.url : '';
-                    
-                    if (itemUrl === url || i === 0) {
-                        if (item.season != null && meta.season == null) {
-                            meta.season = parseInt(item.season);
-                        }
-                        if (item.episode != null && meta.episode == null) {
-                            meta.episode = parseInt(item.episode);
-                        }
-                        if (item.s != null && meta.season == null) {
-                            meta.season = parseInt(item.s);
-                        }
-                        if (item.e != null && meta.episode == null) {
-                            meta.episode = parseInt(item.e);
-                        }
-                        if (item.season_num != null && meta.season == null) {
-                            meta.season = parseInt(item.season_num);
-                        }
-                        if (item.episode_num != null && meta.episode == null) {
-                            meta.episode = parseInt(item.episode_num);
-                        }
-                    }
-                    if (itemUrl === url) break;
-                }
-            }
-
-            // 4. Пробуем получить TMDB ID через Lampa API
-            if (!meta.tmdb_id && meta.is_series) {
-                try {
-                    const activity = Lampa.Activity.active();
-                    if (activity && activity.movie && activity.movie.id) {
-                        meta.tmdb_id = activity.movie.id;
-                    }
-                } catch(e) {}
-            }
-
-            // 5. Если есть ID, это сериал
-            if (meta.tmdb_id && meta.season != null && meta.episode != null) {
-                meta.is_series = true;
-            }
-
-            // Дополнительный fallback
-            if (!meta.tmdb_id && meta.is_series) {
-                try {
-                    // Пробуем найти через Lampa Storage
-                    const current = Lampa.Storage.get('current', null);
-                    if (current && current.id) {
-                        meta.tmdb_id = current.id;
-                    }
-                } catch(e) {}
-            }
-
-            return meta;
+            }, 1000);
         },
 
-        _runDetection(data, meta, callback) {
-            if (this._detecting) return;
-            this._detecting = true;
-
-            const cached = Cache.get(meta.tmdb_id, meta.season, meta.episode);
-            if (cached && cached.length) {
-                this._detecting = false;
-                callback(cached);
-                return;
-            }
-
-            let video = null;
-            try {
-                video = Lampa.PlayerVideo.video();
-            } catch(e) {}
-
-            if (!video || !video.duration) {
-                let attempts = 0;
-                const checkVideo = () => {
-                    attempts++;
-                    try {
-                        video = Lampa.PlayerVideo.video();
-                    } catch(e) {}
-                    
-                    if (video && video.duration) {
-                        this._runDetectionInternal(video, meta, callback);
-                    } else if (attempts < 20) {
-                        setTimeout(checkVideo, 500);
-                    } else {
-                        this._detecting = false;
-                        callback([]);
-                    }
-                };
-                checkVideo();
-            } else {
-                this._runDetectionInternal(video, meta, callback);
-            }
-        },
-
-        _runDetectionInternal(video, meta, callback) {
-            const duration = video.duration;
-            
-            SubtitleDetector.detect(video, duration)
-                .then(subSegments => {
-                    if (subSegments && subSegments.length) {
-                        Cache.set(meta.tmdb_id, meta.season, meta.episode, subSegments);
-                        this._detecting = false;
-                        callback(subSegments);
-                        return;
-                    }
-
-                    AudioDetector.detect(video)
-                        .then(audioSegment => {
-                            this._detecting = false;
-                            if (audioSegment) {
-                                const segments = [audioSegment];
-                                Cache.set(meta.tmdb_id, meta.season, meta.episode, segments);
-                                callback(segments);
-                            } else {
-                                callback([]);
-                            }
-                        })
-                        .catch(() => {
-                            this._detecting = false;
-                            callback([]);
-                        });
-                })
-                .catch(() => {
-                    this._detecting = false;
-                    callback([]);
-                });
-        },
-
-        _updateProgressMarkers(segments) {
-            let duration = 0;
-            try {
-                const video = Lampa.PlayerVideo.video();
-                if (video) duration = video.duration;
-            } catch(e) {}
-            
-            if (duration > 0 && segments && segments.length) {
-                ProgressMarker.updateMarkers(segments, duration);
-                return;
-            }
-            
-            if (!duration) {
-                let attempts = 0;
-                const checkDuration = () => {
-                    attempts++;
+        _detectLocal(meta) {
+            return new Promise(resolve => {
+                setTimeout(async () => {
                     try {
                         const video = Lampa.PlayerVideo.video();
                         if (video && video.duration) {
-                            ProgressMarker.updateMarkers(segments, video.duration);
-                        } else if (attempts < 20) {
-                            setTimeout(checkDuration, 500);
+                            const segs = await SubtitleDetector.detect(video, video.duration);
+                            resolve(segs);
+                            return;
                         }
-                    } catch(e) {
-                        if (attempts < 20) setTimeout(checkDuration, 500);
-                    }
-                };
-                checkDuration();
-            }
+                    } catch(e) {}
+                    resolve([]);
+                }, 1500);
+            });
         },
 
-        _onTimeUpdate(data) {
-            if (!PluginSettings.isEnabled() || !this._segments.length) return;
-            
-            const current = data.current;
-            if (!Utils.isNumeric(current)) return;
-            
-            const segment = Utils.findSegment(this._segments, current);
-            
-            if (segment) {
-                ProgressMarker.highlightActive(segment);
+        _onTick(data) {
+            if (!this._segments.length) return;
+
+            const cur = data.current;
+            const active = this._segments.find(s => cur >= s.start && cur < s.end);
+
+            ProgressMarker.highlight(active);
+
+            if (active) {
+                if (this._lastSkipped === active) return;
+
+                if (this._active !== active) {
+                    this._active = active;
+                    this._skipTo(active);
+                }
             } else {
-                ProgressMarker.resetHighlights();
-            }
-            
-            if (segment) {
-                if (!PluginSettings.isTypeEnabled(segment.type)) {
-                    if (this._activeSegment) this._hideNotification();
-                    return;
-                }
-                
-                if (this._lastSkipped === segment) return;
-                
-                if (this._activeSegment !== segment) {
-                    this._activeSegment = segment;
-                    
-                    if (PluginSettings.isAutoSkip()) {
-                        this._doSkip(segment, true);
-                        return;
-                    }
-                }
-            } else if (this._activeSegment) {
-                this._hideNotification();
+                this._active = null;
+                Notification.hide();
             }
         },
 
-        _hideNotification() {
-            this._activeSegment = null;
-            Notification.hide();
-        },
+        _skipTo(seg) {
+            this._lastSkipped = seg;
+            this._active = null;
+            
+            const names = { intro: 'Заставка', recap: 'Рекап', credits: 'Титры' };
+            Notification.show(`${names[seg.type] || 'Фрагмент'} пропущен`, `${seg.end - seg.start}с ⚡`);
 
-        _doSkip(segment, auto) {
-            this._lastSkipped = segment;
-            this._activeSegment = null;
-            
-            const labels = {
-                intro: 'Заставка',
-                recap: 'Рекап',
-                credits: 'Титры',
-                preview: 'Превью'
-            };
-            
-            const label = labels[segment.type] || segment.type;
-            const time = Math.round(segment.end - segment.start);
-            
-            Notification.show(
-                `${label} пропущена`,
-                `${time}с${auto ? ' ⚡' : ''}`,
-                false
-            );
-            
             try {
                 const video = Lampa.PlayerVideo.video();
                 if (video) {
-                    const target = Math.min(segment.end, video.duration || segment.end);
-                    video.currentTime = target;
-                    console.log(`[SkipIntro] Skipped ${segment.type} to ${target}s${auto ? ' (auto)' : ''}`);
-                    
-                    setTimeout(() => {
-                        try {
-                            if (video.paused) video.play();
-                        } catch(e) {}
-                    }, 100);
+                    video.currentTime = Math.min(seg.end, video.duration || seg.end);
                 }
-            } catch(e) {
-                console.log('[SkipIntro] Error seeking:', e);
+            } catch(e) {}
+        },
+
+        _extractMeta(data) {
+            const meta = { tmdb_id: data.tmdb_id, imdb_id: data.imdb_id, season: null, episode: null };
+            
+            if (data.season != null) meta.season = parseInt(data.season);
+            if (data.episode != null) meta.episode = parseInt(data.episode);
+
+            if (data.playlist && Array.isArray(data.playlist)) {
+                const item = data.playlist.find(i => i.url === data.url) || data.playlist[0];
+                if (item) {
+                    meta.season = parseInt(item.season || item.s || item.season_num || meta.season);
+                    meta.episode = parseInt(item.episode || item.e || item.episode_num || meta.episode);
+                }
             }
+            if (!meta.tmdb_id) {
+                try { meta.tmdb_id = Lampa.Activity.active()?.card?.id || Lampa.Storage.get('current', null)?.id; } catch(e) {}
+            }
+            return meta;
         },
 
         _cleanup() {
             this._segments = [];
-            this._activeSegment = null;
+            this._active = null;
             this._lastSkipped = null;
-            this._currentData = null;
-            this._currentTmdb = null;
-            this._detecting = false;
-            Notification.destroy();
-            AudioDetector.destroy();
+            this._curId = null;
+            Notification.hide();
+            ProgressMarker.clear();
         },
 
         _onDestroy() {
             this._cleanup();
-            ProgressMarker.destroy();
         }
     };
 
-    // ===== ИНИЦИАЛИЗАЦИЯ =====
-    function initPlugin() {
-        if (window.Lampa && Lampa.SettingsApi && Lampa.Player && Lampa.Storage) {
-            SkipIntroPlugin.init();
+    function init() {
+        if (window.Lampa && Lampa.Player) {
+            Core.init();
         } else {
-            setTimeout(initPlugin, 500);
+            setTimeout(init, 400);
         }
     }
 
     if (window.Lampa && Lampa.Listener) {
-        Lampa.Listener.follow('app', (data) => {
-            if (data.type === 'ready') initPlugin();
-        });
+        Lampa.Listener.follow('app', (data) => { if (data.type === 'ready') init(); });
     }
-
-    setTimeout(initPlugin, 1000);
-
+    setTimeout(init, 800);
 }();
