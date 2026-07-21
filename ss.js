@@ -47,6 +47,27 @@
                    </svg>`,
             url: "discover/tv?with_networks=453",
             source: "tmdb"
+        },
+        {
+            id: 'trending_today',
+            title: 'В тренде Сегодня',
+            icon: `<svg width="64px" height="64px" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 2L14.5 8.5L21 9L16 13.5L17.5 20L12 16.5L6.5 20L8 13.5L3 9L9.5 8.5L12 2Z" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                <path d="M12 6V12L15 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>`,
+            url: "discover/tv?sort_by=trending_day",
+            source: "tmdb"
+        },
+        {
+            id: 'trending_week',
+            title: 'В тренде Неделя',
+            icon: `<svg width="64px" height="64px" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 2L14.5 8.5L21 9L16 13.5L17.5 20L12 16.5L6.5 20L8 13.5L3 9L9.5 8.5L12 2Z" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                <rect x="7" y="7" width="10" height="10" rx="1" stroke="currentColor" stroke-width="2"/>
+                <path d="M12 9V13L15 15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>`,
+            url: "discover/tv?sort_by=trending_week",
+            source: "tmdb"
         }
     ];
 
