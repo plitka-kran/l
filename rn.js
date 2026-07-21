@@ -18,7 +18,7 @@
     var config = {
         'online.js': '1.6',
         'pubtorr.js': '1.0',
-        'ss.js': '1.0.2',
+        'ss.js': '1.0.3',
         'playlist.js': '1.0.33',
         'audio.js': '1.0.11'
 	};
