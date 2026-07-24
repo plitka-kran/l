@@ -17,7 +17,6 @@
     // Список скриптов и их индивидуальные версии
     var config = {
         'online.js': '1.6',
-		'uaserials.js': '1.0',
         'pubtorr.js': '1.0',
         'ss.js': '1.0.3',
         'playlist.js': '1.0.33',
