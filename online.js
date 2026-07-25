@@ -1,4 +1,4 @@
-// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 27)
+// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 28)
 
 (function () {
     'use strict';
@@ -169,6 +169,7 @@
         };
         var error_message = '';
         var premium_cache = {}; // Кеш премиум-статуса
+        var premium_check_gen = 0; // Счётчик, чтобы «опоздавшие» ответы не перерисовывали устаревший список
 
         function checkErrorForm(str) {
             var login_form = str.match(/<form id="check-form" class="check-form" method="post" action="\/ajax\/login\/">/);
@@ -257,32 +258,41 @@
             return subtitles.length ? subtitles : false;
         }
 
-        // Проверка премиум-статуса для всех озвучек
-        function checkAllPremium(voice_ids, callback) {
+        // Проверка премиум-статуса для всех озвучек.
+        // callback вызывается один раз, как только собраны все результаты
+        // ИЛИ сработал fallback-таймер (чтобы не зависать надолго).
+        // onLate вызывается ДОПОЛНИТЕЛЬНО для каждого результата, который
+        // пришёл уже ПОСЛЕ основного callback (например, после fallback) —
+        // это даёт возможность вызывающему коду перерисовать список, когда
+        // "опоздавший" ответ всё же придёт, вместо того чтобы навсегда
+        // остаться с "премиум не найден" из-за медленной холодной сессии.
+        function checkAllPremium(voice_ids, callback, onLate) {
             var total = voice_ids.length;
             var checked = 0;
             var results = {};
-            
+            var callback_fired = false;
+
+            function finish() {
+                if (callback_fired) return;
+                callback_fired = true;
+                clearTimeout(fallbackTimer);
+                callback(results);
+            }
+
             if (total === 0) {
                 callback(results);
                 return;
             }
-            
+
             var fallbackTimer = setTimeout(function() {
-                if (checked < total) {
-                    checked = total;
-                    callback(results);
-                }
-            }, 6000);
+                finish();
+            }, 8000);
 
             voice_ids.forEach(function(voice_id) {
                 if (premium_cache[voice_id] !== undefined) {
                     results[voice_id] = premium_cache[voice_id];
                     checked++;
-                    if (checked === total) {
-                        clearTimeout(fallbackTimer);
-                        callback(results);
-                    }
+                    if (checked === total) finish();
                     return;
                 }
                 
@@ -301,15 +311,19 @@
                 }
                 
                 var req = new Lampa.Reguest();
-                req.timeout(4500);
+                req.timeout(7000);
                 
                 var done = function(isPremium) {
                     premium_cache[voice_id] = isPremium;
+                    var was_already_fired = callback_fired;
                     results[voice_id] = isPremium;
                     checked++;
-                    if (checked === total) {
-                        clearTimeout(fallbackTimer);
-                        callback(results);
+                    if (!was_already_fired) {
+                        if (checked === total) finish();
+                    } else if (onLate) {
+                        // Ответ пришёл позже основного колбэка — сообщаем об этом,
+                        // чтобы можно было обновить уже показанный список.
+                        onLate(voice_id, isPremium);
                     }
                 };
 
@@ -623,23 +637,40 @@
         // а не только при смене сезона — иначе кеш премиум-статуса может
         // «протухнуть», и переключение любого другого параметра фильтра
         // отдаст премиум-контент без активной подписки.
+        //
+        // При первом заходе в раздел сессия (PHPSESSID) всегда новая, поэтому
+        // первые запросы к HDrezka идут медленнее обычного и могут не успеть
+        // до общего таймаута — из-за этого метки премиума могли пропадать и
+        // не появляться, пока пользователь вручную не переключит сезон.
+        // Теперь такие «опоздавшие» ответы дополняют уже показанный список
+        // сами, без участия пользователя.
         function checkPremiumAndRender() {
+            premium_check_gen++;
+            var my_gen = premium_check_gen;
             var voices_source = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
             var voice_ids = voices_source.map(function (v) { return v.id; });
 
+            function renderWithResults(results) {
+                if (my_gen !== premium_check_gen) return; // фильтр уже сменился — этот рендер устарел
+                if (!extract) return; // компонент уже уничтожен
+                component.loading(false);
+                filter(results);
+                var items = filtred(results);
+                append(items);
+            }
+
             if (voice_ids.length > 0) {
                 component.loading(true);
+                var merged_results = {};
                 checkAllPremium(voice_ids, function (results) {
-                    component.loading(false);
-                    filter(results);
-                    var items = filtred(results);
-                    append(items);
+                    merged_results = results;
+                    renderWithResults(merged_results);
+                }, function (voice_id, isPremium) {
+                    merged_results[voice_id] = isPremium;
+                    renderWithResults(merged_results);
                 });
             } else {
-                component.loading(false);
-                filter({});
-                var items = filtred({});
-                append(items);
+                renderWithResults({});
             }
         }
 
@@ -854,10 +885,25 @@
             }
         }
 
+        // Если включена настройка "премиум внизу" — переставляет премиум-озвучки
+        // в конец списка (порядок бесплатных между собой не меняется).
+        function sortByPremium(voices, premium_results) {
+            if (Lampa.Storage.field('online_mod_sort_premium_last') !== true) return voices;
+            premium_results = premium_results || {};
+            return voices.map(function (v, i) {
+                return { v: v, i: i, prem: premium_results[v.id] || false };
+            }).sort(function (a, b) {
+                if (a.prem === b.prem) return a.i - b.i;
+                return a.prem ? 1 : -1;
+            }).map(function (x) { return x.v; });
+        }
+
         function filter(premium_results) {
             premium_results = premium_results || {};
 
             var voices_source = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
+            voices_source = sortByPremium(voices_source, premium_results);
+            voice_list_current = voices_source; // финальный порядок — используется и в filtred()/append()
 
             var voice_list = voices_source.map(function (v) {
                 var is_prem = premium_results[v.id] || false;
