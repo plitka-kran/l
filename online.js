@@ -1,4 +1,4 @@
-// Online Mod (с индикацией премиум-озвучки в фильтре 16)
+// Online Mod (с индикацией премиум-озвучки в фильтре 17)
 
 (function () {
     'use strict';
@@ -656,30 +656,87 @@ function extractData(str) {
     str = (str || '').replace(/\n/g, '');
     checkErrorForm(str);
     
-    // Логируем начало парсинга
-    console.log('[OnlineMod] extractData: starting parse');
+    console.log('[OnlineMod] extractData: starting parse for series');
     
     var translation = str.match(/<h2>В переводе<\/h2>:<\/td>\s*(<td>.*?<\/td>)/);
     
-    // Ищем разные варианты инициализации плеера
-    var cdnSeries = str.match(/\.initCDNSeriesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,/);
-    var cdnMovie = str.match(/\.initCDNMoviesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,/);
+    // Пробуем разные варианты поиска cdnSeries
+    var cdnSeries = null;
+    var cdnMovie = null;
     
-    // Альтернативные варианты поиска (для разных версий сайта)
-    if (!cdnSeries && !cdnMovie) {
-        cdnSeries = str.match(/initCDNSeriesEvents\(\s*['"](\d+)['"]\s*,\s*['"](\d+)['"]\s*,\s*['"](\d+)['"]\s*,\s*['"](\d+)['"]\s*,/);
-        cdnMovie = str.match(/initCDNMoviesEvents\(\s*['"](\d+)['"]\s*,\s*['"](\d+)['"]\s*,\s*['"](\d+)['"]\s*,\s*['"](\d+)['"]\s*,\s*['"](\d+)['"]\s*,/);
+    // Вариант 1: стандартный
+    var match1 = str.match(/\.initCDNSeriesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,/);
+    if (match1 && match1.length >= 5) {
+        cdnSeries = match1;
+        console.log('[OnlineMod] Found cdnSeries (variant 1):', cdnSeries);
     }
     
-    console.log('[OnlineMod] cdnSeries found:', !!cdnSeries);
-    console.log('[OnlineMod] cdnMovie found:', !!cdnMovie);
-    
-    // Если cdnSeries найден - показываем что в нем
-    if (cdnSeries) {
-        console.log('[OnlineMod] cdnSeries content:', cdnSeries);
+    // Вариант 2: с кавычками
+    if (!cdnSeries) {
+        var match2 = str.match(/initCDNSeriesEvents\(\s*['"](\d+)['"]\s*,\s*['"](\d+)['"]\s*,\s*['"](\d+)['"]\s*,\s*['"](\d+)['"]\s*,/);
+        if (match2 && match2.length >= 5) {
+            cdnSeries = match2;
+            console.log('[OnlineMod] Found cdnSeries (variant 2):', cdnSeries);
+        }
     }
-    if (cdnMovie) {
-        console.log('[OnlineMod] cdnMovie content:', cdnMovie);
+    
+    // Вариант 3: без пробелов
+    if (!cdnSeries) {
+        var match3 = str.match(/initCDNSeriesEvents\((\d+),(\d+),(\d+),(\d+),/);
+        if (match3 && match3.length >= 5) {
+            cdnSeries = match3;
+            console.log('[OnlineMod] Found cdnSeries (variant 3):', cdnSeries);
+        }
+    }
+    
+    // Вариант 4: ищем через data-attributes на странице
+    if (!cdnSeries) {
+        // Ищем data-season и data-episode
+        var seasonMatch = str.match(/data-season="(\d+)"/);
+        var episodeMatch = str.match(/data-episode="(\d+)"/);
+        var translatorMatch = str.match(/data-translator_id="(\d+)"/);
+        var filmIdMatch = str.match(/data-id="(\d+)"/);
+        
+        if (filmIdMatch && seasonMatch && episodeMatch && translatorMatch) {
+            cdnSeries = {
+                1: filmIdMatch[1],
+                2: translatorMatch[1],
+                3: seasonMatch[1],
+                4: episodeMatch[1],
+                length: 5
+            };
+            console.log('[OnlineMod] Found cdnSeries via data attributes');
+        }
+    }
+    
+    // Если ничего не нашли - пробуем найти film_id по-другому
+    if (!cdnSeries) {
+        var altFilmId = str.match(/data-id="(\d+)"/);
+        if (altFilmId) {
+            var filmId = altFilmId[1];
+            // Ищем хотя бы один перевод
+            var translatorMatch = str.match(/data-translator_id="(\d+)"/);
+            if (translatorMatch) {
+                // Создаем минимальный cdnSeries для работы
+                cdnSeries = {
+                    1: filmId,
+                    2: translatorMatch[1],
+                    3: '1',
+                    4: '1',
+                    length: 5
+                };
+                console.log('[OnlineMod] Created minimal cdnSeries from data attributes');
+            }
+        }
+    }
+    
+    // Пробуем найти cdnMovie (для фильмов)
+    if (!cdnSeries) {
+        var matchMovie = str.match(/\.initCDNMoviesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,/);
+        if (matchMovie && matchMovie.length >= 6) {
+            cdnMovie = matchMovie;
+            console.log('[OnlineMod] Found cdnMovie:', cdnMovie);
+        }
     }
     
     var devVoiceName;
@@ -690,73 +747,69 @@ function extractData(str) {
     
     var defVoice, defSeason, defEpisode;
     
-    // Проверяем cdnSeries с безопасным доступом
+    // Обработка cdnSeries для сериалов
     if (cdnSeries && cdnSeries.length >= 5) {
         try {
             extract.is_series = true;
-            extract.film_id = cdnSeries[1] || '';
+            extract.film_id = String(cdnSeries[1] || '').trim();
+            
+            var seasonId = String(cdnSeries[3] || '1').trim();
+            var episodeId = String(cdnSeries[4] || '1').trim();
+            var translatorId = String(cdnSeries[2] || '').trim();
+            
             defVoice = { 
                 name: devVoiceName, 
-                id: cdnSeries[2] || '' 
+                id: translatorId 
             };
             defSeason = { 
-                name: 'Сезон ' + (cdnSeries[3] || '1'), 
-                id: cdnSeries[3] || '1' 
+                name: 'Сезон ' + seasonId, 
+                id: seasonId 
             };
             defEpisode = { 
-                name: 'Серия ' + (cdnSeries[4] || '1'), 
-                season_id: cdnSeries[3] || '1', 
-                episode_id: cdnSeries[4] || '1' 
+                name: 'Серия ' + episodeId, 
+                season_id: seasonId, 
+                episode_id: episodeId 
             };
-            console.log('[OnlineMod] Series detected, film_id:', extract.film_id);
+            
+            console.log('[OnlineMod] Series parsed successfully:');
+            console.log('  film_id:', extract.film_id);
+            console.log('  translator_id:', translatorId);
+            console.log('  season:', seasonId);
+            console.log('  episode:', episodeId);
+            
         } catch (e) {
             console.error('[OnlineMod] Error parsing cdnSeries:', e);
-            // Если ошибка - пробуем найти film_id по-другому
-            var altFilmId = str.match(/data-id="(\d+)"/);
-            if (altFilmId) {
-                extract.film_id = altFilmId[1];
-                console.log('[OnlineMod] Found film_id via alt method:', extract.film_id);
+            // Пробуем найти film_id через data-id
+            var altId = str.match(/data-id="(\d+)"/);
+            if (altId) {
+                extract.film_id = altId[1];
+                console.log('[OnlineMod] Found film_id via data-id:', extract.film_id);
             }
         }
     } 
-    // Проверяем cdnMovie с безопасным доступом
+    // Обработка cdnMovie для фильмов
     else if (cdnMovie && cdnMovie.length >= 6) {
         try {
-            extract.film_id = cdnMovie[1] || '';
+            extract.film_id = String(cdnMovie[1] || '').trim();
             defVoice = { 
                 name: devVoiceName, 
-                id: cdnMovie[2] || '', 
-                is_camrip: cdnMovie[3] || '0', 
-                is_ads: cdnMovie[4] || '0', 
-                is_director: cdnMovie[5] || '0' 
+                id: String(cdnMovie[2] || '').trim(), 
+                is_camrip: String(cdnMovie[3] || '0').trim(), 
+                is_ads: String(cdnMovie[4] || '0').trim(), 
+                is_director: String(cdnMovie[5] || '0').trim() 
             };
-            console.log('[OnlineMod] Movie detected, film_id:', extract.film_id);
+            console.log('[OnlineMod] Movie parsed successfully, film_id:', extract.film_id);
         } catch (e) {
             console.error('[OnlineMod] Error parsing cdnMovie:', e);
-            var altFilmId = str.match(/data-id="(\d+)"/);
-            if (altFilmId) {
-                extract.film_id = altFilmId[1];
-                console.log('[OnlineMod] Found film_id via alt method:', extract.film_id);
-            }
         }
-    } else {
-        // Если не нашли стандартные паттерны - ищем альтернативные
-        console.log('[OnlineMod] No cdnSeries or cdnMovie found, trying alternative methods');
-        
-        // Ищем data-id на странице
-        var altFilmId = str.match(/data-id="(\d+)"/);
-        if (altFilmId) {
-            extract.film_id = altFilmId[1];
-            console.log('[OnlineMod] Found film_id via data-id:', extract.film_id);
-        }
-        
-        // Ищем ID в других местах
-        if (!extract.film_id) {
-            var altFilmId2 = str.match(/id="post_id" value="(\d+)"/);
-            if (altFilmId2) {
-                extract.film_id = altFilmId2[1];
-                console.log('[OnlineMod] Found film_id via post_id:', extract.film_id);
-            }
+    }
+    
+    // Если film_id все еще не найден - пробуем последний вариант
+    if (!extract.film_id) {
+        var lastResort = str.match(/\/player\/(\d+)/);
+        if (lastResort) {
+            extract.film_id = lastResort[1];
+            console.log('[OnlineMod] Found film_id via /player/:', extract.film_id);
         }
     }
     
@@ -790,25 +843,38 @@ function extractData(str) {
         console.log('[OnlineMod] Using default voice');
     }
     
-    // Если есть film_id - пробуем определить сериал или фильм по другим признакам
-    if (extract.film_id) {
+    // Если у нас сериал - парсим сезоны и эпизоды
+    if (extract.is_series || (extract.film_id && !cdnMovie)) {
         // Проверяем наличие сезонов
         var hasSeasons = str.match(/<ul id="simple-seasons-tabs"/);
         if (hasSeasons) {
             extract.is_series = true;
             console.log('[OnlineMod] Detected series by seasons-tabs');
         }
+        
+        // Если у нас есть film_id и мы не уверены что это фильм - пробуем найти сезоны
+        if (extract.film_id && !cdnMovie) {
+            // Проверяем наличие слов "сезон" или "season" на странице
+            var seasonWords = str.match(/сезон|season/i);
+            if (seasonWords) {
+                extract.is_series = true;
+                console.log('[OnlineMod] Detected series by keyword');
+            }
+        }
     }
     
     if (extract.is_series) {
+        // Парсим сезоны
         var seasons = str.match(/(<ul id="simple-seasons-tabs".*?<\/ul>)/);
         if (seasons) {
             try {
                 var _select = $(seasons[1]);
                 $('.b-simple_season__item', _select).each(function () {
+                    var name = $(this).text() || 'Сезон 1';
+                    var id = $(this).attr('data-tab_id') || '1';
                     extract.season.push({
-                        name: $(this).text() || 'Сезон 1',
-                        id: $(this).attr('data-tab_id') || '1'
+                        name: name.trim(),
+                        id: id
                     });
                 });
                 console.log('[OnlineMod] Found seasons:', extract.season.length);
@@ -820,15 +886,19 @@ function extractData(str) {
             extract.season.push(defSeason);
         }
         
+        // Парсим эпизоды
         var episodes = str.match(/(<div id="simple-episodes-tabs".*?<\/div>)/);
         if (episodes) {
             try {
                 var _select2 = $(episodes[1]);
                 $('.b-simple_episode__item', _select2).each(function () {
+                    var name = $(this).text() || 'Серия 1';
+                    var season_id = $(this).attr('data-season_id') || '1';
+                    var episode_id = $(this).attr('data-episode_id') || '1';
                     extract.episode.push({
-                        name: $(this).text() || 'Серия 1',
-                        season_id: $(this).attr('data-season_id') || '1',
-                        episode_id: $(this).attr('data-episode_id') || '1'
+                        name: name.trim(),
+                        season_id: season_id,
+                        episode_id: episode_id
                     });
                 });
                 console.log('[OnlineMod] Found episodes:', extract.episode.length);
@@ -847,7 +917,12 @@ function extractData(str) {
     var blocked = str.match(/class="b-player__restricted__block_message"/);
     if (blocked) extract.blocked = true;
     
-    console.log('[OnlineMod] extractData complete. film_id:', extract.film_id, 'is_series:', extract.is_series);
+    console.log('[OnlineMod] extractData complete:');
+    console.log('  film_id:', extract.film_id);
+    console.log('  is_series:', extract.is_series);
+    console.log('  voices:', extract.voice.length);
+    console.log('  seasons:', extract.season.length);
+    console.log('  episodes:', extract.episode.length);
 }
 
         function getEpisodes(call) {
