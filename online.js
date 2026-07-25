@@ -1552,29 +1552,7 @@
 
     function initStorage() {
         Lampa.Storage.set('online_mod_proxy_rezka2', 'false');
-        Lampa.Storage.set('online_mod_proxy_lumex', 'false');
-        Lampa.Storage.set('online_mod_proxy_kinobase', 'false');
-        Lampa.Storage.set('online_mod_proxy_collaps', 'false');
-        Lampa.Storage.set('online_mod_proxy_cdnmovies', 'false');
-        Lampa.Storage.set('online_mod_proxy_fancdn', 'false');
-        Lampa.Storage.set('online_mod_proxy_fancdn2', 'false');
-        Lampa.Storage.set('online_mod_proxy_fanserials', 'false');
-        Lampa.Storage.set('online_mod_proxy_fanserials_cdn', 'false');
-        Lampa.Storage.set('online_mod_proxy_animelib', 'false');
-        Lampa.Storage.set('online_mod_proxy_videoseed', 'false');
-        Lampa.Storage.set('online_mod_proxy_vibix', 'false');
-        Lampa.Storage.set('online_mod_proxy_redheadsound', 'false');
-        Lampa.Storage.set('online_mod_proxy_cdnvideohub', 'false');
-        Lampa.Storage.set('online_mod_proxy_videodb', 'false');
-        Lampa.Storage.set('online_mod_proxy_zetflix', 'false');
-        Lampa.Storage.set('online_mod_proxy_kinopub', 'false');
-        Lampa.Storage.set('online_mod_proxy_alloha', 'false');
-        Lampa.Storage.set('online_mod_proxy_hdvb', 'false');
-        Lampa.Storage.set('online_mod_proxy_kp', 'false');
-        Lampa.Storage.set('online_mod_proxy_filmix', 'false');
-        Lampa.Storage.set('online_mod_proxy_anilibria', 'false');
-        Lampa.Storage.set('online_mod_proxy_anilibria2', 'false');
-        Lampa.Storage.set('online_mod_proxy_kodik', 'false');
+
 
         Lampa.Params.trigger('online_mod_iframe_proxy', !isTizen || isLocal);
         Lampa.Params.trigger('online_mod_proxy_iframe', false);
@@ -1640,7 +1618,7 @@
             online_mod_full_episode_title: { ru: 'Полный формат названия серии', uk: 'Повний формат назви серії', be: 'Поўны фармат назвы серыі', en: 'Full episode title format', zh: '完整剧集标题格式' },
             online_mod_save_last_balanser: { ru: 'Сохранять историю балансеров', uk: 'Зберігати історію балансерів', be: 'Захоўваць гісторыю балансараў', en: 'Save history of balancers', zh: '保存平衡器的历史记录' },
             online_mod_clear_last_balanser: { ru: 'Очистить историю балансеров', uk: 'Очистити історію балансерів', be: 'Ачысціць гісторыю балансараў', en: 'Clear history of balancers', zh: '清除平衡器的历史记录' },
-            online_mod_rezka2_mirror: { ru: 'Зеркало для HDrezka', uk: 'Дзеркало для HDrezka', be: 'Люстэрка для HDrezka', en: 'Mirror for HDrezka', zh: 'HDrezka的镜子' },
+            online_mod_rezka2_mirror: { ru: 'Url HDrezka', uk: 'Url HDrezka', be: 'Url HDrezka', en: 'Url HDrezka', zh: 'Url HDrezka' },
             online_mod_rezka2_name: { ru: 'Логин или email для HDrezka', uk: 'Логін чи email для HDrezka', be: 'Лагін ці email для HDrezka', en: 'Login or email for HDrezka', zh: 'HDrezka的登录名或电子邮件' },
             online_mod_rezka2_password: { ru: 'Пароль для HDrezka', uk: 'Пароль для HDrezka', be: 'Пароль для HDrezka', en: 'Password for HDrezka', zh: 'HDrezka的密码' },
             online_mod_rezka2_login: { ru: 'Войти в HDrezka', uk: 'Увійти до HDrezka', be: 'Увайсці ў HDrezka', en: 'Log in to HDrezka', zh: '登录HDrezka' },
