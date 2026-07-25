@@ -1,4 +1,4 @@
-// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 30)
+// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 31)
 
 (function () {
     'use strict';
@@ -283,7 +283,23 @@
         }
 
         // Проверка премиум-статуса для всех озвучек
-        function checkAllPremium(voice_ids, callback) {
+        // Возвращает id последнего доступного эпизода конкретной озвучки в
+        // конкретном сезоне. На HDrezka премиум чаще всего закрывает не весь
+        // сезон целиком, а только последние (самые свежие) серии — поэтому
+        // проверка по 1-й серии могла давать ложное "бесплатно". Проверяем
+        // последнюю серию сезona: если премиум есть хоть где-то в сезоне, он
+        // с большей вероятностью обнаружится там.
+        function getProbeEpisodeId(voice_id, season_id) {
+            var data = extract.voice_data && extract.voice_data[voice_id];
+            var episodes = data && data.episode ? data.episode.filter(function (e) {
+                return !season_id || e.season_id == season_id;
+            }) : [];
+            if (!episodes.length) return '1';
+            var last = episodes[episodes.length - 1];
+            return last.episode_id || '1';
+        }
+
+        function checkAllPremium(voice_ids, callback, force) {
             var total = voice_ids.length;
             var checked = 0;
             var results = {};
@@ -304,18 +320,21 @@
 
             voice_ids.forEach(function(voice_id) {
                 var cache_key = premiumCacheKey(voice_id, current_season_id);
-                var cached = premium_cache[cache_key];
-                if (cached === undefined) cached = getPersistedPremium(cache_key);
 
-                if (cached !== undefined) {
-                    premium_cache[cache_key] = cached;
-                    results[voice_id] = cached;
-                    checked++;
-                    if (checked === total) {
-                        clearTimeout(fallbackTimer);
-                        callback(results);
+                if (!force) {
+                    var cached = premium_cache[cache_key];
+                    if (cached === undefined) cached = getPersistedPremium(cache_key);
+
+                    if (cached !== undefined) {
+                        premium_cache[cache_key] = cached;
+                        results[voice_id] = cached;
+                        checked++;
+                        if (checked === total) {
+                            clearTimeout(fallbackTimer);
+                            callback(results);
+                        }
+                        return;
                     }
-                    return;
                 }
                 
                 var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
@@ -325,7 +344,7 @@
                 
                 if (extract.is_series) {
                     postdata += '&season=' + encodeURIComponent(current_season_id);
-                    postdata += '&episode=1';
+                    postdata += '&episode=' + encodeURIComponent(getProbeEpisodeId(voice_id, current_season_id));
                     postdata += '&action=get_stream';
                 } else {
                     postdata += '&action=get_movie';
@@ -618,9 +637,14 @@
             // фильтра (сезон, озвучка, источник и т.п.) — this.filter вызывается
             // на каждое такое взаимодействие (см. filter.onSelect в component()),
             // поэтому проверка премиума здесь универсальна, а не завязана на сезон.
+            // force=true: игнорируем и оперативный, и постоянный кэш — пользователь
+            // явно переключает фильтр, значит ждёт актуальный результат, а не
+            // старое (возможно, ошибочное) значение из хранилища.
             premium_cache = {};
 
-            getEpisodes(checkPremiumAndRender);
+            getEpisodes(function () {
+                checkPremiumAndRender(true);
+            });
 
             component.saveChoice(choice);
             setTimeout(component.closeFilter, 10);
@@ -673,7 +697,7 @@
         // а не только при смене сезона — иначе кеш премиум-статуса может
         // «протухнуть», и переключение любого другого параметра фильтра
         // отдаст премиум-контент без активной подписки.
-        function checkPremiumAndRender() {
+        function checkPremiumAndRender(force) {
             var voices_source = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
             var voice_ids = voices_source.map(function (v) { return v.id; });
 
@@ -687,7 +711,7 @@
                     filter(results);
                     var items = filtred(results);
                     append(items);
-                });
+                }, force);
             } else {
                 component.loading(false);
                 filter({});
@@ -982,7 +1006,12 @@
                             quality[item.label] = item.file;
                         });
                         if (premium_content) {
-                            error('Перевод доступен только с HDrezka Premium');
+                            var block_voice_id = extract.is_series ? element.media.translator_id : element.media.id;
+                            var block_season_id = extract.is_series ? element.media.season_id : null;
+                            var block_key = premiumCacheKey(block_voice_id, block_season_id);
+                            premium_cache[block_key] = true;
+                            setPersistedPremium(block_key, true);
+                            error('Перевод доступен только с HDrezka Premium', true);
                             return;
                         }
                     }
@@ -1046,6 +1075,21 @@
             return filtred;
         }
 
+        function markPremiumDiscovered(items, voice_id) {
+            items.forEach(function (el) {
+                if (el.voice_id != voice_id || el.is_premium) return;
+                el.is_premium = true;
+                if (el.dom) {
+                    var titleEl = el.dom.find('.online__title');
+                    if (!startsWith(titleEl.text().trim(), '⭐')) titleEl.text('⭐ ' + titleEl.text());
+                    titleEl.css('color', '#FFD700');
+                    if (!el.dom.find('.online__quality span').length) {
+                        el.dom.find('.online__quality').append('<span style="color: #FFD700; margin-left: 5px;">⭐ Premium</span>');
+                    }
+                }
+            });
+        }
+
         function append(items) {
             component.reset();
             var viewed = Lampa.Storage.cache('online_view', 5000, []);
@@ -1069,6 +1113,7 @@
                     quality: element.quality,
                     info: element.info
                 });
+                element.dom = item;
                 
                 var hash_file = Lampa.Utils.hash(element.season ? [element.season, element.season > 10 ? ':' : '', element.episode, object.movie.original_title, filter_items.voice[choice.voice]].join('') : object.movie.original_title + element.title);
                 element.timeline = view;
@@ -1130,8 +1175,9 @@
                             item.append('<div class="torrent-item__viewed">' + Lampa.Template.get('icon_star', {}, true) + '</div>');
                             Lampa.Storage.set('online_view', viewed);
                         }
-                    }, function (error) {
+                    }, function (error, is_premium_block) {
                         element.loading = false;
+                        if (is_premium_block) markPremiumDiscovered(items, element.voice_id);
                         Lampa.Noty.show(error || Lampa.Lang.translate(extract.blocked ? 'online_mod_blockedlink' : 'online_mod_nolink'));
                     });
                 });
@@ -1148,7 +1194,8 @@
                                 file: element.stream,
                                 quality: element.qualitys
                             });
-                        }, function (error) {
+                        }, function (error, is_premium_block) {
+                            if (is_premium_block) markPremiumDiscovered(items, element.voice_id);
                             Lampa.Noty.show(error || Lampa.Lang.translate(extract.blocked ? 'online_mod_blockedlink' : 'online_mod_nolink'));
                         });
                     }
