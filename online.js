@@ -1,4 +1,4 @@
-// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 7)
+// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 8)
 
 (function () {
     'use strict';
@@ -283,13 +283,18 @@
                 postdata += '&translator_id=' + encodeURIComponent(voice_id);
                 postdata += '&favs=' + encodeURIComponent(extract.favs);
                 
+                // Для фильмов - просто запрос фильма
+                // Для сериалов - берем первую серию первого сезона
                 if (extract.is_series) {
-                    // Для сериалов берем первую серию первого сезона
                     var season_id = extract.season && extract.season.length > 0 ? extract.season[0].id : 1;
+                    var episode_id = extract.episode && extract.episode.length > 0 ? extract.episode[0].episode_id : 1;
                     postdata += '&season=' + encodeURIComponent(season_id);
-                    postdata += '&episode=1';
+                    postdata += '&episode=' + encodeURIComponent(episode_id);
                     postdata += '&action=get_stream';
                 } else {
+                    postdata += '&is_camrip=0';
+                    postdata += '&is_ads=0';
+                    postdata += '&is_director=0';
                     postdata += '&action=get_movie';
                 }
                 
@@ -824,9 +829,9 @@
                 postdata += '&action=get_stream';
             } else {
                 postdata += '&translator_id=' + encodeURIComponent(element.media.id);
-                postdata += '&is_camrip=' + encodeURIComponent(element.media.is_camrip);
-                postdata += '&is_ads=' + encodeURIComponent(element.media.is_ads);
-                postdata += '&is_director=' + encodeURIComponent(element.media.is_director);
+                postdata += '&is_camrip=' + encodeURIComponent(element.media.is_camrip || 0);
+                postdata += '&is_ads=' + encodeURIComponent(element.media.is_ads || 0);
+                postdata += '&is_director=' + encodeURIComponent(element.media.is_director || 0);
                 postdata += '&favs=' + encodeURIComponent(extract.favs);
                 postdata += '&action=get_movie';
             }
