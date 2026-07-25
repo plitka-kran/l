@@ -1,4 +1,4 @@
-// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 25)
+// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 26)
 
 (function () {
     'use strict';
@@ -103,6 +103,39 @@
         if (url.indexOf('://') == -1) url = 'https://' + url;
         if (url.charAt(url.length - 1) === '/') url = url.substring(0, url.length - 1);
         return url;
+    }
+
+    function decodeSecret(input, password) {
+        var result = '';
+        password = (password || Lampa.Storage.get('online_mod_secret_password', '')) + '';
+        if (input && password) {
+            var hash = salt('123456789' + password);
+            while (hash.length < input.length) {
+                hash += hash;
+            }
+            var i = 0;
+            while (i < input.length) {
+                result += String.fromCharCode(input[i] ^ hash.charCodeAt(i));
+                i++;
+            }
+        }
+        return result;
+    }
+
+    function salt(input) {
+        var str = (input || '') + '';
+        var hash = 0;
+        for (var i = 0; i < str.length; i++) {
+            var c = str.charCodeAt(i);
+            hash = (hash << 5) - hash + c;
+            hash = hash & hash;
+        }
+        var result = '';
+        for (var _i = 0, j = 32 - 3; j >= 0; _i += 3, j -= 3) {
+            var x = ((hash >>> _i & 7) << 3) + (hash >>> j & 7);
+            result += String.fromCharCode(x < 26 ? 97 + x : x < 52 ? 39 + x : x - 4);
+        }
+        return result;
     }
 
     // --- Компонент Rezka2 ---
@@ -222,16 +255,6 @@
             }
             return subtitles.length ? subtitles : false;
         }
-
-        // Выделенная универсальная функция проверки премиум-статуса
-        this.checkPremiumStatus = function (callback) {
-            var voice_ids = (extract && extract.voice) ? extract.voice.map(function(v) { return v.id; }) : [];
-            checkAllPremium(voice_ids, function(results) {
-                filter(results);
-                var items = filtred(results);
-                callback(items);
-            });
-        };
 
         // Проверка премиум-статуса для всех озвучек
         function checkAllPremium(voice_ids, callback) {
@@ -547,12 +570,7 @@
             component.saveChoice(choice);
         };
 
-        this.clearPremiumCache = function() {
-            premium_cache = {};
-        };
-
         this.filter = function (type, a, b) {
-            var _this = this;
             choice[a.stype] = b.index;
             if (a.stype == 'voice') {
                 var raw_name = filter_items.voice[b.index] || '';
@@ -562,14 +580,14 @@
             
             component.reset();
             component.loading(true);
-            premium_cache = {}; // Мгновенный сброс премиум-кеша
-            
-            getEpisodes(function() {
-                _this.checkPremiumStatus(function(items) {
-                    component.loading(false);
-                    append(items);
-                });
-            });
+
+            // Кеш премиум-статуса сбрасывается при ИЗМЕНЕНИИ ЛЮБОГО параметра
+            // фильтра (сезон, озвучка, источник и т.п.) — this.filter вызывается
+            // на каждое такое взаимодействие (см. filter.onSelect в component()),
+            // поэтому проверка премиума здесь универсальна, а не завязана на сезон.
+            premium_cache = {};
+
+            getEpisodes(checkPremiumAndRender);
 
             component.saveChoice(choice);
             setTimeout(component.closeFilter, 10);
@@ -599,12 +617,17 @@
             });
         }
 
-        function success() {
-            component.loading(true);
-            var voice_ids = extract.voice.map(function(v) { return v.id; });
+        // Универсальная проверка премиум-статуса + рендер списка.
+        // Вызывается при ЛЮБОМ изменении фильтра (сезон, озвучка, источник и т.д.),
+        // а не только при смене сезона — иначе кеш премиум-статуса может
+        // «протухнуть», и переключение любого другого параметра фильтра
+        // отдаст премиум-контент без активной подписки.
+        function checkPremiumAndRender() {
+            var voice_ids = extract.voice.map(function (v) { return v.id; });
 
             if (voice_ids.length > 0) {
-                checkAllPremium(voice_ids, function(results) {
+                component.loading(true);
+                checkAllPremium(voice_ids, function (results) {
                     component.loading(false);
                     filter(results);
                     var items = filtred(results);
@@ -616,6 +639,11 @@
                 var items = filtred({});
                 append(items);
             }
+        }
+
+        function success() {
+            component.loading(false);
+            checkPremiumAndRender();
         }
 
         function extractData(str) {
@@ -1031,6 +1059,7 @@
         var filter = new Lampa.Filter(object);
         var balanser = 'rezka2';
         var last_bls = Lampa.Storage.field('online_mod_save_last_balanser') === true ? Lampa.Storage.cache('online_mod_last_balanser', 200, {}) : {};
+        var prefer_http = Lampa.Storage.field('online_mod_prefer_http') === true;
         var forcedQuality = '';
         var qualityFilter = {
             title: Lampa.Lang.translate('settings_player_quality'),
@@ -1044,6 +1073,39 @@
             balanser = last_bls[object.movie.id];
         }
 
+        this.proxy = function (name) {
+            return '';
+        };
+
+        this.fixLink = function (link, referrer) {
+            return fixLink(link, referrer);
+        };
+
+        this.fixLinkProtocol = function (link, prefer_http, replace_protocol) {
+            return fixLinkProtocol(link, prefer_http, replace_protocol);
+        };
+
+        this.proxyLink = function (link, proxy, proxy_enc, enc) {
+            return link;
+        };
+
+        this.proxyStream = function (url, name) {
+            return url;
+        };
+
+        this.processSubs = function (url) {
+            return url;
+        };
+
+        this.proxyStreamSubs = function (url, name) {
+            return this.processSubs(url);
+        };
+
+        this.checkMyIp = function (onComplite) {
+            onComplite();
+        };
+
+        var last;
         var extended;
         var selected_id;
         var filter_translate = {
@@ -1073,14 +1135,8 @@
                 _this.start();
             };
 
-            // Реагируем мгновенно на любое изменение / взаимодействие с формой фильтра
             filter.onSelect = function (type, a, b) {
                 if (type == 'filter') {
-                    // При любом клике по элементам фильтра сбрасываем кеш премиума
-                    if (source && source.clearPremiumCache) {
-                        source.clearPremiumCache();
-                    }
-
                     if (a.reset) {
                         if (extended) source.reset();
                         else _this.start();
@@ -1129,6 +1185,10 @@
             return str.replace(/[\s.,:;’'`!?]+/g, ' ').trim();
         };
 
+        this.kpCleanTitle = function (str) {
+            return this.cleanTitle(str).replace(/^[ \/\\]+/, '').replace(/[ \/\\]+$/, '').replace(/\+( *[+\/\\])+/g, '+').replace(/([+\/\\] *)+\+/g, '+').replace(/( *[\/\\]+ *)+/g, '+');
+        };
+
         this.normalizeTitle = function (str) {
             return this.cleanTitle(str.toLowerCase().replace(/[\-\u2010-\u2015\u2E3A\u2E3B\uFE58\uFE63\uFF0D]+/g, '-').replace(/ё/g, 'е'));
         };
@@ -1159,7 +1219,36 @@
             });
         };
 
+        this.uniqueNamesShortText = function (names, limit) {
+            var unique = [];
+            names.forEach(function (name) {
+                if (name && unique.indexOf(name) == -1) unique.push(name);
+            });
+            if (limit && unique.length > 1) {
+                var length = 0;
+                var limit_index = -1;
+                var last_index = unique.length - 1;
+                unique.forEach(function (name, index) {
+                    length += name.length;
+                    if (limit_index == -1 && length > limit - (index == last_index ? 0 : 5)) limit_index = index;
+                    length += 2;
+                });
+                if (limit_index != -1) {
+                    unique = unique.splice(0, Math.max(limit_index, 1));
+                    unique.push('...');
+                }
+            }
+            return unique.join(', ');
+        };
+
+        this.decodeHtml = function (html) {
+            var text = document.createElement("textarea");
+            text.innerHTML = html;
+            return text.value;
+        };
+
         this.find = function () {
+            var _this4 = this;
             var query = object.search || object.movie.title;
             if (!query) {
                 this.emptyForQuery(query);
@@ -1279,6 +1368,7 @@
 
         this.reset = function () {
             contextmenu_all = [];
+            last = filter.render().find('.selector').eq(0)[0];
             scroll.render().find('.empty').remove();
             scroll.clear();
             scroll.reset();
@@ -1386,6 +1476,7 @@
 
         this.append = function (item) {
             item.on('hover:focus', function (e) {
+                last = e.target;
                 scroll.update($(e.target), true);
             });
             scroll.append(item);
@@ -1536,7 +1627,6 @@
 
         this.start = function (first_select) {
             if (Lampa.Activity.active().activity !== this.activity) return;
-            var last;
             if (first_select) {
                 var last_views = scroll.render().find('.selector.online').find('.torrent-item__viewed').parent().last();
                 if (object.movie.number_of_seasons && last_views.length) last = last_views.eq(0)[0];
@@ -1651,7 +1741,7 @@
             online_mod_balanser: { ru: 'Балансер', uk: 'Балансер', be: 'Балансер', en: 'Balancer', zh: '平衡器' },
             online_mod_file_helper: { ru: 'Удерживайте клавишу "ОК" для вызова контекстного меню', uk: 'Утримуйте клавішу "ОК" для виклику контекстного меню', be: 'Утрымлівайце клавішу "ОК" для выклику кантэкстнага меню', en: 'Hold the "OK" key to bring up the context menu', zh: '按住“确定”键调出上下文菜单' },
             online_mod_clearmark_all: { ru: 'Снять отметку у всех', uk: 'Зняти позначку у всіх', be: 'Зняць адзнаку ва ўсіх', en: 'Uncheck all', zh: '取消所有' },
-            online_mod_timeclear_all: { ru: 'Скинути тайм-код у всех', uk: 'Скінути тайм-код у всіх', be: 'Скінуць тайм-код ва ўсіх', en: 'Reset timecode for all', zh: '为所有人重置时间码' },
+            online_mod_timeclear_all: { ru: 'Сбросить тайм-код у всех', uk: 'Скинути тайм-код у всіх', be: 'Скінуць тайм-код ва ўсіх', en: 'Reset timecode for all', zh: '为所有人重置时间码' },
             online_mod_query_start: { ru: 'По запросу', uk: 'На запит', be: 'Па запыце', en: 'On request', zh: '根据要求' },
             online_mod_query_end: { ru: 'нет результатов', uk: 'немає результатів', be: 'няма вынікаў', en: 'no results', zh: '没有结果' },
             online_mod_title: { ru: 'Онлайн HDrezka', uk: 'Онлайн HDrezka', be: 'Анлайн HDrezka', en: 'Online HDrezka', zh: '在线的 HDrezka' },
