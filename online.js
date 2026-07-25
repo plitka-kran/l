@@ -566,9 +566,9 @@
                     });
                     
                     // Проверяем премиум-атрибуты
-                    var isPremium = $(this).attr('data-camrip') === '1' || 
-                                   $(this).attr('data-ads') === '1' ||
-                                   $(this).attr('data-director') === '1';
+                    var isPremium = $(this).hasClass('premium') || 
+                $(this).attr('data-premium') === '1' || 
+                $(this).find('.title').text().indexOf('Premium') !== -1;
                     
                     extract.voice.push({
                         name: title,
