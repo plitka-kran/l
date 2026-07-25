@@ -1,7 +1,10 @@
-// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 28)
+// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 29)
 
 (function () {
     'use strict';
+
+    // --- Глобальный кеш премиума (сохраняется между переходами по меню) ---
+    var global_premium_cache = {};
 
     // --- Утилиты ---
     function startsWith(str, searchString) {
@@ -16,13 +19,7 @@
 
     function parseURL(link) {
         var url = {
-            href: link,
-            protocol: '',
-            host: '',
-            origin: '',
-            pathname: '',
-            search: '',
-            hash: ''
+            href: link, protocol: '', host: '', origin: '', pathname: '', search: '', hash: ''
         };
         var pos = link.indexOf('#');
         if (pos !== -1) {
@@ -105,39 +102,6 @@
         return url;
     }
 
-    function decodeSecret(input, password) {
-        var result = '';
-        password = (password || Lampa.Storage.get('online_mod_secret_password', '')) + '';
-        if (input && password) {
-            var hash = salt('123456789' + password);
-            while (hash.length < input.length) {
-                hash += hash;
-            }
-            var i = 0;
-            while (i < input.length) {
-                result += String.fromCharCode(input[i] ^ hash.charCodeAt(i));
-                i++;
-            }
-        }
-        return result;
-    }
-
-    function salt(input) {
-        var str = (input || '') + '';
-        var hash = 0;
-        for (var i = 0; i < str.length; i++) {
-            var c = str.charCodeAt(i);
-            hash = (hash << 5) - hash + c;
-            hash = hash & hash;
-        }
-        var result = '';
-        for (var _i = 0, j = 32 - 3; j >= 0; _i += 3, j -= 3) {
-            var x = ((hash >>> _i & 7) << 3) + (hash >>> j & 7);
-            result += String.fromCharCode(x < 26 ? 97 + x : x < 52 ? 39 + x : x - 4);
-        }
-        return result;
-    }
-
     // --- Компонент Rezka2 ---
     function rezka2(component, _object) {
         var network = new Lampa.Reguest();
@@ -160,7 +124,7 @@
         }
         var embed = ref;
         var filter_items = {};
-        var voice_list_current = []; // Озвучки, доступные для ТЕКУЩЕГО выбранного сезона
+        var voice_list_current = [];
         var choice = {
             season: 0,
             voice: 0,
@@ -168,8 +132,10 @@
             season_id: ''
         };
         var error_message = '';
-        var premium_cache = {}; // Кеш премиум-статуса
-        var premium_check_gen = 0; // Счётчик, чтобы «опоздавшие» ответы не перерисовывали устаревший список
+
+        function getFilmCacheKey(voice_id) {
+            return (extract.film_id || object.movie.id) + '_' + voice_id;
+        }
 
         function checkErrorForm(str) {
             var login_form = str.match(/<form id="check-form" class="check-form" method="post" action="\/ajax\/login\/">/);
@@ -258,41 +224,32 @@
             return subtitles.length ? subtitles : false;
         }
 
-        // Проверка премиум-статуса для всех озвучек.
-        // callback вызывается один раз, как только собраны все результаты
-        // ИЛИ сработал fallback-таймер (чтобы не зависать надолго).
-        // onLate вызывается ДОПОЛНИТЕЛЬНО для каждого результата, который
-        // пришёл уже ПОСЛЕ основного callback (например, после fallback) —
-        // это даёт возможность вызывающему коду перерисовать список, когда
-        // "опоздавший" ответ всё же придёт, вместо того чтобы навсегда
-        // остаться с "премиум не найден" из-за медленной холодной сессии.
-        function checkAllPremium(voice_ids, callback, onLate) {
+        function checkAllPremium(voice_ids, callback) {
             var total = voice_ids.length;
             var checked = 0;
             var results = {};
-            var callback_fired = false;
-
-            function finish() {
-                if (callback_fired) return;
-                callback_fired = true;
-                clearTimeout(fallbackTimer);
-                callback(results);
-            }
-
+            
             if (total === 0) {
                 callback(results);
                 return;
             }
-
+            
             var fallbackTimer = setTimeout(function() {
-                finish();
-            }, 8000);
+                if (checked < total) {
+                    checked = total;
+                    callback(results);
+                }
+            }, 6000);
 
             voice_ids.forEach(function(voice_id) {
-                if (premium_cache[voice_id] !== undefined) {
-                    results[voice_id] = premium_cache[voice_id];
+                var cache_key = getFilmCacheKey(voice_id);
+                if (global_premium_cache[cache_key] !== undefined) {
+                    results[voice_id] = global_premium_cache[cache_key];
                     checked++;
-                    if (checked === total) finish();
+                    if (checked === total) {
+                        clearTimeout(fallbackTimer);
+                        callback(results);
+                    }
                     return;
                 }
                 
@@ -311,19 +268,15 @@
                 }
                 
                 var req = new Lampa.Reguest();
-                req.timeout(7000);
+                req.timeout(4500);
                 
                 var done = function(isPremium) {
-                    premium_cache[voice_id] = isPremium;
-                    var was_already_fired = callback_fired;
+                    global_premium_cache[cache_key] = isPremium;
                     results[voice_id] = isPremium;
                     checked++;
-                    if (!was_already_fired) {
-                        if (checked === total) finish();
-                    } else if (onLate) {
-                        // Ответ пришёл позже основного колбэка — сообщаем об этом,
-                        // чтобы можно было обновить уже показанный список.
-                        onLate(voice_id, isPremium);
+                    if (checked === total) {
+                        clearTimeout(fallbackTimer);
+                        callback(results);
                     }
                 };
 
@@ -579,7 +532,6 @@
                 voice_name: '',
                 season_id: ''
             };
-            premium_cache = {};
             component.loading(true);
             getEpisodes(success);
             component.saveChoice(choice);
@@ -595,12 +547,6 @@
             
             component.reset();
             component.loading(true);
-
-            // Кеш премиум-статуса сбрасывается при ИЗМЕНЕНИИ ЛЮБОГО параметра
-            // фильтра (сезон, озвучка, источник и т.п.) — this.filter вызывается
-            // на каждое такое взаимодействие (см. filter.onSelect в component()),
-            // поэтому проверка премиума здесь универсальна, а не завязана на сезон.
-            premium_cache = {};
 
             getEpisodes(checkPremiumAndRender);
 
@@ -632,45 +578,43 @@
             });
         }
 
-        // Универсальная проверка премиум-статуса + рендер списка.
-        // Вызывается при ЛЮБОМ изменении фильтра (сезон, озвучка, источник и т.д.),
-        // а не только при смене сезона — иначе кеш премиум-статуса может
-        // «протухнуть», и переключение любого другого параметра фильтра
-        // отдаст премиум-контент без активной подписки.
-        //
-        // При первом заходе в раздел сессия (PHPSESSID) всегда новая, поэтому
-        // первые запросы к HDrezka идут медленнее обычного и могут не успеть
-        // до общего таймаута — из-за этого метки премиума могли пропадать и
-        // не появляться, пока пользователь вручную не переключит сезон.
-        // Теперь такие «опоздавшие» ответы дополняют уже показанный список
-        // сами, без участия пользователя.
         function checkPremiumAndRender() {
-            premium_check_gen++;
-            var my_gen = premium_check_gen;
             var voices_source = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
-            var voice_ids = voices_source.map(function (v) { return v.id; });
-
-            function renderWithResults(results) {
-                if (my_gen !== premium_check_gen) return; // фильтр уже сменился — этот рендер устарел
-                if (!extract) return; // компонент уже уничтожен
-                component.loading(false);
-                filter(results);
-                var items = filtred(results);
-                append(items);
+            
+            // Фильтр сортировки премиума
+            var sort_type = Lampa.Storage.get('online_mod_premium_sort', 'default');
+            if (sort_type === 'free_first') {
+                voices_source.sort(function(a, b) {
+                    var premA = global_premium_cache[getFilmCacheKey(a.id)] ? 1 : 0;
+                    var premB = global_premium_cache[getFilmCacheKey(b.id)] ? 1 : 0;
+                    return premA - premB;
+                });
             }
+
+            var voice_ids = voices_source.map(function (v) { return v.id; });
 
             if (voice_ids.length > 0) {
                 component.loading(true);
-                var merged_results = {};
                 checkAllPremium(voice_ids, function (results) {
-                    merged_results = results;
-                    renderWithResults(merged_results);
-                }, function (voice_id, isPremium) {
-                    merged_results[voice_id] = isPremium;
-                    renderWithResults(merged_results);
+                    component.loading(false);
+                    
+                    if (sort_type === 'free_first') {
+                        voices_source.sort(function(a, b) {
+                            var premA = results[a.id] ? 1 : 0;
+                            var premB = results[b.id] ? 1 : 0;
+                            return premA - premB;
+                        });
+                    }
+
+                    filter(results);
+                    var items = filtred(results);
+                    append(items);
                 });
             } else {
-                renderWithResults({});
+                component.loading(false);
+                filter({});
+                var items = filtred({});
+                append(items);
             }
         }
 
@@ -764,7 +708,6 @@
             if (blocked) extract.blocked = true;
         }
 
-        // Загружает (с кешированием) список сезонов/серий для ОДНОЙ озвучки.
         function fetchVoiceData(translator_id, callback) {
             if (extract.voice_data[translator_id]) {
                 callback(extract.voice_data[translator_id]);
@@ -816,9 +759,6 @@
             return data;
         }
 
-        // Догружает данные по сезонам/сериям для ВСЕХ озвучек (не только выбранной
-        // в данный момент), чтобы можно было понять, какие озвучки реально
-        // покрывают текущий сезон, и не показывать в фильтре те, что его не покрывают.
         function ensureAllVoiceData(callback) {
             var voices = extract.voice || [];
             var total = voices.length;
@@ -842,9 +782,6 @@
             return null;
         }
 
-        // Только те озвучки, у которых есть серии для текущего сезона.
-        // Если данные ещё не загрузились или ни одна озвучка не совпала —
-        // показываем полный список, чтобы фильтр не оказался пустым.
         function availableVoicesForSeason(season_id) {
             if (!season_id) return extract.voice;
             var list = extract.voice.filter(function (v) {
@@ -885,25 +822,10 @@
             }
         }
 
-        // Если включена настройка "премиум внизу" — переставляет премиум-озвучки
-        // в конец списка (порядок бесплатных между собой не меняется).
-        function sortByPremium(voices, premium_results) {
-            if (Lampa.Storage.field('online_mod_sort_premium_last') !== true) return voices;
-            premium_results = premium_results || {};
-            return voices.map(function (v, i) {
-                return { v: v, i: i, prem: premium_results[v.id] || false };
-            }).sort(function (a, b) {
-                if (a.prem === b.prem) return a.i - b.i;
-                return a.prem ? 1 : -1;
-            }).map(function (x) { return x.v; });
-        }
-
         function filter(premium_results) {
             premium_results = premium_results || {};
 
             var voices_source = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
-            voices_source = sortByPremium(voices_source, premium_results);
-            voice_list_current = voices_source; // финальный порядок — используется и в filtred()/append()
 
             var voice_list = voices_source.map(function (v) {
                 var is_prem = premium_results[v.id] || false;
@@ -1781,35 +1703,19 @@
     }
 
     // --- Настройки и инициализация ---
-    var isMSX = !!(window.TVXHost || window.TVXManager);
-    var isTizen = navigator.userAgent.toLowerCase().indexOf('tizen') !== -1;
-    var isIFrame = window.parent !== window;
-    var isLocal = !startsWith(window.location.protocol, 'http');
-    var network = new Lampa.Reguest();
-    var online_loading = false;
-
-    function logApp() {
-        console.log('Online Mod');
-        console.log('App', 'is MSX:', isMSX);
-        console.log('App', 'is Tizen:', isTizen);
-        console.log('App', 'is iframe:', isIFrame);
-        console.log('App', 'is local:', isLocal);
-    }
-
     function initStorage() {
         Lampa.Storage.set('online_mod_proxy_rezka2', 'false');
 
-        Lampa.Params.trigger('online_mod_iframe_proxy', !isTizen || isLocal);
-        Lampa.Params.trigger('online_mod_proxy_iframe', false);
-        Lampa.Params.trigger('online_mod_proxy_find_ip', false);
-        Lampa.Params.trigger('online_mod_proxy_other', false);
         Lampa.Params.trigger('online_mod_prefer_http', window.location.protocol !== 'https:');
-        Lampa.Params.trigger('online_mod_prefer_mp4', true);
-        Lampa.Params.trigger('online_mod_prefer_dash', false);
-        Lampa.Params.trigger('online_mod_collaps_lampa_player', false);
         Lampa.Params.trigger('online_mod_full_episode_title', false);
-        Lampa.Params.trigger('online_mod_av1_support', true);
         Lampa.Params.trigger('online_mod_save_last_balanser', false);
+        
+        // Новая опция сортировки перевода по умолчанию
+        Lampa.Params.select('online_mod_premium_sort', {
+            'default': 'По умолчанию',
+            'free_first': 'Сначала бесплатные, потом Премиум'
+        }, 'default');
+
         Lampa.Params.select('online_mod_rezka2_mirror', '', '');
         Lampa.Params.select('online_mod_rezka2_name', '', '');
         Lampa.Params.select('online_mod_rezka2_password', '', '');
@@ -1825,46 +1731,43 @@
         if (!Lampa.Lang) {
             var lang_data = {};
             Lampa.Lang = {
-                add: function (data) {
-                    lang_data = data;
-                },
-                translate: function (key) {
-                    return lang_data[key] ? lang_data[key].ru : key;
-                }
+                add: function (data) { lang_data = data; },
+                translate: function (key) { return lang_data[key] ? lang_data[key].ru : key; }
             };
         }
 
         Lampa.Lang.add({
-            online_mod_watch: { ru: 'Смотреть онлайн', uk: 'Дивитися онлайн', be: 'Глядзець анлайн', en: 'Watch online', zh: '在线观看' },
-            online_mod_nolink: { ru: 'Не удалось извлечь ссылку', uk: 'Неможливо отримати посилання', be: 'Не ўдалося атрымаць спасылку', en: 'Failed to fetch link', zh: '获取链接失败' },
-            online_mod_blockedlink: { ru: 'К сожалению, это видео не доступно в вашем регионе', uk: 'На жаль, це відео не доступне у вашому регіоні', be: 'Нажаль, гэта відэа не даступна ў вашым рэгіёне', en: 'Sorry, this video is not available in your region', zh: '抱歉，您所在的地区无法观看该视频' },
-            online_mod_balanser: { ru: 'Балансер', uk: 'Балансер', be: 'Балансер', en: 'Balancer', zh: '平衡器' },
-            online_mod_file_helper: { ru: 'Удерживайте клавишу "ОК" для вызова контекстного меню', uk: 'Утримуйте клавішу "ОК" для виклику контекстного меню', be: 'Утрымлівайце клавішу "ОК" для выклику кантэкстнага меню', en: 'Hold the "OK" key to bring up the context menu', zh: '按住“确定”键调出上下文菜单' },
-            online_mod_clearmark_all: { ru: 'Снять отметку у всех', uk: 'Зняти позначку у всіх', be: 'Зняць адзнаку ва ўсіх', en: 'Uncheck all', zh: '取消所有' },
-            online_mod_timeclear_all: { ru: 'Сбросить тайм-код у всех', uk: 'Скинути тайм-код у всіх', be: 'Скінуць тайм-код ва ўсіх', en: 'Reset timecode for all', zh: '为所有人重置时间码' },
-            online_mod_query_start: { ru: 'По запросу', uk: 'На запит', be: 'Па запыце', en: 'On request', zh: '根据要求' },
-            online_mod_query_end: { ru: 'нет результатов', uk: 'немає результатів', be: 'няма вынікаў', en: 'no results', zh: '没有结果' },
-            online_mod_title: { ru: 'Онлайн HDrezka', uk: 'Онлайн HDrezka', be: 'Анлайн HDrezka', en: 'Online HDrezka', zh: '在线的 HDrezka' },
-            online_mod_title_full: { ru: 'Онлайн Мод', uk: 'Онлайн Мод', be: 'Анлайн Мод', en: 'Online Mod', zh: '在线的 Mod' },
-            online_mod_prefer_http: { ru: 'Предпочитать поток по HTTP', uk: 'Віддавати перевагу потіку по HTTP', be: 'Аддаваць перевагу патоку па HTTP', en: 'Prefer stream over HTTP', zh: '优先于 HTTP 流式传输' },
-            online_mod_full_episode_title: { ru: 'Полный формат названия серии', uk: 'Повний формат назви серії', be: 'Поўны фармат назвы серыі', en: 'Full episode title format', zh: '完整剧集标题格式' },
-            online_mod_save_last_balanser: { ru: 'Сохранять историю балансеров', uk: 'Зберігати історію балансерів', be: 'Захоўваць гісторыю балансараў', en: 'Save history of balancers', zh: '保存平衡器的历史记录' },
-            online_mod_clear_last_balanser: { ru: 'Очистить историю балансеров', uk: 'Очистити історію балансерів', be: 'Ачысціць гісторыю балансараў', en: 'Clear history of balancers', zh: '清除平衡器的历史记录' },
-            online_mod_rezka2_mirror: { ru: 'Url HDrezka', uk: 'Url HDrezka', be: 'Url HDrezka', en: 'Url HDrezka', zh: 'Url HDrezka' },
-            online_mod_rezka2_name: { ru: 'Логин или email для HDrezka', uk: 'Логін чи email для HDrezka', be: 'Лагін ці email для HDrezka', en: 'Login or email for HDrezka', zh: 'HDrezka的登录名或电子邮件' },
-            online_mod_rezka2_password: { ru: 'Пароль для HDrezka', uk: 'Пароль для HDrezka', be: 'Пароль для HDrezka', en: 'Password for HDrezka', zh: 'HDrezka的密码' },
-            online_mod_rezka2_login: { ru: 'Войти в HDrezka', uk: 'Увійти до HDrezka', be: 'Увайсці ў HDrezka', en: 'Log in to HDrezka', zh: '登录HDrezka' },
-            online_mod_rezka2_logout: { ru: 'Выйти из HDrezka', uk: 'Вийти з HDrezka', be: 'Выйсці з HDrezka', en: 'Log out of HDrezka', zh: '注销HDrezka' },
-            online_mod_rezka2_cookie: { ru: 'Куки для HDrezka', uk: 'Кукі для HDrezka', be: 'Кукі для HDrezka', en: 'Cookie for HDrezka', zh: 'HDrezka 的 Cookie' },
-            online_mod_rezka2_fill_cookie: { ru: 'Заполнить куки для HDrezka', uk: 'Заповнити кукі для HDrezka', be: 'Запоўніць кукі для HDrezka', en: 'Fill cookie for HDrezka', zh: '为HDrezka填充Cookie' },
-            online_mod_authorization_required: { ru: 'Требуется авторизация', uk: 'Потрібна авторизація', be: 'Патрабуецца аўтарызацыя', en: 'Authorization required', zh: ' need authorization' },
-            online_mod_unsupported_mirror: { ru: 'Неподдерживаемое зеркало', uk: 'Непідтримуване дзеркало', be: 'Непадтрымоўванае люстэрка', en: 'Unsupported mirror', zh: '不支持的镜子' },
-            online_mod_secret_password: { ru: 'Секретный пароль', uk: 'Секретний пароль', be: 'Сакрэтны пароль', en: 'Secret password', zh: '秘密密码' },
-            online_mod_seasons_count: { ru: 'Сезонов', uk: 'Сезонів', be: 'Сезонаў', en: 'Seasons', zh: '季' },
-            online_mod_episodes_count: { ru: 'Эпизодов', uk: 'Епізодів', be: 'Эпізодаў', en: 'Episodes', zh: '集' },
-            online_mod_show_more: { ru: 'Показать ещё', uk: 'Показати ще', be: 'Паказаць яшчэ', en: 'Show more', zh: '展示更多' },
-            online_mod_server: { ru: 'Сервер', uk: 'Сервер', be: 'Сервер', en: 'Server', zh: '服务器' },
-            online_mod_premium: { ru: 'Premium', uk: 'Premium', be: 'Premium', en: 'Premium', zh: 'Premium' }
+            online_mod_watch: { ru: 'Смотреть онлайн' },
+            online_mod_nolink: { ru: 'Не удалось извлечь ссылку' },
+            online_mod_blockedlink: { ru: 'К сожалению, это видео не доступно в вашем регионе' },
+            online_mod_balanser: { ru: 'Балансер' },
+            online_mod_file_helper: { ru: 'Удерживайте клавишу "ОК" для вызова контекстного меню' },
+            online_mod_clearmark_all: { ru: 'Снять отметку у всех' },
+            online_mod_timeclear_all: { ru: 'Сбросить тайм-код у всех' },
+            online_mod_query_start: { ru: 'По запросу' },
+            online_mod_query_end: { ru: 'нет результатов' },
+            online_mod_title: { ru: 'Онлайн HDrezka' },
+            online_mod_title_full: { ru: 'Онлайн Мод' },
+            online_mod_prefer_http: { ru: 'Предпочитать поток по HTTP' },
+            online_mod_full_episode_title: { ru: 'Полный формат названия серии' },
+            online_mod_save_last_balanser: { ru: 'Сохранять историю балансеров' },
+            online_mod_clear_last_balanser: { ru: 'Очистить историю балансеров' },
+            online_mod_premium_sort: { ru: 'Сортировка премиум перевода' },
+            online_mod_rezka2_mirror: { ru: 'Url HDrezka' },
+            online_mod_rezka2_name: { ru: 'Логин или email для HDrezka' },
+            online_mod_rezka2_password: { ru: 'Пароль для HDrezka' },
+            online_mod_rezka2_login: { ru: 'Войти в HDrezka' },
+            online_mod_rezka2_logout: { ru: 'Выйти из HDrezka' },
+            online_mod_rezka2_cookie: { ru: 'Куки для HDrezka' },
+            online_mod_rezka2_fill_cookie: { ru: 'Заполнить куки для HDrezka' },
+            online_mod_authorization_required: { ru: 'Требуется авторизация' },
+            online_mod_unsupported_mirror: { ru: 'Неподдерживаемое зеркало' },
+            online_mod_secret_password: { ru: 'Секретный пароль' },
+            online_mod_seasons_count: { ru: 'Сезонов' },
+            online_mod_episodes_count: { ru: 'Эпизодов' },
+            online_mod_show_more: { ru: 'Показать ещё' },
+            online_mod_server: { ru: 'Сервер' },
+            online_mod_premium: { ru: 'Premium' }
         });
     }
 
@@ -1874,9 +1777,6 @@
     }
 
     function loadOnline(object) {
-        if (online_loading) return;
-        online_loading = true;
-        online_loading = false;
         resetTemplates();
         Lampa.Component.add('online_mod', component);
         Lampa.Activity.push({
@@ -1904,17 +1804,12 @@
 
         template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_prefer_http\" data-type=\"toggle\">\n            <div class=\"settings-param__name\">#{online_mod_prefer_http}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
         template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_full_episode_title\" data-type=\"toggle\">\n            <div class=\"settings-param__name\">#{online_mod_full_episode_title}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
+        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_premium_sort\" data-type=\"select\">\n            <div class=\"settings-param__name\">#{online_mod_premium_sort}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
         template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_save_last_balanser\" data-type=\"toggle\">\n            <div class=\"settings-param__name\">#{online_mod_save_last_balanser}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>\n        <div class=\"settings-param selector\" data-name=\"online_mod_clear_last_balanser\" data-static=\"true\">\n            <div class=\"settings-param__name\">#{online_mod_clear_last_balanser}</div>\n            <div class=\"settings-param__status\"></div>\n        </div>";
         template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_mirror\" data-type=\"input\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_mirror}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
         template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_name\" data-type=\"input\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_name}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_password\" data-type=\"input\" data-string=\"true\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_password}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
 
-        if (Lampa.Platform.is('android')) {
-            Lampa.Storage.set("online_mod_rezka2_status", 'false');
-        } else {
-            template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_login\" data-static=\"true\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_login}</div>\n            <div class=\"settings-param__status\"></div>\n        </div>\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_logout\" data-static=\"true\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_logout}</div>\n            <div class=\"settings-param__status\"></div>\n        </div>";
-        }
-
-        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_cookie\" data-type=\"input\" data-string=\"true\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_cookie}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_fill_cookie\" data-static=\"true\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_fill_cookie}</div>\n            <div class=\"settings-param__status\"></div>\n        </div>";
+        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_cookie\" data-type=\"input\" data-string=\"true\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_cookie}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
         template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_secret_password\" data-type=\"input\" data-string=\"true\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_secret_password}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
         template += "\n    </div>";
 
@@ -1926,191 +1821,9 @@
                 if (e.type == 'ready') addSettingsOnlineMod();
             });
         }
-
-        Lampa.Settings.listener.follow('open', function (e) {
-            if (e.name == 'online_mod') {
-                var clear_last_balanser = e.body.find('[data-name="online_mod_clear_last_balanser"]');
-                clear_last_balanser.unbind('hover:enter').on('hover:enter', function () {
-                    Lampa.Storage.set('online_mod_last_balanser', {});
-                    $('.settings-param__status', clear_last_balanser).removeClass('active error wait').addClass('active');
-                });
-
-                var rezka2_login = e.body.find('[data-name="online_mod_rezka2_login"]');
-                rezka2_login.unbind('hover:enter').on('hover:enter', function () {
-                    var rezka2_login_status = $('.settings-param__status', rezka2_login).removeClass('active error wait').addClass('wait');
-                    rezka2Login(function () {
-                        rezka2_login_status.removeClass('active error wait').addClass('active');
-                    }, function () {
-                        rezka2_login_status.removeClass('active error wait').addClass('error');
-                    });
-                });
-
-                var rezka2_logout = e.body.find('[data-name="online_mod_rezka2_logout"]');
-                rezka2_logout.unbind('hover:enter').on('hover:enter', function () {
-                    var rezka2_logout_status = $('.settings-param__status', rezka2_logout).removeClass('active error wait').addClass('wait');
-                    rezka2Logout(function () {
-                        rezka2_logout_status.removeClass('active error wait').addClass('active');
-                    }, function () {
-                        rezka2_logout_status.removeClass('active error wait').addClass('error');
-                    });
-                });
-
-                var rezka2_fill_cookie = e.body.find('[data-name="online_mod_rezka2_fill_cookie"]');
-                rezka2_fill_cookie.unbind('hover:enter').on('hover:enter', function () {
-                    var rezka2_fill_cookie_status = $('.settings-param__status', rezka2_fill_cookie).removeClass('active error wait').addClass('wait');
-                    rezka2FillCookie(function () {
-                        rezka2_fill_cookie_status.removeClass('active error wait').addClass('active');
-                        Lampa.Params.update(e.body.find('[data-name="online_mod_rezka2_cookie"]'), [], e.body);
-                    }, function () {
-                        rezka2_fill_cookie_status.removeClass('active error wait').addClass('error');
-                        Lampa.Params.update(e.body.find('[data-name="online_mod_rezka2_cookie"]'), [], e.body);
-                    });
-                });
-            }
-        });
     }
 
-    // --- Rezka2 авторизация ---
-    function rezka2Login(success, error) {
-        var host = rezka2Mirror();
-        var url = host + '/ajax/login/';
-        var postdata = 'login_name=' + encodeURIComponent(Lampa.Storage.get('online_mod_rezka2_name', ''));
-        postdata += '&login_password=' + encodeURIComponent(Lampa.Storage.get('online_mod_rezka2_password', ''));
-        postdata += '&login_not_save=0';
-        network.clear();
-        network.timeout(8000);
-        network.silent(url, function (json) {
-            if (json && (json.success || json.message == 'Уже авторизован на сайте. Необходимо обновить страницу!')) {
-                Lampa.Storage.set('online_mod_rezka2_status', 'true');
-                network.clear();
-                network.timeout(8000);
-                network.silent(host + '/', function (str) {
-                    str = (str || '').replace(/\n/g, '');
-                    var error_form = str.match(/(<div class="error-code">[^<]*<div>[^<]*<\/div>[^<]*<\/div>)\s*(<div class="error-title">[^<]*<\/div>)/);
-                    if (error_form) {
-                        Lampa.Noty.show(error_form[0]);
-                        if (error) error();
-                        return;
-                    }
-                    var verify_form = str.match(/<span>MIRROR<\/span>.*<button type="submit" onclick="\$\.cookie(\([^)]*\))/);
-                    if (verify_form) {
-                        Lampa.Noty.show(Lampa.Lang.translate('online_mod_unsupported_mirror') + ' HDrezka');
-                        rezka2Logout(error, error);
-                        return;
-                    }
-                    if (success) success();
-                }, function (a, c) {
-                    if (success) success();
-                }, false, {
-                    dataType: 'text',
-                    withCredentials: true
-                });
-            } else {
-                Lampa.Storage.set('online_mod_rezka2_status', 'false');
-                if (json && json.message) Lampa.Noty.show(json.message);
-                if (error) error();
-            }
-        }, function (a, c) {
-            Lampa.Noty.show(network.errorDecode(a, c));
-            if (error) error();
-        }, postdata, {
-            withCredentials: true
-        });
-    }
-
-    function rezka2Logout(success, error) {
-        var url = rezka2Mirror() + '/logout/';
-        network.clear();
-        network.timeout(8000);
-        network.silent(url, function (str) {
-            Lampa.Storage.set('online_mod_rezka2_status', 'false');
-            if (success) success();
-        }, function (a, c) {
-            Lampa.Storage.set('online_mod_rezka2_status', 'false');
-            Lampa.Noty.show(network.errorDecode(a, c));
-            if (error) error();
-        }, false, {
-            dataType: 'text',
-            withCredentials: true
-        });
-    }
-
-    function rezka2FillCookie(success, error) {
-        var host = rezka2Mirror();
-        var url = host + '/ajax/login/';
-        var postdata = 'login_name=' + encodeURIComponent(Lampa.Storage.get('online_mod_rezka2_name', ''));
-        postdata += '&login_password=' + encodeURIComponent(Lampa.Storage.get('online_mod_rezka2_password', ''));
-        postdata += '&login_not_save=0';
-        network.clear();
-        network.timeout(8000);
-        network.silent(url, function (json) {
-            var cookie = '';
-            var values = {};
-            var sid = '';
-            if (!json.success) {
-                if (json.message) Lampa.Noty.show(json.message);
-                if (error) error();
-                return;
-            }
-            var cookieHeaders = json.headers && json.headers['set-cookie'] || null;
-            if (cookieHeaders && cookieHeaders.forEach) {
-                cookieHeaders.forEach(function (param) {
-                    var parts = param.split(';')[0].split('=');
-                    if (parts[0]) {
-                        if (parts[1] === 'deleted') delete values[parts[0]];
-                        else values[parts[0]] = parts[1] || '';
-                    }
-                });
-                sid = values['PHPSESSID'];
-                delete values['PHPSESSID'];
-                var cookies = [];
-                for (var name in values) {
-                    cookies.push(name + '=' + values[name]);
-                }
-                cookie = cookies.join('; ');
-            }
-            if (cookie) {
-                Lampa.Storage.set('online_mod_rezka2_cookie', cookie);
-                if (cookie.indexOf('PHPSESSID=') == -1) cookie = 'PHPSESSID=' + (sid || randomId2(26)) + (cookie ? '; ' + cookie : '');
-                network.clear();
-                network.timeout(8000);
-                network.silent(host + '/', function (str) {
-                    var body = (str || '').replace(/\n/g, '');
-                    var error_form = body.match(/(<div class="error-code">[^<]*<div>[^<]*<\/div>[^<]*<\/div>)\s*(<div class="error-title">[^<]*<\/div>)/);
-                    if (error_form) {
-                        Lampa.Noty.show(error_form[0]);
-                        if (error) error();
-                        return;
-                    }
-                    var verify_form = body.match(/<span>MIRROR<\/span>.*<button type="submit" onclick="\$\.cookie(\([^)]*\))/);
-                    if (verify_form) {
-                        Lampa.Storage.set('online_mod_rezka2_cookie', '');
-                        Lampa.Lang.translate('online_mod_unsupported_mirror') + ' HDrezka';
-                        if (error) error();
-                        return;
-                    }
-                    if (success) success();
-                }, function (a, c) {
-                    if (success) success();
-                }, false, {
-                    dataType: 'text',
-                    withCredentials: true,
-                    headers: { Cookie: cookie }
-                });
-            } else {
-                if (error) error();
-            }
-        }, function (a, c) {
-            Lampa.Noty.show(network.errorDecode(a, c));
-            if (error) error();
-        }, postdata, {
-            withCredentials: true
-        });
-    }
-
-    // --- Запуск ---
     function startPlugin() {
-        logApp();
         initStorage();
         initLang();
         resetTemplates();
@@ -2122,25 +1835,20 @@
             name: Lampa.Lang.translate('online_mod_title_full'),
             description: Lampa.Lang.translate('online_mod_watch'),
             component: 'online_mod',
-            onContextMenu: function (object) {
-                return {
-                    name: Lampa.Lang.translate('online_mod_watch'),
-                    description: ''
-                };
+            onContextMenu: function () {
+                return { name: Lampa.Lang.translate('online_mod_watch'), description: '' };
             },
             onContextLauch: function (object) {
-                online_loading = false;
                 loadOnline(object);
             }
         };
         Lampa.Manifest.plugins = manifest;
 
-        var button = "<div class=\"full-start__button selector view--online_mod\" data-subtitle=\"\">\n        <svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" xmlns:svgjs=\"http://svgjs.com/svgjs\" version=\"1.1\" width=\"512\" height=\"512\" x=\"0\" y=\"0\" viewBox=\"0 0 244 260\" style=\"enable-background:new 0 0 512 512\" xml:space=\"preserve\" class=\"\">\n        <g xmlns=\"http://www.w3.org/2000/svg\">\n            <path d=\"M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7l0,0 L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88 L2,50.2L47.8,80L10,88z\" fill=\"currentColor\"/>\n        </g></svg>\n        <span>#{online_mod_title}</span>\n        </div>";
+        var button = "<div class=\"full-start__button selector view--online_mod\" data-subtitle=\"\">\n        <svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" width=\"512\" height=\"512\" viewBox=\"0 0 244 260\"><path d=\"M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7l0,0 L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88 L2,50.2L47.8,80L10,88z\" fill=\"currentColor\"/></svg>\n        <span>#{online_mod_title}</span>\n        </div>";
 
         Lampa.Listener.follow('full', function (e) {
             if (e.type == 'complite') {
                 var btn = $(Lampa.Lang.translate(button));
-                online_loading = false;
                 btn.on('hover:enter', function () {
                     loadOnline(e.data.movie);
                 });
