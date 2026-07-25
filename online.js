@@ -1,7 +1,32 @@
-// Online Mod (без прокси, с индикацией премиум-озвучки 10)
+// Online Mod (с логированием и упрощенной проверкой премиум 11)
 
 (function () {
     'use strict';
+
+    // === ЛОГГЕР ===
+    var Logger = {
+        enabled: true,
+        log: function() {
+            if (!this.enabled) return;
+            var args = Array.prototype.slice.call(arguments);
+            args.unshift('[OnlineMod]');
+            console.log.apply(console, args);
+        },
+        error: function() {
+            if (!this.enabled) return;
+            var args = Array.prototype.slice.call(arguments);
+            args.unshift('[OnlineMod ERROR]');
+            console.error.apply(console, args);
+        },
+        warn: function() {
+            if (!this.enabled) return;
+            var args = Array.prototype.slice.call(arguments);
+            args.unshift('[OnlineMod WARN]');
+            console.warn.apply(console, args);
+        }
+    };
+
+    Logger.log('=== Online Mod Starting ===');
 
     // --- Утилиты ---
     function startsWith(str, searchString) {
@@ -140,6 +165,8 @@
 
     // --- Компонент Rezka2 ---
     function rezka2(component, _object) {
+        Logger.log('rezka2: Initializing for', _object.movie ? _object.movie.title : 'unknown');
+        
         var network = new Lampa.Reguest();
         var extract = {};
         var object = _object;
@@ -169,24 +196,30 @@
         var error_message = '';
         var premium_cache = {};
 
+        Logger.log('rezka2: Host =', host, 'Embed =', embed);
+
         function checkErrorForm(str) {
             var login_form = str.match(/<form id="check-form" class="check-form" method="post" action="\/ajax\/login\/">/);
             if (login_form) {
                 error_message = Lampa.Lang.translate('online_mod_authorization_required') + ' HDrezka';
+                Logger.warn('Authorization required');
                 return;
             }
             var error_form = str.match(/(<div class="error-code">[^<]*<div>[^<]*<\/div>[^<]*<\/div>)\s*(<div class="error-title">[^<]*<\/div>)/);
             if (error_form) {
                 error_message = ($(error_form[1]).text().trim() || '') + ':\n' + ($(error_form[2]).text().trim() || '');
+                Logger.error('Error form:', error_message);
                 return;
             }
             var verify_form = str.match(/<span>MIRROR<\/span>.*<button type="submit" onclick="\$\.cookie(\([^)]*\))/);
             if (verify_form) {
                 error_message = Lampa.Lang.translate('online_mod_unsupported_mirror') + ' HDrezka';
+                Logger.warn('Unsupported mirror');
                 return;
             }
             if (startsWith(str, 'Fatal error:')) {
                 error_message = str;
+                Logger.error('Fatal error:', str);
                 return;
             }
         }
@@ -211,12 +244,14 @@
             try {
                 x = dec(x);
             } catch (e) {
+                Logger.error('Decode error:', e);
                 x = '';
             }
             return x;
         }
 
         function extractItems(str) {
+            Logger.log('extractItems: parsing playlist, length =', str ? str.length : 0);
             if (!str) return [];
             try {
                 var items = component.parsePlaylist(str).map(function (item) {
@@ -236,9 +271,12 @@
                     if (b.label < a.label) return -1;
                     return 0;
                 });
+                Logger.log('extractItems: found', items.length, 'items');
                 return items;
-            } catch (e) {}
-            return [];
+            } catch (e) {
+                Logger.error('extractItems error:', e);
+                return [];
+            }
         }
 
         function parseSubtitles(str) {
@@ -256,67 +294,15 @@
             return subtitles.length ? subtitles : false;
         }
 
-        // Проверка премиум-статуса для озвучки
-        function checkPremium(voice_id, callback) {
-            if (premium_cache[voice_id] !== undefined) {
-                callback(premium_cache[voice_id]);
-                return;
-            }
-            
-            var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
-            var postdata = 'id=' + encodeURIComponent(extract.film_id);
-            postdata += '&translator_id=' + encodeURIComponent(voice_id);
-            postdata += '&favs=' + encodeURIComponent(extract.favs);
-            
-            if (extract.is_series) {
-                var season_id = extract.season && extract.season.length > 0 ? extract.season[0].id : 1;
-                var episode_id = extract.episode && extract.episode.length > 0 ? extract.episode[0].episode_id : 1;
-                postdata += '&season=' + encodeURIComponent(season_id);
-                postdata += '&episode=' + encodeURIComponent(episode_id);
-                postdata += '&action=get_stream';
-            } else {
-                var voice = extract.voice.find(function(v) { return v.id == voice_id; });
-                postdata += '&is_camrip=' + encodeURIComponent(voice ? voice.is_camrip || 0 : 0);
-                postdata += '&is_ads=' + encodeURIComponent(voice ? voice.is_ads || 0 : 0);
-                postdata += '&is_director=' + encodeURIComponent(voice ? voice.is_director || 0 : 0);
-                postdata += '&action=get_movie';
-            }
-            
-            network.clear();
-            network.timeout(8000);
-            network.silent(url, function (json) {
-                var isPremium = false;
-                if (json && json.url) {
-                    var video = decode(json.url);
-                    var items = extractItems(video);
-                    if (items && items.length) {
-                        var premium_content = json.premium_content || false;
-                        var prev_file = '';
-                        items.forEach(function (item) {
-                            if (item.label !== '1080p Ultra') {
-                                if (prev_file !== '' && prev_file !== item.file) premium_content = false;
-                                prev_file = item.file;
-                            }
-                        });
-                        isPremium = premium_content;
-                    }
-                }
-                premium_cache[voice_id] = isPremium;
-                callback(isPremium);
-            }, function (a, c) {
-                premium_cache[voice_id] = false;
-                callback(false);
-            }, postdata, {
-                withCredentials: true,
-                headers: headers
-            });
-        }
-
         this.search = function (_object, kinopoisk_id, data) {
+            Logger.log('rezka2.search: called for', _object.search || _object.movie.title);
             var _this = this;
             object = _object;
             select_title = object.search || object.movie.title;
-            if (this.wait_similars && data && data[0].is_similars) return getPage(data[0].link);
+            if (this.wait_similars && data && data[0].is_similars) {
+                Logger.log('rezka2.search: using similars, link =', data[0].link);
+                return getPage(data[0].link);
+            }
             error_message = '';
             var search_date = object.search_date || !object.clarification && (object.movie.release_date || object.movie.first_air_date || object.movie.last_air_date) || '0000';
             var search_year = parseInt((search_date + '').slice(0, 4));
@@ -329,6 +315,8 @@
 
             var url = embed + 'engine/ajax/search.php';
             var more_url = embed + 'search/?do=search&subaction=search';
+
+            Logger.log('rezka2.search: url =', url, 'search_title =', select_title);
 
             var query_more = function (query, page, data, callback) {
                 var url = more_url + '&q=' + encodeURIComponent(query) + '&page=' + encodeURIComponent(page);
@@ -397,6 +385,7 @@
             };
 
             var display = function (links, have_more, query) {
+                Logger.log('rezka2.display: links count =', links ? links.length : 0);
                 if (links && links.length && links.forEach) {
                     var is_sure = false;
                     var items = links.map(function (l) {
@@ -455,22 +444,11 @@
                             if (_tmp2.length) cards = _tmp2;
                         }
                     }
+                    Logger.log('rezka2.display: cards after filter =', cards.length);
                     if (cards.length == 1 && is_sure) {
-                        if (search_year && cards[0].year) {
-                            is_sure = cards[0].year > search_year - 2 && cards[0].year < search_year + 2;
-                        }
-                        if (is_sure) {
-                            is_sure = false;
-                            if (orig_titles.length) {
-                                is_sure |= component.equalAnyTitle([cards[0].orig_title, cards[0].title], orig_titles);
-                            }
-                            if (select_title) {
-                                is_sure |= component.equalAnyTitle([cards[0].title, cards[0].orig_title], [select_title]);
-                            }
-                        }
-                    }
-                    if (cards.length == 1 && is_sure) getPage(cards[0].link);
-                    else if (items.length) {
+                        Logger.log('rezka2.display: going to page:', cards[0].link);
+                        getPage(cards[0].link);
+                    } else if (items.length) {
                         _this.wait_similars = true;
                         items.forEach(function (c) {
                             c.is_similars = true;
@@ -492,6 +470,7 @@
 
             var query_search = function (query, data, callback) {
                 var postdata = 'q=' + encodeURIComponent(query);
+                Logger.log('rezka2.query_search: query =', query);
                 network.clear();
                 network.timeout(10000);
                 network.silent(url, function (str) {
@@ -499,9 +478,11 @@
                     checkErrorForm(str);
                     var links = str.match(/<li><a href=.*?<\/li>/g);
                     var have_more = str.indexOf('<a class="b-search__live_all"') !== -1;
+                    Logger.log('rezka2.query_search: found', links ? links.length : 0, 'links');
                     if (links && links.length) data = data.concat(links);
                     if (callback) callback(data, have_more, query);
                 }, function (a, c) {
+                    Logger.error('rezka2.query_search error:', a.status, c);
                     if (a.status == 403 && a.responseText) {
                         var str = (a.responseText || '').replace(/\n/g, '');
                         checkErrorForm(str);
@@ -530,6 +511,7 @@
         };
 
         this.reset = function () {
+            Logger.log('rezka2.reset');
             component.reset();
             choice = {
                 season: 0,
@@ -544,6 +526,7 @@
         };
 
         this.filter = function (type, a, b) {
+            Logger.log('rezka2.filter:', type, a, b);
             choice[a.stype] = b.index;
             if (a.stype == 'voice') choice.voice_name = filter_items.voice[b.index];
             if (a.stype == 'season') choice.season_id = filter_items.season_id[b.index];
@@ -562,15 +545,24 @@
 
         function getPage(url) {
             url = fixLink(url, ref);
+            Logger.log('rezka2.getPage: loading', url);
             network.clear();
             network.timeout(10000);
             network.silent(url, function (str) {
+                Logger.log('rezka2.getPage: loaded, length =', str ? str.length : 0);
                 extractData(str);
                 if (extract.film_id) {
+                    Logger.log('rezka2.getPage: film_id =', extract.film_id, 'is_series =', extract.is_series);
                     getEpisodes(success);
-                } else if (error_message) component.empty(error_message);
-                else component.emptyForQuery(select_title);
+                } else if (error_message) {
+                    Logger.error('rezka2.getPage: error:', error_message);
+                    component.empty(error_message);
+                } else {
+                    Logger.warn('rezka2.getPage: no film_id found');
+                    component.emptyForQuery(select_title);
+                }
             }, function (a, c) {
+                Logger.error('rezka2.getPage network error:', a.status, c);
                 component.empty(network.errorDecode(a, c));
             }, false, {
                 dataType: 'text',
@@ -580,41 +572,16 @@
         }
 
         function success() {
+            Logger.log('rezka2.success: building list');
             component.loading(false);
             filter();
             var items = filtred();
-            
-            // Проверяем премиум для всех озвучек последовательно
-            var voice_ids = [];
-            items.forEach(function(item) {
-                if (item.voice_id && voice_ids.indexOf(item.voice_id) === -1) {
-                    voice_ids.push(item.voice_id);
-                }
-            });
-            
-            if (voice_ids.length > 0) {
-                var checked = 0;
-                voice_ids.forEach(function(voice_id) {
-                    checkPremium(voice_id, function(isPremium) {
-                        checked++;
-                        // Обновляем элементы с этим voice_id
-                        items.forEach(function(item) {
-                            if (item.voice_id == voice_id) {
-                                item.is_premium = isPremium;
-                            }
-                        });
-                        // Если все проверены - обновляем интерфейс
-                        if (checked === voice_ids.length) {
-                            component.updateItems(items);
-                        }
-                    });
-                });
-            } else {
-                append(items);
-            }
+            Logger.log('rezka2.success: items count =', items.length);
+            append(items);
         }
 
         function extractData(str) {
+            Logger.log('rezka2.extractData: parsing page');
             extract.voice = [];
             extract.season = [];
             extract.episode = [];
@@ -633,16 +600,23 @@
             }
             if (!devVoiceName) devVoiceName = 'Оригинал';
             var defVoice, defSeason, defEpisode;
+            
+            Logger.log('rezka2.extractData: cdnSeries =', cdnSeries ? 'found' : 'not found');
+            Logger.log('rezka2.extractData: cdnMovie =', cdnMovie ? 'found' : 'not found');
+            
             if (cdnSeries) {
                 extract.is_series = true;
                 extract.film_id = cdnSeries[1];
                 defVoice = { name: devVoiceName, id: cdnSeries[2] };
                 defSeason = { name: 'Сезон ' + cdnSeries[3], id: cdnSeries[3] };
                 defEpisode = { name: 'Серия ' + cdnSeries[4], season_id: cdnSeries[3], episode_id: cdnSeries[4] };
+                Logger.log('rezka2.extractData: series detected, film_id =', extract.film_id);
             } else if (cdnMovie) {
                 extract.film_id = cdnMovie[1];
                 defVoice = { name: devVoiceName, id: cdnMovie[2], is_camrip: cdnMovie[3], is_ads: cdnMovie[4], is_director: cdnMovie[5] };
+                Logger.log('rezka2.extractData: movie detected, film_id =', extract.film_id);
             }
+            
             var voices = str.match(/(<ul id="translators-list".*?<\/ul>)/);
             if (voices) {
                 var select = $(voices[1]);
@@ -660,9 +634,11 @@
                         is_director: $(this).attr('data-director')
                     });
                 });
+                Logger.log('rezka2.extractData: found', extract.voice.length, 'voices');
             }
             if (!extract.voice.length && defVoice) {
                 extract.voice.push(defVoice);
+                Logger.log('rezka2.extractData: using default voice');
             }
             if (extract.is_series) {
                 var seasons = str.match(/(<ul id="simple-seasons-tabs".*?<\/ul>)/);
@@ -692,34 +668,43 @@
                 if (!extract.episode.length && defEpisode) {
                     extract.episode.push(defEpisode);
                 }
+                Logger.log('rezka2.extractData: seasons =', extract.season.length, 'episodes =', extract.episode.length);
             }
             var favs = str.match(/<input type="hidden" id="ctrl_favs" value="([^"]*)"/);
             if (favs) extract.favs = favs[1];
             var blocked = str.match(/class="b-player__restricted__block_message"/);
             if (blocked) extract.blocked = true;
+            
+            Logger.log('rezka2.extractData: completed, film_id =', extract.film_id, 'is_series =', extract.is_series);
         }
 
         function getEpisodes(call) {
+            Logger.log('rezka2.getEpisodes: is_series =', extract.is_series);
             if (extract.is_series) {
                 filterVoice();
                 if (extract.voice[choice.voice]) {
                     var translator_id = extract.voice[choice.voice].id;
                     var data = extract.voice_data[translator_id];
                     if (data) {
+                        Logger.log('rezka2.getEpisodes: using cached data');
                         extract.season = data.season;
                         extract.episode = data.episode;
+                        call();
                     } else {
                         var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
                         var postdata = 'id=' + encodeURIComponent(extract.film_id);
                         postdata += '&translator_id=' + encodeURIComponent(translator_id);
                         postdata += '&favs=' + encodeURIComponent(extract.favs);
                         postdata += '&action=get_episodes';
+                        Logger.log('rezka2.getEpisodes: loading episodes for translator', translator_id);
                         network.clear();
                         network.timeout(10000);
                         network.silent(url, function (json) {
+                            Logger.log('rezka2.getEpisodes: episodes loaded');
                             extractEpisodes(json, translator_id);
                             call();
                         }, function (a, c) {
+                            Logger.error('rezka2.getEpisodes error:', a.status, c);
                             component.empty(network.errorDecode(a, c));
                         }, postdata, {
                             withCredentials: true,
@@ -733,6 +718,7 @@
         }
 
         function extractEpisodes(json, translator_id) {
+            Logger.log('rezka2.extractEpisodes');
             var data = { season: [], episode: [] };
             if (json && json.seasons) {
                 var select = $('<ul>' + json.seasons + '</ul>');
@@ -757,6 +743,7 @@
             extract.voice_data[translator_id] = data;
             extract.season = data.season;
             extract.episode = data.episode;
+            Logger.log('rezka2.extractEpisodes: seasons =', data.season.length, 'episodes =', data.episode.length);
         }
 
         function filterVoice() {
@@ -797,7 +784,11 @@
         }
 
         function getStream(element, call, error) {
-            if (element.stream) return call(element);
+            Logger.log('rezka2.getStream: for', element.title);
+            if (element.stream) {
+                Logger.log('rezka2.getStream: using cached stream');
+                return call(element);
+            }
             var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
             var postdata = 'id=' + encodeURIComponent(extract.film_id);
             if (extract.is_series) {
@@ -806,6 +797,7 @@
                 postdata += '&episode=' + encodeURIComponent(element.media.episode_id);
                 postdata += '&favs=' + encodeURIComponent(extract.favs);
                 postdata += '&action=get_stream';
+                Logger.log('rezka2.getStream: series request');
             } else {
                 postdata += '&translator_id=' + encodeURIComponent(element.media.id);
                 postdata += '&is_camrip=' + encodeURIComponent(element.media.is_camrip || 0);
@@ -813,14 +805,17 @@
                 postdata += '&is_director=' + encodeURIComponent(element.media.is_director || 0);
                 postdata += '&favs=' + encodeURIComponent(extract.favs);
                 postdata += '&action=get_movie';
+                Logger.log('rezka2.getStream: movie request');
             }
+            
             network.clear();
             network.timeout(10000);
             network.silent(url, function (json) {
+                Logger.log('rezka2.getStream: response received');
                 if (json && json.url) {
-                    var video = decode(json.url),
-                        file = '',
-                        quality = false;
+                    var video = decode(json.url);
+                    var file = '';
+                    var quality = false;
                     var items = extractItems(video);
                     if (items && items.length) {
                         file = items[0].file;
@@ -835,18 +830,27 @@
                             quality[item.label] = item.file;
                         });
                         if (premium_content) {
+                            Logger.warn('rezka2.getStream: premium content detected');
                             error('Перевод доступен только с HDrezka Premium');
                             return;
                         }
                     }
                     if (file) {
+                        Logger.log('rezka2.getStream: stream found');
                         element.stream = file;
                         element.qualitys = quality;
                         element.subtitles = parseSubtitles(json.subtitle);
                         call(element);
-                    } else error();
-                } else error();
+                    } else {
+                        Logger.warn('rezka2.getStream: no file found');
+                        error();
+                    }
+                } else {
+                    Logger.warn('rezka2.getStream: no url in response');
+                    error();
+                }
             }, function (a, c) {
+                Logger.error('rezka2.getStream network error:', a.status, c);
                 error();
             }, postdata, {
                 withCredentials: true,
@@ -855,6 +859,7 @@
         }
 
         function filtred() {
+            Logger.log('rezka2.filtred: building filtered list');
             var filtred = [];
             if (extract.is_series) {
                 var season_name = filter_items.season[choice.season];
@@ -880,6 +885,7 @@
                         });
                     }
                 });
+                Logger.log('rezka2.filtred: series episodes =', filtred.length);
             } else {
                 extract.voice.forEach(function (voice) {
                     var isPremium = premium_cache[voice.id] || false;
@@ -892,11 +898,13 @@
                         is_premium: isPremium
                     });
                 });
+                Logger.log('rezka2.filtred: movie voices =', filtred.length);
             }
             return filtred;
         }
 
         function append(items) {
+            Logger.log('rezka2.append: rendering', items.length, 'items');
             component.reset();
             var viewed = Lampa.Storage.cache('online_view', 5000, []);
             var last_episode = component.getLastEpisode(items);
@@ -937,8 +945,15 @@
                     if (element.loading) return;
                     if (object.movie.id) Lampa.Favorite.add('history', object.movie, 100);
                     element.loading = true;
+                    
+                    // Добавляем индикатор загрузки
+                    var loadingSpan = $('<span style="margin-left: 10px; color: #FFD700;">⏳ Загрузка...</span>');
+                    item.find('.online__quality').append(loadingSpan);
+                    
                     getStream(element, function (element) {
                         element.loading = false;
+                        loadingSpan.remove();
+                        
                         var first = {
                             url: component.getDefaultQuality(element.qualitys, element.stream),
                             quality: component.renameQualityMap(element.qualitys),
@@ -982,6 +997,19 @@
                         }
                     }, function (error) {
                         element.loading = false;
+                        loadingSpan.remove();
+                        
+                        // Если ошибка премиум - показываем значок
+                        if (error && error.includes('Premium')) {
+                            var premiumBadge = $('<span style="color: #FFD700; margin-left: 5px;">⭐ Premium</span>');
+                            item.find('.online__quality').append(premiumBadge);
+                            item.find('.online__title').css('color', '#FFD700');
+                            // Сохраняем в кеш
+                            if (element.voice_id) {
+                                premium_cache[element.voice_id] = true;
+                            }
+                        }
+                        
                         Lampa.Noty.show(error || Lampa.Lang.translate(extract.blocked ? 'online_mod_blockedlink' : 'online_mod_nolink'));
                     });
                 });
@@ -1005,11 +1033,14 @@
                 });
             });
             component.start(true);
+            Logger.log('rezka2.append: completed');
         }
     }
 
     // --- Компонент Online Mod ---
     function component(object) {
+        Logger.log('component: Creating for', object.movie ? object.movie.title : 'unknown');
+        
         var network = new Lampa.Reguest();
         var scroll = new Lampa.Scroll({ mask: true, over: true });
         var files = new Lampa.Explorer(object);
@@ -1025,7 +1056,6 @@
             stype: 'quality'
         };
         var contextmenu_all = [];
-        var current_items = [];
 
         if (last_bls[object.movie.id]) {
             balanser = last_bls[object.movie.id];
@@ -1063,16 +1093,6 @@
             onComplite();
         };
 
-        // Обновление элементов после проверки премиум
-        this.updateItems = function(items) {
-            current_items = items;
-            // Очищаем скролл и перерисовываем
-            scroll.clear();
-            scroll.reset();
-            // Перерисовываем с обновленными данными
-            source.append(items);
-        };
-
         var last;
         var extended;
         var selected_id;
@@ -1088,6 +1108,7 @@
         scroll.minus(files.render().find('.explorer__files-head'));
 
         this.create = function () {
+            Logger.log('component.create');
             var _this = this;
             this.activity.loader(true);
 
@@ -1143,6 +1164,7 @@
         };
 
         this.search = function () {
+            Logger.log('component.search');
             this.activity.loader(true);
             this.filter({ source: ['HDrezka'] }, { source: 0 });
             this.reset();
@@ -1216,6 +1238,7 @@
         };
 
         this.find = function () {
+            Logger.log('component.find');
             var _this4 = this;
             var query = object.search || object.movie.title;
             if (!query) {
@@ -1264,7 +1287,9 @@
                     });
                     pl = pl.filter(function (item) { return item.links.length; });
                 }
-            } catch (e) {}
+            } catch (e) {
+                Logger.error('parsePlaylist error:', e);
+            }
             return pl;
         };
 
@@ -1294,6 +1319,7 @@
         };
 
         this.similars = function (json, search_more, more_params) {
+            Logger.log('component.similars:', json.length, 'items');
             var _this5 = this;
             json.forEach(function (elem) {
                 var title = elem.title || elem.ru_title || elem.nameRu || elem.en_title || elem.nameEn || elem.orig_title || elem.nameOriginal;
@@ -1388,6 +1414,7 @@
         };
 
         this.filter = function (filter_items, choice) {
+            Logger.log('component.filter');
             var select = [];
             var add = function (type, title) {
                 var need = Lampa.Storage.get('online_mod_filter', '{}');
@@ -1575,6 +1602,7 @@
         };
 
         this.empty = function (msg) {
+            Logger.log('component.empty:', msg);
             var empty = Lampa.Template.get('list_empty');
             if (msg) empty.find('.empty__descr').text(msg);
             scroll.append(empty);
@@ -1657,11 +1685,10 @@
     var online_loading = false;
 
     function logApp() {
-        console.log('Online Mod');
-        console.log('App', 'is MSX:', isMSX);
-        console.log('App', 'is Tizen:', isTizen);
-        console.log('App', 'is iframe:', isIFrame);
-        console.log('App', 'is local:', isLocal);
+        Logger.log('App', 'is MSX:', isMSX);
+        Logger.log('App', 'is Tizen:', isTizen);
+        Logger.log('App', 'is iframe:', isIFrame);
+        Logger.log('App', 'is local:', isLocal);
     }
 
     function initStorage() {
@@ -1743,6 +1770,7 @@
 
     function loadOnline(object) {
         if (online_loading) return;
+        Logger.log('loadOnline: for', object.title);
         online_loading = true;
         online_loading = false;
         resetTemplates();
@@ -2017,6 +2045,7 @@
         });
 
         initSettings();
+        Logger.log('=== Online Mod Started ===');
     }
 
     startPlugin();
