@@ -1,4 +1,4 @@
-// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 26)
+// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 27)
 
 (function () {
     'use strict';
@@ -160,6 +160,7 @@
         }
         var embed = ref;
         var filter_items = {};
+        var voice_list_current = []; // Озвучки, доступные для ТЕКУЩЕГО выбранного сезона
         var choice = {
             season: 0,
             voice: 0,
@@ -623,7 +624,8 @@
         // «протухнуть», и переключение любого другого параметра фильтра
         // отдаст премиум-контент без активной подписки.
         function checkPremiumAndRender() {
-            var voice_ids = extract.voice.map(function (v) { return v.id; });
+            var voices_source = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
+            var voice_ids = voices_source.map(function (v) { return v.id; });
 
             if (voice_ids.length > 0) {
                 component.loading(true);
@@ -731,40 +733,33 @@
             if (blocked) extract.blocked = true;
         }
 
-        function getEpisodes(call) {
-            if (extract.is_series) {
-                filterVoice();
-                if (extract.voice[choice.voice]) {
-                    var translator_id = extract.voice[choice.voice].id;
-                    var data = extract.voice_data[translator_id];
-                    if (data) {
-                        extract.season = data.season;
-                        extract.episode = data.episode;
-                    } else {
-                        var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
-                        var postdata = 'id=' + encodeURIComponent(extract.film_id);
-                        postdata += '&translator_id=' + encodeURIComponent(translator_id);
-                        postdata += '&favs=' + encodeURIComponent(extract.favs);
-                        postdata += '&action=get_episodes';
-                        network.clear();
-                        network.timeout(10000);
-                        network.silent(url, function (json) {
-                            extractEpisodes(json, translator_id);
-                            call();
-                        }, function (a, c) {
-                            component.empty(network.errorDecode(a, c));
-                        }, postdata, {
-                            withCredentials: true,
-                            headers: headers
-                        });
-                        return;
-                    }
-                }
+        // Загружает (с кешированием) список сезонов/серий для ОДНОЙ озвучки.
+        function fetchVoiceData(translator_id, callback) {
+            if (extract.voice_data[translator_id]) {
+                callback(extract.voice_data[translator_id]);
+                return;
             }
-            call();
+            var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
+            var postdata = 'id=' + encodeURIComponent(extract.film_id);
+            postdata += '&translator_id=' + encodeURIComponent(translator_id);
+            postdata += '&favs=' + encodeURIComponent(extract.favs);
+            postdata += '&action=get_episodes';
+
+            var req = new Lampa.Reguest();
+            req.timeout(10000);
+            req.silent(url, function (json) {
+                callback(parseVoiceEpisodes(json, translator_id));
+            }, function () {
+                var empty = { season: [], episode: [] };
+                extract.voice_data[translator_id] = empty;
+                callback(empty);
+            }, postdata, {
+                withCredentials: true,
+                headers: headers
+            });
         }
 
-        function extractEpisodes(json, translator_id) {
+        function parseVoiceEpisodes(json, translator_id) {
             var data = { season: [], episode: [] };
             if (json && json.seasons) {
                 var select = $('<ul>' + json.seasons + '</ul>');
@@ -787,12 +782,68 @@
                 });
             }
             extract.voice_data[translator_id] = data;
-            extract.season = data.season;
-            extract.episode = data.episode;
+            return data;
+        }
+
+        // Догружает данные по сезонам/сериям для ВСЕХ озвучек (не только выбранной
+        // в данный момент), чтобы можно было понять, какие озвучки реально
+        // покрывают текущий сезон, и не показывать в фильтре те, что его не покрывают.
+        function ensureAllVoiceData(callback) {
+            var voices = extract.voice || [];
+            var total = voices.length;
+            var done = 0;
+            if (!total) {
+                callback();
+                return;
+            }
+            voices.forEach(function (v) {
+                fetchVoiceData(v.id, function () {
+                    done++;
+                    if (done === total) callback();
+                });
+            });
+        }
+
+        function currentSeasonId() {
+            if (choice.season_id) return choice.season_id;
+            if (extract.season && extract.season[choice.season]) return extract.season[choice.season].id;
+            if (extract.season && extract.season.length) return extract.season[0].id;
+            return null;
+        }
+
+        // Только те озвучки, у которых есть серии для текущего сезона.
+        // Если данные ещё не загрузились или ни одна озвучка не совпала —
+        // показываем полный список, чтобы фильтр не оказался пустым.
+        function availableVoicesForSeason(season_id) {
+            if (!season_id) return extract.voice;
+            var list = extract.voice.filter(function (v) {
+                var data = extract.voice_data[v.id];
+                return data && data.season && data.season.some(function (s) { return s.id == season_id; });
+            });
+            return list.length ? list : extract.voice;
+        }
+
+        function getEpisodes(call) {
+            if (!extract.is_series) {
+                call();
+                return;
+            }
+
+            ensureAllVoiceData(function () {
+                voice_list_current = availableVoicesForSeason(currentSeasonId());
+                filterVoice();
+
+                var selected = voice_list_current[choice.voice];
+                var data = selected && extract.voice_data[selected.id];
+                extract.episode = (data && data.episode) || [];
+
+                call();
+            });
         }
 
         function filterVoice() {
-            var voice = extract.voice.map(function (v) { return v.name; });
+            var list = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
+            var voice = list.map(function (v) { return v.name; });
             if (!voice[choice.voice]) choice.voice = 0;
             if (choice.voice_name) {
                 var inx = voice.indexOf(choice.voice_name);
@@ -805,8 +856,10 @@
 
         function filter(premium_results) {
             premium_results = premium_results || {};
-            
-            var voice_list = extract.voice.map(function (v) {
+
+            var voices_source = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
+
+            var voice_list = voices_source.map(function (v) {
                 var is_prem = premium_results[v.id] || false;
                 return is_prem ? '⭐ ' + v.name : v.name;
             });
@@ -820,7 +873,7 @@
             if (!filter_items.season[choice.season]) choice.season = 0;
             if (!filter_items.voice[choice.voice]) choice.voice = 0;
             if (choice.voice_name) {
-                var plain_voices = extract.voice.map(function(v) { return v.name; });
+                var plain_voices = voices_source.map(function(v) { return v.name; });
                 var inx = plain_voices.indexOf(choice.voice_name);
                 if (inx == -1) choice.voice = 0;
                 else if (inx !== choice.voice) {
@@ -905,7 +958,8 @@
                     if (season.name == season_name) season_id = season.id;
                 });
                 var voice = filter_items.voice[choice.voice];
-                var voice_obj = extract.voice[choice.voice];
+                var voices_source = voice_list_current.length ? voice_list_current : extract.voice;
+                var voice_obj = voices_source[choice.voice];
                 var voice_id = voice_obj ? voice_obj.id : null;
                 var is_prem = voice_id ? (premium_results[voice_id] || false) : false;
                 
