@@ -1,4 +1,4 @@
-// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 12)
+// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 13)
 
 (function () {
     'use strict';
@@ -256,7 +256,7 @@
             return subtitles.length ? subtitles : false;
         }
 
-		// Проверка премиум-статуса для всех озвучек
+		// Проверка премиум-статуса для всех озвучек (фильмы и сериалы)
 		function checkAllPremium(voice_ids, callback) {
 			var total = voice_ids.length;
 			var checked = 0;
@@ -267,11 +267,23 @@
 				return;
 			}
 			
+			// Защитный таймер: если сеть "повиснет", максимум через 6 секунд отображаем то, что успели проверить
+			var fallbackTimer = setTimeout(function() {
+				if (checked < total) {
+					checked = total;
+					callback(results);
+				}
+			}, 6000);
+
 			voice_ids.forEach(function(voice_id) {
+				// Если уже есть в кэше — не делаем повторный запрос
 				if (premium_cache[voice_id] !== undefined) {
 					results[voice_id] = premium_cache[voice_id];
 					checked++;
-					if (checked === total) callback(results);
+					if (checked === total) {
+						clearTimeout(fallbackTimer);
+						callback(results);
+					}
 					return;
 				}
 				
@@ -289,15 +301,16 @@
 					postdata += '&action=get_movie';
 				}
 				
-				// ВАЖНО: создаем отдельный запрос для каждой озвучки, чтобы они не перебивали друг друга
+				// ВАЖНО: изолированный объект запроса для каждой озвучки
 				var req = new Lampa.Reguest();
-				req.timeout(5000);
+				req.timeout(4500); // Ограничиваем время ожидания одного ответа
 				
 				var done = function(isPremium) {
 					premium_cache[voice_id] = isPremium;
 					results[voice_id] = isPremium;
 					checked++;
 					if (checked === total) {
+						clearTimeout(fallbackTimer);
 						callback(results);
 					}
 				};
@@ -320,7 +333,8 @@
 						}
 					}
 					done(isPremium);
-				}, function (a, c) {
+				}, function () {
+					// В случае ошибки или таймаута считаем, что премиума нет
 					done(false);
 				}, postdata, {
 					withCredentials: true,
@@ -601,13 +615,7 @@
 			filter();
 			var items = filtred();
 			
-			// Для фильмов сразу выводим список, не тратя время на десятки фоновых сетевых запросов
-			if (!extract.is_series) {
-				append(items);
-				return;
-			}
-			
-			// Собираем все ID озвучек для проверки (только для сериалов)
+			// Собираем уникальные ID озвучек для фильмов и сериалов
 			var voice_ids = [];
 			items.forEach(function(item) {
 				if (item.voice_id && voice_ids.indexOf(item.voice_id) === -1) {
