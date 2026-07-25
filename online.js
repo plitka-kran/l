@@ -1,4 +1,4 @@
-// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 23)
+// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 24)
 
 (function () {
     'use strict';
@@ -167,7 +167,8 @@
             season_id: ''
         };
         var error_message = '';
-        var premium_cache = {}; // Кеш премиум-статуса
+        var premium_cache = {};
+        var is_checking_premium = false;
 
         function checkErrorForm(str) {
             var login_form = str.match(/<form id="check-form" class="check-form" method="post" action="\/ajax\/login\/">/);
@@ -177,8 +178,7 @@
             }
             var error_form = str.match(/(<div class="error-code">[^<]*<div>[^<]*<\/div>[^<]*<\/div>)\s*(<div class="error-title">[^<]*<\/div>)/);
             if (error_form) {
-                error_message = ($(error_form[1]).text().trim() || '') + ':
-' + ($(error_form[2]).text().trim() || '');
+                error_message = ($(error_form[1]).text().trim() || '') + ':\n' + ($(error_form[2]).text().trim() || '');
                 return;
             }
             var verify_form = str.match(/<span>MIRROR<\/span>.*<button type="submit" onclick="\$\.cookie(\([^)]*\))/);
@@ -257,21 +257,29 @@
             return subtitles.length ? subtitles : false;
         }
 
-        // Проверка премиум-статуса для всех озвучек
+        // Универсальная проверка премиум-статуса
         function checkAllPremium(voice_ids, callback) {
+            if (is_checking_premium) {
+                if (callback) callback({});
+                return;
+            }
+            
             var total = voice_ids.length;
             var checked = 0;
             var results = {};
             
             if (total === 0) {
-                callback(results);
+                if (callback) callback(results);
                 return;
             }
+            
+            is_checking_premium = true;
             
             var fallbackTimer = setTimeout(function() {
                 if (checked < total) {
                     checked = total;
-                    callback(results);
+                    is_checking_premium = false;
+                    if (callback) callback(results);
                 }
             }, 6000);
 
@@ -281,7 +289,8 @@
                     checked++;
                     if (checked === total) {
                         clearTimeout(fallbackTimer);
-                        callback(results);
+                        is_checking_premium = false;
+                        if (callback) callback(results);
                     }
                     return;
                 }
@@ -309,7 +318,8 @@
                     checked++;
                     if (checked === total) {
                         clearTimeout(fallbackTimer);
-                        callback(results);
+                        is_checking_premium = false;
+                        if (callback) callback(results);
                     }
                 };
 
@@ -340,25 +350,21 @@
             });
         }
 
-        // Универсальная функция проверки премиум-статуса и отображения контента
-        function applyPremiumAndRender(callback) {
+        // Принудительное обновление премиум-статуса
+        this.refreshPremiumStatus = function(callback) {
+            if (!extract || !extract.voice || !extract.voice.length) {
+                if (callback) callback();
+                return;
+            }
+            
             var voice_ids = extract.voice.map(function(v) { return v.id; });
-            if (voice_ids.length > 0) {
-                component.loading(true);
-                checkAllPremium(voice_ids, function(results) {
-                    component.loading(false);
-                    filter(results);
-                    var items = filtred(results);
-                    append(items);
-                    if (callback) callback();
-                });
-            } else {
-                filter({});
-                var items = filtred({});
+            checkAllPremium(voice_ids, function(results) {
+                filter(results);
+                var items = filtred(results);
                 append(items);
                 if (callback) callback();
-            }
-        }
+            });
+        };
 
         this.search = function (_object, kinopoisk_id, data) {
             var _this = this;
@@ -383,11 +389,10 @@
                 network.clear();
                 network.timeout(10000);
                 network.silent(url, function (str) {
-                    str = (str || '').replace(/
-/g, '');
+                    str = (str || '').replace(/\n/g, '');
                     checkErrorForm(str);
                     var links = str.match(/<div class="b-content__inline_item-link">\s*<a [^>]*>[^<]*<\/a>\s*<div>[^<]*<\/div>\s*<\/div>/g);
-                    var have_more = !!str.match(/<a [^>]*>\s*<span class="b-navigation__next/);
+                    var have_more = !!str.match(/<a [^>]*>\s*<span class="b-navigation__next\b/);
                     if (links && links.length) {
                         var items = links.map(function (l) {
                             var li = $(l);
@@ -397,7 +402,7 @@
                             var info = info_div.text().trim() || '';
                             var orig_title = '';
                             var year;
-                            var found = info.match(/^(\d{4})/);
+                            var found = info.match(/^(\d{4})\b/);
                             if (found) {
                                 year = parseInt(found[1]);
                             }
@@ -459,7 +464,7 @@
                         var alt_titl = link.text().trim() || '';
                         var orig_title = '';
                         var year;
-                        var found = alt_titl.match(/\((.*,\s*)?(\d{4})(\s*-\s*[\d.]*)?\)$/);
+                        var found = alt_titl.match(/\((.*,\s*)?\b(\d{4})(\s*-\s*[\d.]*)?\)$/);
                         if (found) {
                             if (found[1]) {
                                 var found_alt = found[1].match(/^([^а-яА-ЯёЁ]+),/);
@@ -544,8 +549,7 @@
                 network.clear();
                 network.timeout(10000);
                 network.silent(url, function (str) {
-                    str = (str || '').replace(/
-/g, '');
+                    str = (str || '').replace(/\n/g, '');
                     checkErrorForm(str);
                     var links = str.match(/<li><a href=.*?<\/li>/g);
                     var have_more = str.indexOf('<a class="b-search__live_all"') !== -1;
@@ -553,8 +557,7 @@
                     if (callback) callback(data, have_more, query);
                 }, function (a, c) {
                     if (a.status == 403 && a.responseText) {
-                        var str = (a.responseText || '').replace(/
-/g, '');
+                        var str = (a.responseText || '').replace(/\n/g, '');
                         checkErrorForm(str);
                     }
                     if (error_message) component.empty(error_message);
@@ -589,12 +592,21 @@
                 season_id: ''
             };
             premium_cache = {};
+            is_checking_premium = false;
             component.loading(true);
             getEpisodes(success);
             component.saveChoice(choice);
         };
 
-        this.filter = function (type, a, b) {
+        // Обновленный filter с проверкой премиума
+        this.filter = function(type, a, b) {
+            if (is_checking_premium) {
+                setTimeout(function() {
+                    this.filter(type, a, b);
+                }.bind(this), 500);
+                return;
+            }
+            
             choice[a.stype] = b.index;
             if (a.stype == 'voice') {
                 var raw_name = filter_items.voice[b.index] || '';
@@ -604,12 +616,28 @@
             
             component.reset();
             component.loading(true);
-            premium_cache = {}; // Сбрасываем кеш при любом изменении параметров
+            premium_cache = {};
             
-            getEpisodes(function() {
-                applyPremiumAndRender();
-            });
-
+            var voice_ids = extract.voice.map(function(v) { return v.id; });
+            
+            if (voice_ids.length > 0) {
+                checkAllPremium(voice_ids, function(results) {
+                    component.loading(false);
+                    getEpisodes(function() {
+                        filterInternal(results);
+                        var items = filtred(results);
+                        append(items);
+                    });
+                });
+            } else {
+                getEpisodes(function() {
+                    component.loading(false);
+                    filterInternal({});
+                    var items = filtred({});
+                    append(items);
+                });
+            }
+            
             component.saveChoice(choice);
             setTimeout(component.closeFilter, 10);
         };
@@ -640,7 +668,22 @@
 
         function success() {
             component.loading(false);
-            applyPremiumAndRender();
+            
+            var voice_ids = extract.voice.map(function(v) { return v.id; });
+
+            if (voice_ids.length > 0) {
+                component.loading(true);
+                checkAllPremium(voice_ids, function(results) {
+                    component.loading(false);
+                    filterInternal(results);
+                    var items = filtred(results);
+                    append(items);
+                });
+            } else {
+                filterInternal({});
+                var items = filtred({});
+                append(items);
+            }
         }
 
         function extractData(str) {
@@ -651,8 +694,7 @@
             extract.is_series = false;
             extract.film_id = '';
             extract.favs = '';
-            str = (str || '').replace(/
-/g, '');
+            str = (str || '').replace(/\n/g, '');
             checkErrorForm(str);
             var translation = str.match(/<h2>В переводе<\/h2>:<\/td>\s*(<td>.*?<\/td>)/);
             var cdnSeries = str.match(/\.initCDNSeriesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,/);
@@ -801,7 +843,7 @@
             }
         }
 
-        function filter(premium_results) {
+        function filterInternal(premium_results) {
             premium_results = premium_results || {};
             
             var voice_list = extract.voice.map(function (v) {
@@ -1142,7 +1184,14 @@
                         forcedQuality = b.title;
                         _this.updateQualityFilter();
                     } else {
-                        source.filter(type, a, b);
+                        // При любом взаимодействии с фильтром проверяем премиум
+                        if (source && source.refreshPremiumStatus) {
+                            source.refreshPremiumStatus(function() {
+                                source.filter(type, a, b);
+                            });
+                        } else {
+                            source.filter(type, a, b);
+                        }
                     }
                 }
             };
@@ -1184,11 +1233,11 @@
         };
 
         this.kpCleanTitle = function (str) {
-            return this.cleanTitle(str).replace(/^[ \/\]+/, '').replace(/[ \/\]+$/, '').replace(/\+( *[+\/\])+/g, '+').replace(/([+\/\] *)+\+/g, '+').replace(/( *[\/\]+ *)+/g, '+');
+            return this.cleanTitle(str).replace(/^[ \/\\]+/, '').replace(/[ \/\\]+$/, '').replace(/\+( *[+\/\\])+/g, '+').replace(/([+\/\\] *)+\+/g, '+').replace(/( *[\/\\]+ *)+/g, '+');
         };
 
         this.normalizeTitle = function (str) {
-            return this.cleanTitle(str.toLowerCase().replace(/[\-‐-―⸺⸻﹘﹣－]+/g, '-').replace(/ё/g, 'е'));
+            return this.cleanTitle(str.toLowerCase().replace(/[\-\u2010-\u2015\u2E3A\u2E3B\uFE58\uFE63\uFF0D]+/g, '-').replace(/ё/g, 'е'));
         };
 
         this.equalTitle = function (t1, t2) {
@@ -1412,7 +1461,7 @@
             if (!qualityMap) return qualityMap;
             var renamed = {};
             for (var label in qualityMap) {
-                renamed["​" + label] = qualityMap[label];
+                renamed["\u200B" + label] = qualityMap[label];
             }
             return renamed;
         };
@@ -1767,31 +1816,8 @@
     }
 
     function resetTemplates() {
-        Lampa.Template.add('online_mod', "<div class="online selector">
-        <div class="online__body">
-            <div style="position: absolute;left: 0;top: -0.3em;width: 2.4em;height: 2.4em">
-                <svg style="height: 2.4em; width:  2.4em;" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <circle cx="64" cy="64" r="56" stroke="white" stroke-width="16"/>
-                    <path d="M90.5 64.3827L50 87.7654L50 41L90.5 64.3827Z" fill="white"/>
-                </svg>
-            </div>
-            <div class="online__title" style="padding-left: 2.1em;">{title}</div>
-            <div class="online__quality" style="padding-left: 3.4em;">{quality}{info}</div>
-        </div>
-    </div>");
-        Lampa.Template.add('online_mod_folder', "<div class="online selector">
-        <div class="online__body">
-            <div style="position: absolute;left: 0;top: -0.3em;width: 2.4em;height: 2.4em">
-                <svg style="height: 2.4em; width:  2.4em;" viewBox="0 0 128 112" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <rect y="20" width="128" height="92" rx="13" fill="white"/>
-                    <path d="M29.9963 8H98.0037C96.0446 3.3021 91.4079 0 86 0H42C36.5921 0 31.9555 3.3021 29.9963 8Z" fill="white" fill-opacity="0.23"/>
-                    <rect x="11" y="8" width="106" height="76" rx="13" fill="white" fill-opacity="0.51"/>
-                </svg>
-            </div>
-            <div class="online__title" style="padding-left: 2.1em;">{title}</div>
-            <div class="online__quality" style="padding-left: 3.4em;">{quality}{info}</div>
-        </div>
-    </div>");
+        Lampa.Template.add('online_mod', "<div class=\"online selector\">\n        <div class=\"online__body\">\n            <div style=\"position: absolute;left: 0;top: -0.3em;width: 2.4em;height: 2.4em\">\n                <svg style=\"height: 2.4em; width:  2.4em;\" viewBox=\"0 0 128 128\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n                    <circle cx=\"64\" cy=\"64\" r=\"56\" stroke=\"white\" stroke-width=\"16\"/>\n                    <path d=\"M90.5 64.3827L50 87.7654L50 41L90.5 64.3827Z\" fill=\"white\"/>\n                </svg>\n            </div>\n            <div class=\"online__title\" style=\"padding-left: 2.1em;\">{title}</div>\n            <div class=\"online__quality\" style=\"padding-left: 3.4em;\">{quality}{info}</div>\n        </div>\n    </div>");
+        Lampa.Template.add('online_mod_folder', "<div class=\"online selector\">\n        <div class=\"online__body\">\n            <div style=\"position: absolute;left: 0;top: -0.3em;width: 2.4em;height: 2.4em\">\n                <svg style=\"height: 2.4em; width:  2.4em;\" viewBox=\"0 0 128 112\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n                    <rect y=\"20\" width=\"128\" height=\"92\" rx=\"13\" fill=\"white\"/>\n                    <path d=\"M29.9963 8H98.0037C96.0446 3.3021 91.4079 0 86 0H42C36.5921 0 31.9555 3.3021 29.9963 8Z\" fill=\"white\" fill-opacity=\"0.23\"/>\n                    <rect x=\"11\" y=\"8\" width=\"106\" height=\"76\" rx=\"13\" fill=\"white\" fill-opacity=\"0.51\"/>\n                </svg>\n            </div>\n            <div class=\"online__title\" style=\"padding-left: 2.1em;\">{title}</div>\n            <div class=\"online__quality\" style=\"padding-left: 3.4em;\">{quality}{info}</div>\n        </div>\n    </div>");
     }
 
     function loadOnline(object) {
@@ -1814,14 +1840,7 @@
 
     function addSettingsOnlineMod() {
         if (Lampa.Settings.main && Lampa.Settings.main() && !Lampa.Settings.main().render().find('[data-component="online_mod"]').length) {
-            var field = $(Lampa.Lang.translate("<div class="settings-folder selector" data-component="online_mod">
-            <div class="settings-folder__icon">
-                <svg height="260" viewBox="0 0 244 260" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7l0,0 L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88 L2,50.2L47.8,80L10,88z" fill="white"/>
-                </svg>
-            </div>
-            <div class="settings-folder__name">#{online_mod_title_full}</div>
-        </div>"));
+            var field = $(Lampa.Lang.translate("<div class=\"settings-folder selector\" data-component=\"online_mod\">\n            <div class=\"settings-folder__icon\">\n                <svg height=\"260\" viewBox=\"0 0 244 260\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n                <path d=\"M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7l0,0 L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88 L2,50.2L47.8,80L10,88z\" fill=\"white\"/>\n                </svg>\n            </div>\n            <div class=\"settings-folder__name\">#{online_mod_title_full}</div>\n        </div>"));
             Lampa.Settings.main().render().find('[data-component="more"]').after(field);
             Lampa.Settings.main().update();
         }
@@ -1830,70 +1849,21 @@
     function initSettings() {
         var template = "<div>";
 
-        template += "
-        <div class="settings-param selector" data-name="online_mod_prefer_http" data-type="toggle">
-            <div class="settings-param__name">#{online_mod_prefer_http}</div>
-            <div class="settings-param__value"></div>
-        </div>";
-        template += "
-        <div class="settings-param selector" data-name="online_mod_full_episode_title" data-type="toggle">
-            <div class="settings-param__name">#{online_mod_full_episode_title}</div>
-            <div class="settings-param__value"></div>
-        </div>";
-        template += "
-        <div class="settings-param selector" data-name="online_mod_save_last_balanser" data-type="toggle">
-            <div class="settings-param__name">#{online_mod_save_last_balanser}</div>
-            <div class="settings-param__value"></div>
-        </div>
-        <div class="settings-param selector" data-name="online_mod_clear_last_balanser" data-static="true">
-            <div class="settings-param__name">#{online_mod_clear_last_balanser}</div>
-            <div class="settings-param__status"></div>
-        </div>";
-        template += "
-        <div class="settings-param selector" data-name="online_mod_rezka2_mirror" data-type="input" placeholder="#{settings_cub_not_specified}">
-            <div class="settings-param__name">#{online_mod_rezka2_mirror}</div>
-            <div class="settings-param__value"></div>
-        </div>";
-        template += "
-        <div class="settings-param selector" data-name="online_mod_rezka2_name" data-type="input" placeholder="#{settings_cub_not_specified}">
-            <div class="settings-param__name">#{online_mod_rezka2_name}</div>
-            <div class="settings-param__value"></div>
-        </div>
-        <div class="settings-param selector" data-name="online_mod_rezka2_password" data-type="input" data-string="true" placeholder="#{settings_cub_not_specified}">
-            <div class="settings-param__name">#{online_mod_rezka2_password}</div>
-            <div class="settings-param__value"></div>
-        </div>";
+        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_prefer_http\" data-type=\"toggle\">\n            <div class=\"settings-param__name\">#{online_mod_prefer_http}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
+        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_full_episode_title\" data-type=\"toggle\">\n            <div class=\"settings-param__name\">#{online_mod_full_episode_title}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
+        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_save_last_balanser\" data-type=\"toggle\">\n            <div class=\"settings-param__name\">#{online_mod_save_last_balanser}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>\n        <div class=\"settings-param selector\" data-name=\"online_mod_clear_last_balanser\" data-static=\"true\">\n            <div class=\"settings-param__name\">#{online_mod_clear_last_balanser}</div>\n            <div class=\"settings-param__status\"></div>\n        </div>";
+        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_mirror\" data-type=\"input\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_mirror}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
+        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_name\" data-type=\"input\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_name}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_password\" data-type=\"input\" data-string=\"true\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_password}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
 
         if (Lampa.Platform.is('android')) {
             Lampa.Storage.set("online_mod_rezka2_status", 'false');
         } else {
-            template += "
-        <div class="settings-param selector" data-name="online_mod_rezka2_login" data-static="true">
-            <div class="settings-param__name">#{online_mod_rezka2_login}</div>
-            <div class="settings-param__status"></div>
-        </div>
-        <div class="settings-param selector" data-name="online_mod_rezka2_logout" data-static="true">
-            <div class="settings-param__name">#{online_mod_rezka2_logout}</div>
-            <div class="settings-param__status"></div>
-        </div>";
+            template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_login\" data-static=\"true\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_login}</div>\n            <div class=\"settings-param__status\"></div>\n        </div>\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_logout\" data-static=\"true\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_logout}</div>\n            <div class=\"settings-param__status\"></div>\n        </div>";
         }
 
-        template += "
-        <div class="settings-param selector" data-name="online_mod_rezka2_cookie" data-type="input" data-string="true" placeholder="#{settings_cub_not_specified}">
-            <div class="settings-param__name">#{online_mod_rezka2_cookie}</div>
-            <div class="settings-param__value"></div>
-        </div>
-        <div class="settings-param selector" data-name="online_mod_rezka2_fill_cookie" data-static="true">
-            <div class="settings-param__name">#{online_mod_rezka2_fill_cookie}</div>
-            <div class="settings-param__status"></div>
-        </div>";
-        template += "
-        <div class="settings-param selector" data-name="online_mod_secret_password" data-type="input" data-string="true" placeholder="#{settings_cub_not_specified}">
-            <div class="settings-param__name">#{online_mod_secret_password}</div>
-            <div class="settings-param__value"></div>
-        </div>";
-        template += "
-    </div>";
+        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_cookie\" data-type=\"input\" data-string=\"true\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_cookie}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_fill_cookie\" data-static=\"true\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_fill_cookie}</div>\n            <div class=\"settings-param__status\"></div>\n        </div>";
+        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_secret_password\" data-type=\"input\" data-string=\"true\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_secret_password}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
+        template += "\n    </div>";
 
         Lampa.Template.add('settings_online_mod', template);
 
@@ -1962,8 +1932,7 @@
                 network.clear();
                 network.timeout(8000);
                 network.silent(host + '/', function (str) {
-                    str = (str || '').replace(/
-/g, '');
+                    str = (str || '').replace(/\n/g, '');
                     var error_form = str.match(/(<div class="error-code">[^<]*<div>[^<]*<\/div>[^<]*<\/div>)\s*(<div class="error-title">[^<]*<\/div>)/);
                     if (error_form) {
                         Lampa.Noty.show(error_form[0]);
@@ -2053,8 +2022,7 @@
                 network.clear();
                 network.timeout(8000);
                 network.silent(host + '/', function (str) {
-                    var body = (str || '').replace(/
-/g, '');
+                    var body = (str || '').replace(/\n/g, '');
                     var error_form = body.match(/(<div class="error-code">[^<]*<div>[^<]*<\/div>[^<]*<\/div>)\s*(<div class="error-title">[^<]*<\/div>)/);
                     if (error_form) {
                         Lampa.Noty.show(error_form[0]);
@@ -2114,13 +2082,7 @@
         };
         Lampa.Manifest.plugins = manifest;
 
-        var button = "<div class="full-start__button selector view--online_mod" data-subtitle="">
-        <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:svgjs="http://svgjs.com/svgjs" version="1.1" width="512" height="512" x="0" y="0" viewBox="0 0 244 260" style="enable-background:new 0 0 512 512" xml:space="preserve" class="">
-        <g xmlns="http://www.w3.org/2000/svg">
-            <path d="M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7l0,0 L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88 L2,50.2L47.8,80L10,88z" fill="currentColor"/>
-        </g></svg>
-        <span>#{online_mod_title}</span>
-        </div>";
+        var button = "<div class=\"full-start__button selector view--online_mod\" data-subtitle=\"\">\n        <svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" xmlns:svgjs=\"http://svgjs.com/svgjs\" version=\"1.1\" width=\"512\" height=\"512\" x=\"0\" y=\"0\" viewBox=\"0 0 244 260\" style=\"enable-background:new 0 0 512 512\" xml:space=\"preserve\" class=\"\">\n        <g xmlns=\"http://www.w3.org/2000/svg\">\n            <path d=\"M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7l0,0 L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88 L2,50.2L47.8,80L10,88z\" fill=\"currentColor\"/>\n        </g></svg>\n        <span>#{online_mod_title}</span>\n        </div>";
 
         Lampa.Listener.follow('full', function (e) {
             if (e.type == 'complite') {
