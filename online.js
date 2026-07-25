@@ -1,4 +1,4 @@
-// Online Mod (с индикацией премиум-озвучки в фильтре 14)
+// Online Mod (с индикацией премиум-озвучки в фильтре 15)
 
 (function () {
     'use strict';
@@ -655,25 +655,39 @@
             extract.favs = '';
             str = (str || '').replace(/\n/g, '');
             checkErrorForm(str);
+            
             var translation = str.match(/<h2>В переводе<\/h2>:<\/td>\s*(<td>.*?<\/td>)/);
             var cdnSeries = str.match(/\.initCDNSeriesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,/);
             var cdnMovie = str.match(/\.initCDNMoviesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,/);
+            
             var devVoiceName;
             if (translation) {
                 devVoiceName = $(translation[1]).text().trim();
             }
             if (!devVoiceName) devVoiceName = 'Оригинал';
+            
             var defVoice, defSeason, defEpisode;
-            if (cdnSeries) {
+            
+            // Проверяем, что cdnSeries найден и содержит все группы
+            if (cdnSeries && cdnSeries.length >= 5) {
                 extract.is_series = true;
-                extract.film_id = cdnSeries[1];
-                defVoice = { name: devVoiceName, id: cdnSeries[2] };
-                defSeason = { name: 'Сезон ' + cdnSeries[3], id: cdnSeries[3] };
-                defEpisode = { name: 'Серия ' + cdnSeries[4], season_id: cdnSeries[3], episode_id: cdnSeries[4] };
-            } else if (cdnMovie) {
-                extract.film_id = cdnMovie[1];
-                defVoice = { name: devVoiceName, id: cdnMovie[2], is_camrip: cdnMovie[3], is_ads: cdnMovie[4], is_director: cdnMovie[5] };
+                extract.film_id = cdnSeries[1] || '';
+                defVoice = { name: devVoiceName, id: cdnSeries[2] || '' };
+                defSeason = { name: 'Сезон ' + (cdnSeries[3] || '1'), id: cdnSeries[3] || '1' };
+                defEpisode = { name: 'Серия ' + (cdnSeries[4] || '1'), season_id: cdnSeries[3] || '1', episode_id: cdnSeries[4] || '1' };
+            } 
+            // Проверяем, что cdnMovie найден и содержит все группы
+            else if (cdnMovie && cdnMovie.length >= 6) {
+                extract.film_id = cdnMovie[1] || '';
+                defVoice = { 
+                    name: devVoiceName, 
+                    id: cdnMovie[2] || '', 
+                    is_camrip: cdnMovie[3] || '0', 
+                    is_ads: cdnMovie[4] || '0', 
+                    is_director: cdnMovie[5] || '0' 
+                };
             }
+            
             var voices = str.match(/(<ul id="translators-list".*?<\/ul>)/);
             if (voices) {
                 var select = $(voices[1]);
@@ -685,38 +699,41 @@
                     });
                     extract.voice.push({
                         name: title,
-                        id: $(this).attr('data-translator_id'),
-                        is_camrip: $(this).attr('data-camrip'),
-                        is_ads: $(this).attr('data-ads'),
-                        is_director: $(this).attr('data-director')
+                        id: $(this).attr('data-translator_id') || '',
+                        is_camrip: $(this).attr('data-camrip') || '0',
+                        is_ads: $(this).attr('data-ads') || '0',
+                        is_director: $(this).attr('data-director') || '0'
                     });
                 });
             }
+            
             if (!extract.voice.length && defVoice) {
                 extract.voice.push(defVoice);
             }
+            
             if (extract.is_series) {
                 var seasons = str.match(/(<ul id="simple-seasons-tabs".*?<\/ul>)/);
                 if (seasons) {
                     var _select = $(seasons[1]);
                     $('.b-simple_season__item', _select).each(function () {
                         extract.season.push({
-                            name: $(this).text(),
-                            id: $(this).attr('data-tab_id')
+                            name: $(this).text() || 'Сезон 1',
+                            id: $(this).attr('data-tab_id') || '1'
                         });
                     });
                 }
                 if (!extract.season.length && defSeason) {
                     extract.season.push(defSeason);
                 }
+                
                 var episodes = str.match(/(<div id="simple-episodes-tabs".*?<\/div>)/);
                 if (episodes) {
                     var _select2 = $(episodes[1]);
                     $('.b-simple_episode__item', _select2).each(function () {
                         extract.episode.push({
-                            name: $(this).text(),
-                            season_id: $(this).attr('data-season_id'),
-                            episode_id: $(this).attr('data-episode_id')
+                            name: $(this).text() || 'Серия 1',
+                            season_id: $(this).attr('data-season_id') || '1',
+                            episode_id: $(this).attr('data-episode_id') || '1'
                         });
                     });
                 }
@@ -724,8 +741,10 @@
                     extract.episode.push(defEpisode);
                 }
             }
+            
             var favs = str.match(/<input type="hidden" id="ctrl_favs" value="([^"]*)"/);
-            if (favs) extract.favs = favs[1];
+            if (favs) extract.favs = favs[1] || '';
+            
             var blocked = str.match(/class="b-player__restricted__block_message"/);
             if (blocked) extract.blocked = true;
         }
