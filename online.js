@@ -1,4 +1,4 @@
-// Online Mod
+// Online Mod (без прокси)
 
 (function () {
     'use strict';
@@ -225,7 +225,7 @@
                     return {
                         label: item.label,
                         quality: quality ? parseInt(quality[1]) : NaN,
-                        file: component.proxyStream(link, 'rezka2')
+                        file: link
                     };
                 });
                 items.sort(function (a, b) {
@@ -248,7 +248,7 @@
                     link = fixLinkProtocol(link, prefer_http, 'full');
                     return {
                         label: item.label,
-                        url: component.processSubs(link)
+                        url: link
                     };
                 });
             }
@@ -902,9 +902,6 @@
         var filter = new Lampa.Filter(object);
         var balanser = 'rezka2';
         var last_bls = Lampa.Storage.field('online_mod_save_last_balanser') === true ? Lampa.Storage.cache('online_mod_last_balanser', 200, {}) : {};
-        var use_stream_proxy = Lampa.Storage.field('online_mod_use_stream_proxy') === true;
-        var rezka2_prx_ukr = '//' + (Lampa.Storage.field('online_mod_rezka2_prx_ukr') || 'prx.ukrtelcdn.net') + '/';
-        var rezka2_fix_stream = Lampa.Storage.field('online_mod_rezka2_fix_stream') === true;
         var prefer_http = Lampa.Storage.field('online_mod_prefer_http') === true;
         var forcedQuality = '';
         var qualityFilter = {
@@ -936,12 +933,6 @@
         };
 
         this.proxyStream = function (url, name) {
-            if (url && use_stream_proxy && name === 'rezka2') {
-                return url.replace(/\/\/(stream\.voidboost\.(cc|top|link|club)|[^\/]*.ukrtelcdn.net|vdbmate.org|sambray.org|rumbegg.org|laptostack.org|frntroy.org|femeretes.org)\//, rezka2_prx_ukr);
-            }
-            if (url && rezka2_fix_stream && name === 'rezka2') {
-                return url.replace(/\/\/(stream\.voidboost\.(cc|top|link|club)|[^\/]*.ukrtelcdn.net)\//, '//femeretes.org/');
-            }
             return url;
         };
 
@@ -950,9 +941,7 @@
         };
 
         this.proxyStreamSubs = function (url, name) {
-            var srtUrl = this.processSubs(url);
-            if (srtUrl !== url) return srtUrl;
-            return this.proxyStream(url, name);
+            return this.processSubs(url);
         };
 
         this.checkMyIp = function (onComplite) {
@@ -1553,10 +1542,8 @@
     function initStorage() {
         Lampa.Storage.set('online_mod_proxy_rezka2', 'false');
 
-
         Lampa.Params.trigger('online_mod_iframe_proxy', !isTizen || isLocal);
         Lampa.Params.trigger('online_mod_proxy_iframe', false);
-        Lampa.Params.trigger('online_mod_use_stream_proxy', false);
         Lampa.Params.trigger('online_mod_proxy_find_ip', false);
         Lampa.Params.trigger('online_mod_proxy_other', false);
         Lampa.Params.trigger('online_mod_prefer_http', window.location.protocol !== 'https:');
@@ -1566,21 +1553,10 @@
         Lampa.Params.trigger('online_mod_full_episode_title', false);
         Lampa.Params.trigger('online_mod_av1_support', true);
         Lampa.Params.trigger('online_mod_save_last_balanser', false);
-        Lampa.Params.trigger('online_mod_rezka2_fix_stream', false);
         Lampa.Params.select('online_mod_rezka2_mirror', '', '');
         Lampa.Params.select('online_mod_rezka2_name', '', '');
         Lampa.Params.select('online_mod_rezka2_password', '', '');
         Lampa.Params.select('online_mod_rezka2_cookie', '', '');
-        Lampa.Params.select('online_mod_rezka2_prx_ukr', {
-            'prx.ukrtelcdn.net': 'prx.ukrtelcdn.net',
-            'prx-cogent.ukrtelcdn.net': 'prx-cogent.ukrtelcdn.net',
-            'prx2-cogent.ukrtelcdn.net': 'prx2-cogent.ukrtelcdn.net',
-            'prx3-cogent.ukrtelcdn.net': 'prx3-cogent.ukrtelcdn.net',
-            'prx4-cogent.ukrtelcdn.net': 'prx4-cogent.ukrtelcdn.net',
-            'prx-ams.ukrtelcdn.net': 'prx-ams.ukrtelcdn.net',
-            'prx2-ams.ukrtelcdn.net': 'prx2-ams.ukrtelcdn.net'
-        }, 'prx.ukrtelcdn.net');
-        Lampa.Params.select('online_mod_proxy_other_url', '', '');
         Lampa.Params.select('online_mod_secret_password', '', '');
 
         if (window.location.protocol === 'https:') {
@@ -1613,7 +1589,6 @@
             online_mod_query_end: { ru: 'нет результатов', uk: 'немає результатів', be: 'няма вынікаў', en: 'no results', zh: '没有结果' },
             online_mod_title: { ru: 'Онлайн HDrezka', uk: 'Онлайн HDrezka', be: 'Анлайн HDrezka', en: 'Online HDrezka', zh: '在线的 HDrezka' },
             online_mod_title_full: { ru: 'Онлайн Мод', uk: 'Онлайн Мод', be: 'Анлайн Мод', en: 'Online Mod', zh: '在线的 Mod' },
-            online_mod_use_stream_proxy: { ru: 'Проксировать видеопоток (Укр)', uk: 'Проксирувати відеопотік (Укр)', be: 'Праксіраваць відэаструмень (Укр)', en: 'Proxy video stream (Ukr)', zh: '代理视频流 （乌克兰）' },
             online_mod_prefer_http: { ru: 'Предпочитать поток по HTTP', uk: 'Віддавати перевагу потіку по HTTP', be: 'Аддаваць перавагу патоку па HTTP', en: 'Prefer stream over HTTP', zh: '优先于 HTTP 流式传输' },
             online_mod_full_episode_title: { ru: 'Полный формат названия серии', uk: 'Повний формат назви серії', be: 'Поўны фармат назвы серыі', en: 'Full episode title format', zh: '完整剧集标题格式' },
             online_mod_save_last_balanser: { ru: 'Сохранять историю балансеров', uk: 'Зберігати історію балансерів', be: 'Захоўваць гісторыю балансараў', en: 'Save history of balancers', zh: '保存平衡器的历史记录' },
@@ -1625,8 +1600,6 @@
             online_mod_rezka2_logout: { ru: 'Выйти из HDrezka', uk: 'Вийти з HDrezka', be: 'Выйсці з HDrezka', en: 'Log out of HDrezka', zh: '注销HDrezka' },
             online_mod_rezka2_cookie: { ru: 'Куки для HDrezka', uk: 'Кукі для HDrezka', be: 'Кукі для HDrezka', en: 'Cookie for HDrezka', zh: 'HDrezka 的 Cookie' },
             online_mod_rezka2_fill_cookie: { ru: 'Заполнить куки для HDrezka', uk: 'Заповнити кукі для HDrezka', be: 'Запоўніць кукі для HDrezka', en: 'Fill cookie for HDrezka', zh: '为HDrezka填充Cookie' },
-            online_mod_rezka2_fix_stream: { ru: 'Фикс видеопотока для HDrezka', uk: 'Фікс відеопотоку для HDrezka', be: 'Фікс відэаструменю для HDrezka', en: 'Fix video stream for HDrezka', zh: '修复 HDrezka 的视频流' },
-            online_mod_rezka2_prx_ukr: { ru: 'Прокси-сервер для HDrezka (Укр)', uk: 'Проксі-сервер для HDrezka (Укр)', be: 'Проксі-сервер для HDrezka (Укр)', en: 'Proxy server for HDrezka (Ukr)', zh: 'HDrezka 的代理服务器 （乌克兰）' },
             online_mod_authorization_required: { ru: 'Требуется авторизация', uk: 'Потрібна авторизація', be: 'Патрабуецца аўтарызацыя', en: 'Authorization required', zh: '需要授权' },
             online_mod_unsupported_mirror: { ru: 'Неподдерживаемое зеркало', uk: 'Непідтримуване дзеркало', be: 'Непадтрымоўванае люстэрка', en: 'Unsupported mirror', zh: '不支持的镜子' },
             online_mod_secret_password: { ru: 'Секретный пароль', uk: 'Секретний пароль', be: 'Сакрэтны пароль', en: 'Secret password', zh: '秘密密码' },
@@ -1671,7 +1644,6 @@
     function initSettings() {
         var template = "<div>";
 
-        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_use_stream_proxy\" data-type=\"toggle\">\n            <div class=\"settings-param__name\">#{online_mod_use_stream_proxy}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
         template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_prefer_http\" data-type=\"toggle\">\n            <div class=\"settings-param__name\">#{online_mod_prefer_http}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
         template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_full_episode_title\" data-type=\"toggle\">\n            <div class=\"settings-param__name\">#{online_mod_full_episode_title}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
         template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_save_last_balanser\" data-type=\"toggle\">\n            <div class=\"settings-param__name\">#{online_mod_save_last_balanser}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>\n        <div class=\"settings-param selector\" data-name=\"online_mod_clear_last_balanser\" data-static=\"true\">\n            <div class=\"settings-param__name\">#{online_mod_clear_last_balanser}</div>\n            <div class=\"settings-param__status\"></div>\n        </div>";
@@ -1685,8 +1657,6 @@
         }
 
         template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_cookie\" data-type=\"input\" data-string=\"true\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_cookie}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_fill_cookie\" data-static=\"true\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_fill_cookie}</div>\n            <div class=\"settings-param__status\"></div>\n        </div>";
-        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_fix_stream\" data-type=\"toggle\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_fix_stream}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
-        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_prx_ukr\" data-type=\"select\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_prx_ukr}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
         template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_secret_password\" data-type=\"input\" data-string=\"true\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_secret_password}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
         template += "\n    </div>";
 
