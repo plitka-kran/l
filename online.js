@@ -1,4 +1,4 @@
-// Online Mod (без прокси, с индикацией премиум-озвучки в фильтрах 9)
+// Online Mod (без прокси, с индикацией премиум-озвучки 10)
 
 (function () {
     'use strict';
@@ -168,7 +168,6 @@
         };
         var error_message = '';
         var premium_cache = {};
-        var is_checking = false;
 
         function checkErrorForm(str) {
             var login_form = str.match(/<form id="check-form" class="check-form" method="post" action="\/ajax\/login\/">/);
@@ -257,7 +256,7 @@
             return subtitles.length ? subtitles : false;
         }
 
-        // Проверка премиум-статуса для конкретной озвучки
+        // Проверка премиум-статуса для озвучки
         function checkPremium(voice_id, callback) {
             if (premium_cache[voice_id] !== undefined) {
                 callback(premium_cache[voice_id]);
@@ -276,7 +275,6 @@
                 postdata += '&episode=' + encodeURIComponent(episode_id);
                 postdata += '&action=get_stream';
             } else {
-                // Для фильмов используем данные из extract.voice
                 var voice = extract.voice.find(function(v) { return v.id == voice_id; });
                 postdata += '&is_camrip=' + encodeURIComponent(voice ? voice.is_camrip || 0 : 0);
                 postdata += '&is_ads=' + encodeURIComponent(voice ? voice.is_ads || 0 : 0);
@@ -585,22 +583,34 @@
             component.loading(false);
             filter();
             var items = filtred();
-            append(items);
             
-            // После отображения списка проверяем премиум для каждой озвучки
-            if (!is_checking) {
-                is_checking = true;
-                items.forEach(function(item) {
-                    if (item.voice_id && !premium_cache[item.voice_id]) {
-                        checkPremium(item.voice_id, function(isPremium) {
-                            // Обновляем элемент в интерфейсе
-                            component.updatePremiumStatus(item.voice_id, isPremium);
+            // Проверяем премиум для всех озвучек последовательно
+            var voice_ids = [];
+            items.forEach(function(item) {
+                if (item.voice_id && voice_ids.indexOf(item.voice_id) === -1) {
+                    voice_ids.push(item.voice_id);
+                }
+            });
+            
+            if (voice_ids.length > 0) {
+                var checked = 0;
+                voice_ids.forEach(function(voice_id) {
+                    checkPremium(voice_id, function(isPremium) {
+                        checked++;
+                        // Обновляем элементы с этим voice_id
+                        items.forEach(function(item) {
+                            if (item.voice_id == voice_id) {
+                                item.is_premium = isPremium;
+                            }
                         });
-                    }
+                        // Если все проверены - обновляем интерфейс
+                        if (checked === voice_ids.length) {
+                            component.updateItems(items);
+                        }
+                    });
                 });
-                setTimeout(function() {
-                    is_checking = false;
-                }, 1000);
+            } else {
+                append(items);
             }
         }
 
@@ -767,17 +777,6 @@
                 season_id: extract.season.map(function (s) { return s.id; }),
                 voice: extract.is_series ? extract.voice.map(function (v) { return v.name; }) : []
             };
-            
-            // Добавляем премиум-статус в фильтр голосов
-            var voice_with_premium = filter_items.voice.map(function(name, index) {
-                var voice_id = extract.voice[index] ? extract.voice[index].id : null;
-                var isPremium = premium_cache[voice_id] || false;
-                return {
-                    name: name,
-                    isPremium: isPremium
-                };
-            });
-            
             if (!filter_items.season[choice.season]) choice.season = 0;
             if (!filter_items.voice[choice.voice]) choice.voice = 0;
             if (choice.voice_name) {
@@ -794,7 +793,7 @@
                     choice.season = _inx;
                 }
             }
-            component.filter(filter_items, choice, voice_with_premium);
+            component.filter(filter_items, choice);
         }
 
         function getStream(element, call, error) {
@@ -1026,7 +1025,7 @@
             stype: 'quality'
         };
         var contextmenu_all = [];
-        var premium_statuses = {};
+        var current_items = [];
 
         if (last_bls[object.movie.id]) {
             balanser = last_bls[object.movie.id];
@@ -1064,34 +1063,14 @@
             onComplite();
         };
 
-        this.updatePremiumStatus = function(voice_id, isPremium) {
-            premium_statuses[voice_id] = isPremium;
-            // Обновляем фильтр
-            var filterItems = filter.render().find('.selectbox__item');
-            filterItems.each(function() {
-                var item = $(this);
-                var text = item.text().trim();
-                // Ищем элемент с этим голосом
-                if (text && !text.includes('★ Premium')) {
-                    // Проверяем, есть ли у нас статус для этого голоса
-                    // Это упрощенная логика, в реальности нужно сопоставлять по ID
-                }
-            });
-        };
-
-        this.updateVoiceFilterPremium = function() {
-            // Обновляем отображение премиум в фильтре
-            var voiceItems = filter.render().find('[data-stype="voice"] .selectbox__item');
-            voiceItems.each(function(index) {
-                var item = $(this);
-                var text = item.text().trim();
-                // Убираем старые маркеры
-                text = text.replace(' ★ Premium', '').replace('⭐ ', '');
-                // Добавляем новый маркер если премиум
-                // Здесь нужна логика сопоставления с premium_statuses
-                // Пока оставляем как есть
-                item.text(text);
-            });
+        // Обновление элементов после проверки премиум
+        this.updateItems = function(items) {
+            current_items = items;
+            // Очищаем скролл и перерисовываем
+            scroll.clear();
+            scroll.reset();
+            // Перерисовываем с обновленными данными
+            source.append(items);
         };
 
         var last;
@@ -1408,34 +1387,27 @@
             return renamed;
         };
 
-        this.filter = function (filter_items, choice, voice_with_premium) {
+        this.filter = function (filter_items, choice) {
             var select = [];
             var add = function (type, title) {
                 var need = Lampa.Storage.get('online_mod_filter', '{}');
                 var items = filter_items[type];
                 var subitems = [];
                 var value = need[type];
-                
                 items.forEach(function (name, i) {
-                    var displayName = name;
-                    // Добавляем премиум-маркер если есть
-                    if (type === 'voice' && voice_with_premium && voice_with_premium[i] && voice_with_premium[i].isPremium) {
-                        displayName = name + ' ★ Premium';
-                    }
                     subitems.push({
-                        title: displayName,
+                        title: name,
                         selected: value == i,
                         index: i
                     });
                 });
                 select.push({
                     title: title,
-                    subtitle: items[value] || '',
+                    subtitle: items[value],
                     items: subitems,
                     stype: type
                 });
             };
-            
             choice.source = 0;
             Lampa.Storage.set('online_mod_filter', choice);
             select.push({
@@ -1463,15 +1435,7 @@
                 select = [];
             for (var i in need) {
                 if (i !== 'source' && filter_translate[i] && filter_items[i] && filter_items[i].length > 1) {
-                    var displayValue = filter_items[i][need[i]] || '';
-                    // Добавляем премиум-маркер для голосов
-                    if (i === 'voice') {
-                        // Проверяем премиум-статус для этого голоса
-                        var voiceId = source.extract && source.extract.voice && source.extract.voice[need[i]] ? 
-                                     source.extract.voice[need[i]].id : null;
-                        // Добавляем маркер если есть в кеше
-                    }
-                    select.push(filter_translate[i] + ': ' + displayValue);
+                    select.push(filter_translate[i] + ': ' + filter_items[i][need[i]]);
                 }
             }
             filter.chosen('filter', select);
