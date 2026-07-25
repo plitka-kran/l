@@ -1,4 +1,4 @@
-// Online Mod (с корректным обновлением премиум-статуса при смене сезона 22)
+// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 23)
 
 (function () {
     'use strict';
@@ -167,8 +167,7 @@
             season_id: ''
         };
         var error_message = '';
-        var premium_cache = {};
-        var current_items = [];
+        var premium_cache = {}; // Кеш премиум-статуса
 
         function checkErrorForm(str) {
             var login_form = str.match(/<form id="check-form" class="check-form" method="post" action="\/ajax\/login\/">/);
@@ -178,7 +177,8 @@
             }
             var error_form = str.match(/(<div class="error-code">[^<]*<div>[^<]*<\/div>[^<]*<\/div>)\s*(<div class="error-title">[^<]*<\/div>)/);
             if (error_form) {
-                error_message = ($(error_form[1]).text().trim() || '') + ':\n' + ($(error_form[2]).text().trim() || '');
+                error_message = ($(error_form[1]).text().trim() || '') + ':
+' + ($(error_form[2]).text().trim() || '');
                 return;
             }
             var verify_form = str.match(/<span>MIRROR<\/span>.*<button type="submit" onclick="\$\.cookie(\([^)]*\))/);
@@ -238,9 +238,8 @@
                     return 0;
                 });
                 return items;
-            } catch (e) {
-                return [];
-            }
+            } catch (e) {}
+            return [];
         }
 
         function parseSubtitles(str) {
@@ -258,83 +257,17 @@
             return subtitles.length ? subtitles : false;
         }
 
-        // Получение ID текущего сезона
-        function getCurrentSeasonId() {
-            if (!extract.is_series) return null;
-            var season_name = filter_items.season && filter_items.season[choice.season] ? filter_items.season[choice.season] : null;
-            if (season_name) {
-                for (var i = 0; i < extract.season.length; i++) {
-                    if (extract.season[i].name == season_name) {
-                        return extract.season[i].id;
-                    }
-                }
-            }
-            return extract.season && extract.season.length > 0 ? extract.season[0].id : null;
-        }
-
-        // Проверка премиум-статуса для одной озвучки в конкретном сезоне
-        function checkPremiumForVoice(voice_id, season_id, callback) {
-            var cacheKey = voice_id + '_' + season_id;
-            if (premium_cache[cacheKey] !== undefined) {
-                callback(premium_cache[cacheKey]);
-                return;
-            }
-
-            var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
-            var postdata = 'id=' + encodeURIComponent(extract.film_id);
-            postdata += '&translator_id=' + encodeURIComponent(voice_id);
-            postdata += '&favs=' + encodeURIComponent(extract.favs);
-
-            if (extract.is_series) {
-                postdata += '&season=' + encodeURIComponent(season_id);
-                postdata += '&episode=1';
-                postdata += '&action=get_stream';
-            } else {
-                postdata += '&action=get_movie';
-            }
-
-            var req = new Lampa.Reguest();
-            req.timeout(4500);
-
-            req.silent(url, function (json) {
-                var isPremium = false;
-                if (json && json.url) {
-                    var video = decode(json.url);
-                    var items = extractItems(video);
-                    if (items && items.length) {
-                        var premium_content = json.premium_content || false;
-                        var prev_file = '';
-                        items.forEach(function (item) {
-                            if (item.label !== '1080p Ultra') {
-                                if (prev_file !== '' && prev_file !== item.file) premium_content = false;
-                                prev_file = item.file;
-                            }
-                        });
-                        isPremium = premium_content;
-                    }
-                }
-                premium_cache[cacheKey] = isPremium;
-                callback(isPremium);
-            }, function () {
-                premium_cache[cacheKey] = false;
-                callback(false);
-            }, postdata, {
-                withCredentials: true,
-                headers: headers
-            });
-        }
-
-        // Проверка премиум-статуса для всех озвучек текущего сезона
-        function checkAllPremiumForSeason(voice_ids, season_id, callback) {
+        // Проверка премиум-статуса для всех озвучек
+        function checkAllPremium(voice_ids, callback) {
             var total = voice_ids.length;
             var checked = 0;
             var results = {};
-
+            
             if (total === 0) {
                 callback(results);
                 return;
             }
-
+            
             var fallbackTimer = setTimeout(function() {
                 if (checked < total) {
                     checked = total;
@@ -343,37 +276,87 @@
             }, 6000);
 
             voice_ids.forEach(function(voice_id) {
-                checkPremiumForVoice(voice_id, season_id, function(isPremium) {
+                if (premium_cache[voice_id] !== undefined) {
+                    results[voice_id] = premium_cache[voice_id];
+                    checked++;
+                    if (checked === total) {
+                        clearTimeout(fallbackTimer);
+                        callback(results);
+                    }
+                    return;
+                }
+                
+                var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
+                var postdata = 'id=' + encodeURIComponent(extract.film_id);
+                postdata += '&translator_id=' + encodeURIComponent(voice_id);
+                postdata += '&favs=' + encodeURIComponent(extract.favs);
+                
+                if (extract.is_series) {
+                    var current_season_id = choice.season_id || (extract.season && extract.season[choice.season] ? extract.season[choice.season].id : (extract.season && extract.season.length > 0 ? extract.season[0].id : 1));
+                    postdata += '&season=' + encodeURIComponent(current_season_id);
+                    postdata += '&episode=1';
+                    postdata += '&action=get_stream';
+                } else {
+                    postdata += '&action=get_movie';
+                }
+                
+                var req = new Lampa.Reguest();
+                req.timeout(4500);
+                
+                var done = function(isPremium) {
+                    premium_cache[voice_id] = isPremium;
                     results[voice_id] = isPremium;
                     checked++;
                     if (checked === total) {
                         clearTimeout(fallbackTimer);
                         callback(results);
                     }
+                };
+
+                req.silent(url, function (json) {
+                    var isPremium = false;
+                    if (json && json.url) {
+                        var video = decode(json.url);
+                        var items = extractItems(video);
+                        if (items && items.length) {
+                            var premium_content = json.premium_content || false;
+                            var prev_file = '';
+                            items.forEach(function (item) {
+                                if (item.label !== '1080p Ultra') {
+                                    if (prev_file !== '' && prev_file !== item.file) premium_content = false;
+                                    prev_file = item.file;
+                                }
+                            });
+                            isPremium = premium_content;
+                        }
+                    }
+                    done(isPremium);
+                }, function () {
+                    done(false);
+                }, postdata, {
+                    withCredentials: true,
+                    headers: headers
                 });
             });
         }
 
-        // Обновление премиум-статуса и рендеринг
-        function refreshPremiumAndRender() {
+        // Универсальная функция проверки премиум-статуса и отображения контента
+        function applyPremiumAndRender(callback) {
             var voice_ids = extract.voice.map(function(v) { return v.id; });
-            var current_season_id = getCurrentSeasonId();
-
-            if (voice_ids.length > 0 && (current_season_id || !extract.is_series)) {
+            if (voice_ids.length > 0) {
                 component.loading(true);
-                var seasonId = current_season_id || 'movie';
-                checkAllPremiumForSeason(voice_ids, seasonId, function(results) {
+                checkAllPremium(voice_ids, function(results) {
                     component.loading(false);
                     filter(results);
                     var items = filtred(results);
-                    current_items = items;
                     append(items);
+                    if (callback) callback();
                 });
             } else {
                 filter({});
                 var items = filtred({});
-                current_items = items;
                 append(items);
+                if (callback) callback();
             }
         }
 
@@ -400,10 +383,11 @@
                 network.clear();
                 network.timeout(10000);
                 network.silent(url, function (str) {
-                    str = (str || '').replace(/\n/g, '');
+                    str = (str || '').replace(/
+/g, '');
                     checkErrorForm(str);
                     var links = str.match(/<div class="b-content__inline_item-link">\s*<a [^>]*>[^<]*<\/a>\s*<div>[^<]*<\/div>\s*<\/div>/g);
-                    var have_more = !!str.match(/<a [^>]*>\s*<span class="b-navigation__next\b/);
+                    var have_more = !!str.match(/<a [^>]*>\s*<span class="b-navigation__next/);
                     if (links && links.length) {
                         var items = links.map(function (l) {
                             var li = $(l);
@@ -413,7 +397,7 @@
                             var info = info_div.text().trim() || '';
                             var orig_title = '';
                             var year;
-                            var found = info.match(/^(\d{4})\b/);
+                            var found = info.match(/^(\d{4})/);
                             if (found) {
                                 year = parseInt(found[1]);
                             }
@@ -475,7 +459,7 @@
                         var alt_titl = link.text().trim() || '';
                         var orig_title = '';
                         var year;
-                        var found = alt_titl.match(/\((.*,\s*)?\b(\d{4})(\s*-\s*[\d.]*)?\)$/);
+                        var found = alt_titl.match(/\((.*,\s*)?(\d{4})(\s*-\s*[\d.]*)?\)$/);
                         if (found) {
                             if (found[1]) {
                                 var found_alt = found[1].match(/^([^а-яА-ЯёЁ]+),/);
@@ -560,7 +544,8 @@
                 network.clear();
                 network.timeout(10000);
                 network.silent(url, function (str) {
-                    str = (str || '').replace(/\n/g, '');
+                    str = (str || '').replace(/
+/g, '');
                     checkErrorForm(str);
                     var links = str.match(/<li><a href=.*?<\/li>/g);
                     var have_more = str.indexOf('<a class="b-search__live_all"') !== -1;
@@ -568,7 +553,8 @@
                     if (callback) callback(data, have_more, query);
                 }, function (a, c) {
                     if (a.status == 403 && a.responseText) {
-                        var str = (a.responseText || '').replace(/\n/g, '');
+                        var str = (a.responseText || '').replace(/
+/g, '');
                         checkErrorForm(str);
                     }
                     if (error_message) component.empty(error_message);
@@ -604,9 +590,7 @@
             };
             premium_cache = {};
             component.loading(true);
-            getEpisodes(function() {
-                refreshPremiumAndRender();
-            });
+            getEpisodes(success);
             component.saveChoice(choice);
         };
 
@@ -616,20 +600,15 @@
                 var raw_name = filter_items.voice[b.index] || '';
                 choice.voice_name = raw_name.replace(/^⭐\s*/, '');
             }
-            if (a.stype == 'season') {
-                choice.season_id = filter_items.season_id[b.index];
-            }
-
+            if (a.stype == 'season') choice.season_id = filter_items.season_id[b.index];
+            
             component.reset();
             component.loading(true);
-
-            if (a.stype == 'season') {
-                getEpisodes(function() {
-                    refreshPremiumAndRender();
-                });
-            } else {
-                refreshPremiumAndRender();
-            }
+            premium_cache = {}; // Сбрасываем кеш при любом изменении параметров
+            
+            getEpisodes(function() {
+                applyPremiumAndRender();
+            });
 
             component.saveChoice(choice);
             setTimeout(component.closeFilter, 10);
@@ -647,9 +626,7 @@
             network.silent(url, function (str) {
                 extractData(str);
                 if (extract.film_id) {
-                    getEpisodes(function() {
-                        refreshPremiumAndRender();
-                    });
+                    getEpisodes(success);
                 } else if (error_message) component.empty(error_message);
                 else component.emptyForQuery(select_title);
             }, function (a, c) {
@@ -661,6 +638,11 @@
             });
         }
 
+        function success() {
+            component.loading(false);
+            applyPremiumAndRender();
+        }
+
         function extractData(str) {
             extract.voice = [];
             extract.season = [];
@@ -669,7 +651,8 @@
             extract.is_series = false;
             extract.film_id = '';
             extract.favs = '';
-            str = (str || '').replace(/\n/g, '');
+            str = (str || '').replace(/
+/g, '');
             checkErrorForm(str);
             var translation = str.match(/<h2>В переводе<\/h2>:<\/td>\s*(<td>.*?<\/td>)/);
             var cdnSeries = str.match(/\.initCDNSeriesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,/);
@@ -755,7 +738,6 @@
                     if (data) {
                         extract.season = data.season;
                         extract.episode = data.episode;
-                        call();
                     } else {
                         var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
                         var postdata = 'id=' + encodeURIComponent(extract.film_id);
@@ -821,7 +803,7 @@
 
         function filter(premium_results) {
             premium_results = premium_results || {};
-
+            
             var voice_list = extract.voice.map(function (v) {
                 var is_prem = premium_results[v.id] || false;
                 return is_prem ? '⭐ ' + v.name : v.name;
@@ -832,7 +814,7 @@
                 season_id: extract.season.map(function (s) { return s.id; }),
                 voice: voice_list
             };
-
+            
             if (!filter_items.season[choice.season]) choice.season = 0;
             if (!filter_items.voice[choice.voice]) choice.voice = 0;
             if (choice.voice_name) {
@@ -924,17 +906,13 @@
                 var voice_obj = extract.voice[choice.voice];
                 var voice_id = voice_obj ? voice_obj.id : null;
                 var is_prem = voice_id ? (premium_results[voice_id] || false) : false;
-
-                if (voice_id && season_id) {
-                    premium_cache[voice_id + '_' + season_id] = is_prem;
-                }
-
+                
                 extract.episode.forEach(function (episode) {
                     if (episode.season_id == season_id) {
                         filtred.push({
                             title: component.formatEpisodeTitle(episode.season_id, null, episode.name),
                             quality: '360p ~ 1080p',
-                            info: ' / ' + voice + (is_prem ? ' ★ Premium' : ''),
+                            info: ' / ' + voice,
                             season: parseInt(episode.season_id),
                             episode: parseInt(episode.episode_id),
                             media: episode,
@@ -963,7 +941,7 @@
             component.reset();
             var viewed = Lampa.Storage.cache('online_view', 5000, []);
             var last_episode = component.getLastEpisode(items);
-
+            
             items.forEach(function (element) {
                 if (element.season) {
                     element.translate_episode_end = last_episode;
@@ -971,18 +949,18 @@
                 }
                 var hash = Lampa.Utils.hash(element.season ? [element.season, element.season > 10 ? ':' : '', element.episode, object.movie.original_title].join('') : object.movie.original_title);
                 var view = Lampa.Timeline.view(hash);
-
+                
                 var display_title = element.title;
                 if (element.is_premium && !startsWith(display_title, '⭐')) {
                     display_title = '⭐ ' + element.title;
                 }
-
+                
                 var item = Lampa.Template.get('online_mod', {
                     title: display_title,
                     quality: element.quality,
                     info: element.info
                 });
-
+                
                 var hash_file = Lampa.Utils.hash(element.season ? [element.season, element.season > 10 ? ':' : '', element.episode, object.movie.original_title, filter_items.voice[choice.voice]].join('') : object.movie.original_title + element.title);
                 element.timeline = view;
                 item.append(Lampa.Timeline.render(view));
@@ -990,12 +968,12 @@
                     item.find('.online__quality').append(Lampa.Timeline.details(view, ' / '));
                 }
                 if (viewed.indexOf(hash_file) !== -1) item.append('<div class="torrent-item__viewed">' + Lampa.Template.get('icon_star', {}, true) + '</div>');
-
+                
                 if (element.is_premium) {
                     item.find('.online__title').css('color', '#FFD700');
                     item.find('.online__quality').append('<span style="color: #FFD700; margin-left: 5px;">⭐ Premium</span>');
                 }
-
+                
                 item.on('hover:enter', function () {
                     if (element.loading) return;
                     if (object.movie.id) Lampa.Favorite.add('history', object.movie, 100);
@@ -1206,11 +1184,11 @@
         };
 
         this.kpCleanTitle = function (str) {
-            return this.cleanTitle(str).replace(/^[ \/\\]+/, '').replace(/[ \/\\]+$/, '').replace(/\+( *[+\/\\])+/g, '+').replace(/([+\/\\] *)+\+/g, '+').replace(/( *[\/\\]+ *)+/g, '+');
+            return this.cleanTitle(str).replace(/^[ \/\]+/, '').replace(/[ \/\]+$/, '').replace(/\+( *[+\/\])+/g, '+').replace(/([+\/\] *)+\+/g, '+').replace(/( *[\/\]+ *)+/g, '+');
         };
 
         this.normalizeTitle = function (str) {
-            return this.cleanTitle(str.toLowerCase().replace(/[\-\u2010-\u2015\u2E3A\u2E3B\uFE58\uFE63\uFF0D]+/g, '-').replace(/ё/g, 'е'));
+            return this.cleanTitle(str.toLowerCase().replace(/[\-‐-―⸺⸻﹘﹣－]+/g, '-').replace(/ё/g, 'е'));
         };
 
         this.equalTitle = function (t1, t2) {
@@ -1434,7 +1412,7 @@
             if (!qualityMap) return qualityMap;
             var renamed = {};
             for (var label in qualityMap) {
-                renamed["\u200B" + label] = qualityMap[label];
+                renamed["​" + label] = qualityMap[label];
             }
             return renamed;
         };
@@ -1759,14 +1737,14 @@
             online_mod_nolink: { ru: 'Не удалось извлечь ссылку', uk: 'Неможливо отримати посилання', be: 'Не ўдалося атрымаць спасылку', en: 'Failed to fetch link', zh: '获取链接失败' },
             online_mod_blockedlink: { ru: 'К сожалению, это видео не доступно в вашем регионе', uk: 'На жаль, це відео не доступне у вашому регіоні', be: 'Нажаль, гэта відэа не даступна ў вашым рэгіёне', en: 'Sorry, this video is not available in your region', zh: '抱歉，您所在的地区无法观看该视频' },
             online_mod_balanser: { ru: 'Балансер', uk: 'Балансер', be: 'Балансер', en: 'Balancer', zh: '平衡器' },
-            online_mod_file_helper: { ru: 'Удерживайте клавишу "ОК" для вызова контекстного меню', uk: 'Утримуйте клавішу "ОК" для виклику контекстного меню', be: 'Утрымлівайце клавішу "ОК" для выкліку кантэкстнага меню', en: 'Hold the "OK" key to bring up the context menu', zh: '按住“确定”键调出上下文菜单' },
+            online_mod_file_helper: { ru: 'Удерживайте клавишу "ОК" для вызова контекстного меню', uk: 'Утримуйте клавішу "ОК" для виклику контекстного меню', be: 'Утрымлівайце клавішу "ОК" для выклику кантэкстнага меню', en: 'Hold the "OK" key to bring up the context menu', zh: '按住“确定”键调出上下文菜单' },
             online_mod_clearmark_all: { ru: 'Снять отметку у всех', uk: 'Зняти позначку у всіх', be: 'Зняць адзнаку ва ўсіх', en: 'Uncheck all', zh: '取消所有' },
             online_mod_timeclear_all: { ru: 'Сбросить тайм-код у всех', uk: 'Скинути тайм-код у всіх', be: 'Скінуць тайм-код ва ўсіх', en: 'Reset timecode for all', zh: '为所有人重置时间码' },
             online_mod_query_start: { ru: 'По запросу', uk: 'На запит', be: 'Па запыце', en: 'On request', zh: '根据要求' },
             online_mod_query_end: { ru: 'нет результатов', uk: 'немає результатів', be: 'няма вынікаў', en: 'no results', zh: '没有结果' },
             online_mod_title: { ru: 'Онлайн HDrezka', uk: 'Онлайн HDrezka', be: 'Анлайн HDrezka', en: 'Online HDrezka', zh: '在线的 HDrezka' },
             online_mod_title_full: { ru: 'Онлайн Мод', uk: 'Онлайн Мод', be: 'Анлайн Мод', en: 'Online Mod', zh: '在线的 Mod' },
-            online_mod_prefer_http: { ru: 'Предпочитать поток по HTTP', uk: 'Віддавати перевагу потіку по HTTP', be: 'Аддаваць перавагу патоку па HTTP', en: 'Prefer stream over HTTP', zh: '优先于 HTTP 流式传输' },
+            online_mod_prefer_http: { ru: 'Предпочитать поток по HTTP', uk: 'Віддавати перевагу потіку по HTTP', be: 'Аддаваць перевагу патоку па HTTP', en: 'Prefer stream over HTTP', zh: '优先于 HTTP 流式传输' },
             online_mod_full_episode_title: { ru: 'Полный формат названия серии', uk: 'Повний формат назви серії', be: 'Поўны фармат назвы серыі', en: 'Full episode title format', zh: '完整剧集标题格式' },
             online_mod_save_last_balanser: { ru: 'Сохранять историю балансеров', uk: 'Зберігати історію балансерів', be: 'Захоўваць гісторыю балансараў', en: 'Save history of balancers', zh: '保存平衡器的历史记录' },
             online_mod_clear_last_balanser: { ru: 'Очистить историю балансеров', uk: 'Очистити історію балансерів', be: 'Ачысціць гісторыю балансараў', en: 'Clear history of balancers', zh: '清除平衡器的历史记录' },
@@ -1777,7 +1755,7 @@
             online_mod_rezka2_logout: { ru: 'Выйти из HDrezka', uk: 'Вийти з HDrezka', be: 'Выйсці з HDrezka', en: 'Log out of HDrezka', zh: '注销HDrezka' },
             online_mod_rezka2_cookie: { ru: 'Куки для HDrezka', uk: 'Кукі для HDrezka', be: 'Кукі для HDrezka', en: 'Cookie for HDrezka', zh: 'HDrezka 的 Cookie' },
             online_mod_rezka2_fill_cookie: { ru: 'Заполнить куки для HDrezka', uk: 'Заповнити кукі для HDrezka', be: 'Запоўніць кукі для HDrezka', en: 'Fill cookie for HDrezka', zh: '为HDrezka填充Cookie' },
-            online_mod_authorization_required: { ru: 'Требуется авторизация', uk: 'Потрібна авторизація', be: 'Патрабуецца аўтарызацыя', en: 'Authorization required', zh: '需要授权' },
+            online_mod_authorization_required: { ru: 'Требуется авторизация', uk: 'Потрібна авторизація', be: 'Патрабуецца аўтарызацыя', en: 'Authorization required', zh: ' need authorization' },
             online_mod_unsupported_mirror: { ru: 'Неподдерживаемое зеркало', uk: 'Непідтримуване дзеркало', be: 'Непадтрымоўванае люстэрка', en: 'Unsupported mirror', zh: '不支持的镜子' },
             online_mod_secret_password: { ru: 'Секретный пароль', uk: 'Секретний пароль', be: 'Сакрэтны пароль', en: 'Secret password', zh: '秘密密码' },
             online_mod_seasons_count: { ru: 'Сезонов', uk: 'Сезонів', be: 'Сезонаў', en: 'Seasons', zh: '季' },
@@ -1789,8 +1767,31 @@
     }
 
     function resetTemplates() {
-        Lampa.Template.add('online_mod', "<div class=\"online selector\">\n        <div class=\"online__body\">\n            <div style=\"position: absolute;left: 0;top: -0.3em;width: 2.4em;height: 2.4em\">\n                <svg style=\"height: 2.4em; width:  2.4em;\" viewBox=\"0 0 128 128\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n                    <circle cx=\"64\" cy=\"64\" r=\"56\" stroke=\"white\" stroke-width=\"16\"/>\n                    <path d=\"M90.5 64.3827L50 87.7654L50 41L90.5 64.3827Z\" fill=\"white\"/>\n                </svg>\n            </div>\n            <div class=\"online__title\" style=\"padding-left: 2.1em;\">{title}</div>\n            <div class=\"online__quality\" style=\"padding-left: 3.4em;\">{quality}{info}</div>\n        </div>\n    </div>");
-        Lampa.Template.add('online_mod_folder', "<div class=\"online selector\">\n        <div class=\"online__body\">\n            <div style=\"position: absolute;left: 0;top: -0.3em;width: 2.4em;height: 2.4em\">\n                <svg style=\"height: 2.4em; width:  2.4em;\" viewBox=\"0 0 128 112\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n                    <rect y=\"20\" width=\"128\" height=\"92\" rx=\"13\" fill=\"white\"/>\n                    <path d=\"M29.9963 8H98.0037C96.0446 3.3021 91.4079 0 86 0H42C36.5921 0 31.9555 3.3021 29.9963 8Z\" fill=\"white\" fill-opacity=\"0.23\"/>\n                    <rect x=\"11\" y=\"8\" width=\"106\" height=\"76\" rx=\"13\" fill=\"white\" fill-opacity=\"0.51\"/>\n                </svg>\n            </div>\n            <div class=\"online__title\" style=\"padding-left: 2.1em;\">{title}</div>\n            <div class=\"online__quality\" style=\"padding-left: 3.4em;\">{quality}{info}</div>\n        </div>\n    </div>");
+        Lampa.Template.add('online_mod', "<div class="online selector">
+        <div class="online__body">
+            <div style="position: absolute;left: 0;top: -0.3em;width: 2.4em;height: 2.4em">
+                <svg style="height: 2.4em; width:  2.4em;" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="64" cy="64" r="56" stroke="white" stroke-width="16"/>
+                    <path d="M90.5 64.3827L50 87.7654L50 41L90.5 64.3827Z" fill="white"/>
+                </svg>
+            </div>
+            <div class="online__title" style="padding-left: 2.1em;">{title}</div>
+            <div class="online__quality" style="padding-left: 3.4em;">{quality}{info}</div>
+        </div>
+    </div>");
+        Lampa.Template.add('online_mod_folder', "<div class="online selector">
+        <div class="online__body">
+            <div style="position: absolute;left: 0;top: -0.3em;width: 2.4em;height: 2.4em">
+                <svg style="height: 2.4em; width:  2.4em;" viewBox="0 0 128 112" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect y="20" width="128" height="92" rx="13" fill="white"/>
+                    <path d="M29.9963 8H98.0037C96.0446 3.3021 91.4079 0 86 0H42C36.5921 0 31.9555 3.3021 29.9963 8Z" fill="white" fill-opacity="0.23"/>
+                    <rect x="11" y="8" width="106" height="76" rx="13" fill="white" fill-opacity="0.51"/>
+                </svg>
+            </div>
+            <div class="online__title" style="padding-left: 2.1em;">{title}</div>
+            <div class="online__quality" style="padding-left: 3.4em;">{quality}{info}</div>
+        </div>
+    </div>");
     }
 
     function loadOnline(object) {
@@ -1813,7 +1814,14 @@
 
     function addSettingsOnlineMod() {
         if (Lampa.Settings.main && Lampa.Settings.main() && !Lampa.Settings.main().render().find('[data-component="online_mod"]').length) {
-            var field = $(Lampa.Lang.translate("<div class=\"settings-folder selector\" data-component=\"online_mod\">\n            <div class=\"settings-folder__icon\">\n                <svg height=\"260\" viewBox=\"0 0 244 260\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n                <path d=\"M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7l0,0 L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88 L2,50.2L47.8,80L10,88z\" fill=\"white\"/>\n                </svg>\n            </div>\n            <div class=\"settings-folder__name\">#{online_mod_title_full}</div>\n        </div>"));
+            var field = $(Lampa.Lang.translate("<div class="settings-folder selector" data-component="online_mod">
+            <div class="settings-folder__icon">
+                <svg height="260" viewBox="0 0 244 260" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7l0,0 L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88 L2,50.2L47.8,80L10,88z" fill="white"/>
+                </svg>
+            </div>
+            <div class="settings-folder__name">#{online_mod_title_full}</div>
+        </div>"));
             Lampa.Settings.main().render().find('[data-component="more"]').after(field);
             Lampa.Settings.main().update();
         }
@@ -1822,21 +1830,70 @@
     function initSettings() {
         var template = "<div>";
 
-        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_prefer_http\" data-type=\"toggle\">\n            <div class=\"settings-param__name\">#{online_mod_prefer_http}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
-        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_full_episode_title\" data-type=\"toggle\">\n            <div class=\"settings-param__name\">#{online_mod_full_episode_title}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
-        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_save_last_balanser\" data-type=\"toggle\">\n            <div class=\"settings-param__name\">#{online_mod_save_last_balanser}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>\n        <div class=\"settings-param selector\" data-name=\"online_mod_clear_last_balanser\" data-static=\"true\">\n            <div class=\"settings-param__name\">#{online_mod_clear_last_balanser}</div>\n            <div class=\"settings-param__status\"></div>\n        </div>";
-        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_mirror\" data-type=\"input\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_mirror}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
-        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_name\" data-type=\"input\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_name}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_password\" data-type=\"input\" data-string=\"true\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_password}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
+        template += "
+        <div class="settings-param selector" data-name="online_mod_prefer_http" data-type="toggle">
+            <div class="settings-param__name">#{online_mod_prefer_http}</div>
+            <div class="settings-param__value"></div>
+        </div>";
+        template += "
+        <div class="settings-param selector" data-name="online_mod_full_episode_title" data-type="toggle">
+            <div class="settings-param__name">#{online_mod_full_episode_title}</div>
+            <div class="settings-param__value"></div>
+        </div>";
+        template += "
+        <div class="settings-param selector" data-name="online_mod_save_last_balanser" data-type="toggle">
+            <div class="settings-param__name">#{online_mod_save_last_balanser}</div>
+            <div class="settings-param__value"></div>
+        </div>
+        <div class="settings-param selector" data-name="online_mod_clear_last_balanser" data-static="true">
+            <div class="settings-param__name">#{online_mod_clear_last_balanser}</div>
+            <div class="settings-param__status"></div>
+        </div>";
+        template += "
+        <div class="settings-param selector" data-name="online_mod_rezka2_mirror" data-type="input" placeholder="#{settings_cub_not_specified}">
+            <div class="settings-param__name">#{online_mod_rezka2_mirror}</div>
+            <div class="settings-param__value"></div>
+        </div>";
+        template += "
+        <div class="settings-param selector" data-name="online_mod_rezka2_name" data-type="input" placeholder="#{settings_cub_not_specified}">
+            <div class="settings-param__name">#{online_mod_rezka2_name}</div>
+            <div class="settings-param__value"></div>
+        </div>
+        <div class="settings-param selector" data-name="online_mod_rezka2_password" data-type="input" data-string="true" placeholder="#{settings_cub_not_specified}">
+            <div class="settings-param__name">#{online_mod_rezka2_password}</div>
+            <div class="settings-param__value"></div>
+        </div>";
 
         if (Lampa.Platform.is('android')) {
             Lampa.Storage.set("online_mod_rezka2_status", 'false');
         } else {
-            template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_login\" data-static=\"true\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_login}</div>\n            <div class=\"settings-param__status\"></div>\n        </div>\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_logout\" data-static=\"true\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_logout}</div>\n            <div class=\"settings-param__status\"></div>\n        </div>";
+            template += "
+        <div class="settings-param selector" data-name="online_mod_rezka2_login" data-static="true">
+            <div class="settings-param__name">#{online_mod_rezka2_login}</div>
+            <div class="settings-param__status"></div>
+        </div>
+        <div class="settings-param selector" data-name="online_mod_rezka2_logout" data-static="true">
+            <div class="settings-param__name">#{online_mod_rezka2_logout}</div>
+            <div class="settings-param__status"></div>
+        </div>";
         }
 
-        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_cookie\" data-type=\"input\" data-string=\"true\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_cookie}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_fill_cookie\" data-static=\"true\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_fill_cookie}</div>\n            <div class=\"settings-param__status\"></div>\n        </div>";
-        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_secret_password\" data-type=\"input\" data-string=\"true\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_secret_password}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
-        template += "\n    </div>";
+        template += "
+        <div class="settings-param selector" data-name="online_mod_rezka2_cookie" data-type="input" data-string="true" placeholder="#{settings_cub_not_specified}">
+            <div class="settings-param__name">#{online_mod_rezka2_cookie}</div>
+            <div class="settings-param__value"></div>
+        </div>
+        <div class="settings-param selector" data-name="online_mod_rezka2_fill_cookie" data-static="true">
+            <div class="settings-param__name">#{online_mod_rezka2_fill_cookie}</div>
+            <div class="settings-param__status"></div>
+        </div>";
+        template += "
+        <div class="settings-param selector" data-name="online_mod_secret_password" data-type="input" data-string="true" placeholder="#{settings_cub_not_specified}">
+            <div class="settings-param__name">#{online_mod_secret_password}</div>
+            <div class="settings-param__value"></div>
+        </div>";
+        template += "
+    </div>";
 
         Lampa.Template.add('settings_online_mod', template);
 
@@ -1905,7 +1962,8 @@
                 network.clear();
                 network.timeout(8000);
                 network.silent(host + '/', function (str) {
-                    str = (str || '').replace(/\n/g, '');
+                    str = (str || '').replace(/
+/g, '');
                     var error_form = str.match(/(<div class="error-code">[^<]*<div>[^<]*<\/div>[^<]*<\/div>)\s*(<div class="error-title">[^<]*<\/div>)/);
                     if (error_form) {
                         Lampa.Noty.show(error_form[0]);
@@ -1995,7 +2053,8 @@
                 network.clear();
                 network.timeout(8000);
                 network.silent(host + '/', function (str) {
-                    var body = (str || '').replace(/\n/g, '');
+                    var body = (str || '').replace(/
+/g, '');
                     var error_form = body.match(/(<div class="error-code">[^<]*<div>[^<]*<\/div>[^<]*<\/div>)\s*(<div class="error-title">[^<]*<\/div>)/);
                     if (error_form) {
                         Lampa.Noty.show(error_form[0]);
@@ -2005,7 +2064,7 @@
                     var verify_form = body.match(/<span>MIRROR<\/span>.*<button type="submit" onclick="\$\.cookie(\([^)]*\))/);
                     if (verify_form) {
                         Lampa.Storage.set('online_mod_rezka2_cookie', '');
-                        Lampa.Noty.show(Lampa.Lang.translate('online_mod_unsupported_mirror') + ' HDrezka');
+                        Lampa.Lang.translate('online_mod_unsupported_mirror') + ' HDrezka';
                         if (error) error();
                         return;
                     }
@@ -2055,7 +2114,13 @@
         };
         Lampa.Manifest.plugins = manifest;
 
-        var button = "<div class=\"full-start__button selector view--online_mod\" data-subtitle=\"\">\n        <svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" xmlns:svgjs=\"http://svgjs.com/svgjs\" version=\"1.1\" width=\"512\" height=\"512\" x=\"0\" y=\"0\" viewBox=\"0 0 244 260\" style=\"enable-background:new 0 0 512 512\" xml:space=\"preserve\" class=\"\">\n        <g xmlns=\"http://www.w3.org/2000/svg\">\n            <path d=\"M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7l0,0 L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88 L2,50.2L47.8,80L10,88z\" fill=\"currentColor\"/>\n        </g></svg>\n        <span>#{online_mod_title}</span>\n        </div>";
+        var button = "<div class="full-start__button selector view--online_mod" data-subtitle="">
+        <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:svgjs="http://svgjs.com/svgjs" version="1.1" width="512" height="512" x="0" y="0" viewBox="0 0 244 260" style="enable-background:new 0 0 512 512" xml:space="preserve" class="">
+        <g xmlns="http://www.w3.org/2000/svg">
+            <path d="M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7l0,0 L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88 L2,50.2L47.8,80L10,88z" fill="currentColor"/>
+        </g></svg>
+        <span>#{online_mod_title}</span>
+        </div>";
 
         Lampa.Listener.follow('full', function (e) {
             if (e.type == 'complite') {
