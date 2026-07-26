@@ -1,5 +1,4 @@
-// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 61)
-
+// Online Mod (максимально быстрая загрузка с фоновой проверкой премиум 62)
 (function () {
     'use strict';
 
@@ -96,13 +95,8 @@
         return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36';
     }
 
-    // Запускает worker(item, done) для каждого item из items, не более
-    // `limit` штук ОДНОВРЕМЕННО, и не чаще одного нового запуска раз в
-    // `stagger` мс. Нужно, чтобы не слать на сервер пачку параллельных
-    // ajax-запросов разом — HDrezka (или её CDN/анти-флуд) в ответ на такую
-    // пачку валит большинство запросов с HTTP 503, и это не лечится
-    // повторными попытками "в лоб", т.к. повтор тоже летит в общей пачке.
-    function runLimited(items, limit, stagger, worker, onAllDone) {
+    // Быстрый параллельный запуск
+    function runLimitedFast(items, limit, stagger, worker, onAllDone) {
         var idx = 0;
         var active = 0;
         var finished = 0;
@@ -117,12 +111,15 @@
                     active--;
                     finished++;
                     if (finished === total) onAllDone();
+                    else if (idx < total) setTimeout(tick, stagger);
                 });
             }
-            if (idx < total) setTimeout(tick, stagger);
         }
 
-        tick();
+        // Стартуем сразу несколько
+        for (var i = 0; i < Math.min(limit, total); i++) {
+            setTimeout(tick, i * stagger);
+        }
     }
 
     // --- Настройки ---
@@ -167,7 +164,7 @@
         return result;
     }
 
-    // --- Компонент Rezka2 ---
+    // --- Компонент Rezka2 (оптимизированный) ---
     function rezka2(component, _object) {
         var network = new Lampa.Reguest();
         var extract = {};
@@ -199,36 +196,16 @@
         var error_message = '';
         var premium_cache = {};
         var render_generation = 0;
-
         var destroyed = false;
+        var pendingRequests = [];
+        var isFiltering = false;
+        var isFirstLoad = true;
 
-        // Постоянное хранилище для кэша премиум-статуса на 24 часа
-        var PREMIUM_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 часа в миллисекундах
-
-        function getPremiumCacheKey(voice_id, season_id, film_id) {
-            return 'premium_cache_' + (film_id || extract.film_id || '') + '_' + voice_id + '_' + (season_id || '0');
-        }
-
-        function getCachedPremium(voice_id, season_id) {
-            var key = getPremiumCacheKey(voice_id, season_id);
-            var cached = Lampa.Storage.get(key, null);
-            if (cached) {
-                var parsed = JSON.parse(cached);
-                if (parsed && parsed.timestamp && (Date.now() - parsed.timestamp) < PREMIUM_CACHE_DURATION) {
-                    return parsed.value;
-                }
-                // Просроченный кэш удаляем
-                Lampa.Storage.set(key, null);
-            }
-            return null;
-        }
-
-        function setCachedPremium(voice_id, season_id, value) {
-            var key = getPremiumCacheKey(voice_id, season_id);
-            Lampa.Storage.set(key, JSON.stringify({
-                value: value,
-                timestamp: Date.now()
-            }));
+        function cancelPendingRequests() {
+            pendingRequests.forEach(function(req) {
+                try { req.clear && req.clear(); } catch(e) {}
+            });
+            pendingRequests = [];
         }
 
         function premiumCacheKey(voice_id, season_id) {
@@ -326,134 +303,135 @@
             return '1';
         }
 
-        function checkAllPremium(voice_ids, season_id, callback, force) {
+        // Фоновая проверка премиум-статуса (не блокирует UI)
+        function checkPremiumBackground(voice_ids, season_id, items, callback) {
             var total = voice_ids.length;
             var checked = 0;
             var results = {};
+            var cancelled = false;
 
-            if (total === 0) {
-                callback(results);
+            if (total === 0 || destroyed) {
+                if (callback) callback(results);
                 return;
             }
-            
-            var fallbackTimer = setTimeout(function() {
-                if (checked < total) {
-                    var unfinished = voice_ids.filter(function (id) {
-                        return results[id] === undefined;
-                    });
-                    checked = total;
-                    results.__timedOut = unfinished;
-                    callback(results);
-                }
-            }, Math.max(20000, total * 6000));
 
             var current_season_id = season_id;
-            var PREMIUM_CONCURRENCY = 2;
-            var PREMIUM_STAGGER_MS = 300;
+            var CONCURRENCY = 4;
+            var STAGGER = 150;
 
-            runLimited(voice_ids, PREMIUM_CONCURRENCY, PREMIUM_STAGGER_MS, function (voice_id, queueDone) {
+            function processVoice(voice_id, done) {
+                if (cancelled || destroyed) { done(); return; }
+
                 var cache_key = premiumCacheKey(voice_id, current_season_id);
-
-                if (!force) {
-                    // Проверяем оперативный кэш (в памяти)
-                    var cached = premium_cache[cache_key];
-                    if (cached !== undefined) {
-                        results[voice_id] = cached;
-                        checked++;
-                        if (checked === total) {
-                            clearTimeout(fallbackTimer);
-                            callback(results);
-                        }
-                        queueDone();
-                        return;
-                    }
-
-                    // Проверяем постоянный кэш (в localStorage)
-                    var persistentCached = getCachedPremium(voice_id, current_season_id);
-                    if (persistentCached !== null) {
-                        premium_cache[cache_key] = persistentCached;
-                        results[voice_id] = persistentCached;
-                        checked++;
-                        if (checked === total) {
-                            clearTimeout(fallbackTimer);
-                            callback(results);
-                        }
-                        queueDone();
-                        return;
-                    }
+                var cached = premium_cache[cache_key];
+                if (cached !== undefined) {
+                    results[voice_id] = cached;
+                    done();
+                    return;
                 }
 
-                var finish = function(isPremium) {
-                    results[voice_id] = isPremium;
-                    checked++;
-                    if (checked === total) {
-                        clearTimeout(fallbackTimer);
-                        callback(results);
-                    }
-                    queueDone();
-                };
+                var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
+                var postdata = 'id=' + encodeURIComponent(extract.film_id);
+                postdata += '&translator_id=' + encodeURIComponent(voice_id);
+                postdata += '&favs=' + encodeURIComponent(extract.favs);
 
-                var confirmed = function(isPremium) {
+                if (extract.is_series) {
+                    postdata += '&season=' + encodeURIComponent(current_season_id);
+                    postdata += '&episode=' + encodeURIComponent(getProbeEpisodeId());
+                    postdata += '&action=get_stream';
+                } else {
+                    postdata += '&action=get_movie';
+                }
+
+                var req = new Lampa.Reguest();
+                pendingRequests.push(req);
+                req.timeout(3000);
+
+                req.silent(url, function (json) {
+                    if (cancelled || destroyed) { done(); return; }
+                    var isPremium = false;
+                    if (json && json.url) {
+                        var video = decode(json.url);
+                        var items2 = extractItems(video);
+                        if (items2 && items2.length) {
+                            var premium_content = json.premium_content || false;
+                            var prev_file = '';
+                            items2.forEach(function (item) {
+                                if (item.label !== '1080p Ultra') {
+                                    if (prev_file !== '' && prev_file !== item.file) premium_content = false;
+                                    prev_file = item.file;
+                                }
+                            });
+                            isPremium = premium_content;
+                        }
+                    }
                     premium_cache[cache_key] = isPremium;
-                    // Сохраняем в постоянный кэш на 24 часа
-                    setCachedPremium(voice_id, current_season_id, isPremium);
-                    finish(isPremium);
-                };
+                    results[voice_id] = isPremium;
+                    done();
+                }, function (a, c) {
+                    if (cancelled || destroyed) { done(); return; }
+                    // При ошибке считаем не премиум, но не кэшируем как достоверный результат
+                    results[voice_id] = false;
+                    done();
+                }, postdata, {
+                    withCredentials: true,
+                    headers: headers
+                });
+            }
 
-                var attempt = function(retries_left) {
-                    var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
-                    var postdata = 'id=' + encodeURIComponent(extract.film_id);
-                    postdata += '&translator_id=' + encodeURIComponent(voice_id);
-                    postdata += '&favs=' + encodeURIComponent(extract.favs);
+            var idx = 0;
+            var active = 0;
+            var done = 0;
 
-                    if (extract.is_series) {
-                        postdata += '&season=' + encodeURIComponent(current_season_id);
-                        postdata += '&episode=' + encodeURIComponent(getProbeEpisodeId());
-                        postdata += '&action=get_stream';
-                    } else {
-                        postdata += '&action=get_movie';
-                    }
-
-                    var req = new Lampa.Reguest();
-                    req.timeout(4000);
-
-                    req.silent(url, function (json) {
-                        var isPremium = false;
-                        if (json && json.url) {
-                            var video = decode(json.url);
-                            var items = extractItems(video);
-                            if (items && items.length) {
-                                var premium_content = json.premium_content || false;
-                                var prev_file = '';
-                                items.forEach(function (item) {
-                                    if (item.label !== '1080p Ultra') {
-                                        if (prev_file !== '' && prev_file !== item.file) premium_content = false;
-                                        prev_file = item.file;
-                                    }
-                                });
-                                isPremium = premium_content;
-                            }
-                        }
-                        confirmed(isPremium);
-                    }, function (a, c) {
-                        if (retries_left > 0) {
-                            var backoff = (3 - retries_left) * 600 + Math.floor(Math.random() * 400);
-                            setTimeout(function () {
-                                attempt(retries_left - 1);
-                            }, backoff);
+            function tick() {
+                if (cancelled || destroyed) {
+                    if (callback) callback(results);
+                    return;
+                }
+                if (idx < total && active < CONCURRENCY) {
+                    active++;
+                    var voice_id = voice_ids[idx++];
+                    processVoice(voice_id, function() {
+                        active--;
+                        done++;
+                        if (done === total) {
+                            if (callback) callback(results);
+                            // Обновляем UI с премиум-значками
+                            updatePremiumUI(items, results);
                         } else {
-                            finish(false);
+                            setTimeout(tick, STAGGER);
                         }
-                    }, postdata, {
-                        withCredentials: true,
-                        headers: headers
                     });
-                };
+                    setTimeout(tick, 50);
+                } else if (done === total) {
+                    if (callback) callback(results);
+                    updatePremiumUI(items, results);
+                } else {
+                    setTimeout(tick, 100);
+                }
+            }
 
-                attempt(2);
-            }, function () {
-                if (checked < total) {
-                    // fallback
+            for (var i = 0; i < Math.min(CONCURRENCY, total); i++) {
+                setTimeout(tick, i * 50);
+            }
+        }
+
+        function updatePremiumUI(items, results) {
+            if (destroyed || !items) return;
+            items.forEach(function(el) {
+                var isPrem = results[el.voice_id] || false;
+                if (isPrem && !el.is_premium) {
+                    el.is_premium = true;
+                    if (el.dom) {
+                        var titleEl = el.dom.find('.online__title');
+                        if (!startsWith(titleEl.text().trim(), '⭐')) {
+                            titleEl.text('⭐ ' + titleEl.text());
+                        }
+                        titleEl.css('color', '#FFD700');
+                        if (!el.dom.find('.online__quality span').length) {
+                            el.dom.find('.online__quality').append('<span style="color: #FFD700; margin-left: 5px;">⭐ Premium</span>');
+                        }
+                    }
                 }
             });
         }
@@ -479,7 +457,7 @@
             var query_more = function (query, page, data, callback) {
                 var url = more_url + '&q=' + encodeURIComponent(query) + '&page=' + encodeURIComponent(page);
                 network.clear();
-                network.timeout(10000);
+                network.timeout(8000);
                 network.silent(url, function (str) {
                     str = (str || '').replace(/\n/g, '');
                     checkErrorForm(str);
@@ -639,7 +617,7 @@
             var query_search = function (query, data, callback) {
                 var postdata = 'q=' + encodeURIComponent(query);
                 network.clear();
-                network.timeout(10000);
+                network.timeout(8000);
                 network.silent(url, function (str) {
                     str = (str || '').replace(/\n/g, '');
                     checkErrorForm(str);
@@ -684,12 +662,16 @@
                 season_id: ''
             };
             premium_cache = {};
+            isFirstLoad = true;
             component.loading(true);
             getEpisodes(success);
             component.saveChoice(choice);
         };
 
         this.filter = function (type, a, b) {
+            if (isFiltering) return;
+            isFiltering = true;
+            
             choice[a.stype] = b.index;
             if (a.stype == 'voice') {
                 var raw_name = filter_items.voice[b.index] || '';
@@ -699,26 +681,68 @@
             
             component.reset();
             component.loading(true);
-
             premium_cache = {};
-            getEpisodes(function () {
-                checkPremiumAndRender(true);
-            });
+            render_generation++;
+
+            var season_id = currentSeasonId();
+            var voices = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
+            var selected_voice = voices[choice.voice];
+            
+            if (selected_voice && extract.is_series) {
+                var key = selected_voice.id + '::' + (season_id || '');
+                delete extract.voice_data[key];
+                
+                fetchVoiceDataFast(selected_voice.id, season_id, function(data) {
+                    if (destroyed) {
+                        isFiltering = false;
+                        return;
+                    }
+                    
+                    extract.voice_data[key] = data;
+                    if (data.season.length) {
+                        extract.voice_season_list[selected_voice.id] = data.season;
+                    }
+                    
+                    voice_list_current = availableVoicesForSeason(season_id);
+                    filterVoice();
+                    
+                    var selected = voice_list_current[choice.voice];
+                    var key2 = selected ? (selected.id + '::' + (season_id || '')) : null;
+                    var data2 = key2 && extract.voice_data[key2];
+                    extract.episode = (data2 && data2.episode) || [];
+                    
+                    component.saveChoice(choice);
+                    
+                    // Мгновенный рендеринг без проверки премиум
+                    renderWithoutPremium(function() {
+                        isFiltering = false;
+                        component.loading(false);
+                    });
+                });
+            } else {
+                getEpisodes(function () {
+                    renderWithoutPremium(function() {
+                        isFiltering = false;
+                    });
+                });
+            }
 
             component.saveChoice(choice);
             setTimeout(component.closeFilter, 10);
         };
 
         this.destroy = function () {
+            destroyed = true;
+            cancelPendingRequests();
             network.clear();
             extract = null;
-            destroyed = true;
+            object = null;
         };
 
         function getPage(url) {
             url = fixLink(url, ref);
             network.clear();
-            network.timeout(10000);
+            network.timeout(8000);
             network.silent(url, function (str) {
                 extractData(str);
                 if (extract.film_id) {
@@ -748,80 +772,89 @@
             return indexed.map(function (o) { return o.v; });
         }
 
-        function checkPremiumAndRender(force, onDone) {
-            var my_gen = ++render_generation;
-            var voices_source = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
-            var voice_ids = voices_source.map(function (v) { return v.id; });
-
-            if (voice_ids.length > 0) {
-                component.loading(true);
-                checkAllPremium(voice_ids, currentSeasonId(), function (results) {
-                    if (my_gen !== render_generation) {
-                        return;
-                    }
-                    component.loading(false);
-                    var sorted = sortVoicesByPremium(voices_source, results);
-                    if (extract.is_series && voice_list_current.length) voice_list_current = sorted;
-                    else extract.voice = sorted;
-                    filter(results);
-                    var items = filtred(results);
-                    append(items);
-                    if (onDone) onDone();
-
-                    if (results.__timedOut && results.__timedOut.length) {
-                        var retry_gen = my_gen;
-                        var retry_season = currentSeasonId();
-                        setTimeout(function () {
-                            if (retry_gen !== render_generation) return;
-                            checkAllPremium(results.__timedOut, retry_season, function (retry_results) {
-                                if (retry_gen !== render_generation) return;
-                                for (var vid in retry_results) {
-                                    if (vid === '__timedOut') continue;
-                                    if (retry_results[vid]) markPremiumDiscovered(items, vid);
-                                }
-                            }, true);
-                        }, 2500);
-                    }
-                }, force);
-            } else {
-                component.loading(false);
-                filter({});
-                var items = filtred({});
-                append(items);
+        // Быстрый рендеринг без ожидания премиум-проверки
+        function renderWithoutPremium(onDone) {
+            if (destroyed) {
                 if (onDone) onDone();
+                return;
             }
+            
+            var voices_source = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
+            filter({}); // Без премиум-результатов
+            var items = filtred({});
+            append(items);
+            
+            // Запускаем фоновую проверку премиум
+            var voice_ids = voices_source.map(function (v) { return v.id; });
+            if (voice_ids.length > 0) {
+                var season_id = currentSeasonId();
+                checkPremiumBackground(voice_ids, season_id, items, function(results) {
+                    if (destroyed) return;
+                    // Сортируем если нужно
+                    var mode = Lampa.Storage.get('online_mod_premium_sort', 'default');
+                    if (mode === 'premium_first' || mode === 'premium_last') {
+                        var sorted = sortVoicesByPremium(voices_source, results);
+                        if (extract.is_series && voice_list_current.length) voice_list_current = sorted;
+                        else extract.voice = sorted;
+                        filter(results);
+                        // Перерисовываем с премиум-сортировкой
+                        var newItems = filtred(results);
+                        // Обновляем DOM
+                        newItems.forEach(function(el, index) {
+                            if (el.dom) {
+                                var titleEl = el.dom.find('.online__title');
+                                if (el.is_premium && !startsWith(titleEl.text().trim(), '⭐')) {
+                                    titleEl.text('⭐ ' + el.title);
+                                    titleEl.css('color', '#FFD700');
+                                    if (!el.dom.find('.online__quality span').length) {
+                                        el.dom.find('.online__quality').append('<span style="color: #FFD700; margin-left: 5px;">⭐ Premium</span>');
+                                    }
+                                }
+                            }
+                        });
+                    }
+                });
+            }
+            
+            if (onDone) onDone();
+        }
+
+        function checkPremiumAndRender(force, onDone) {
+            // Теперь используем быстрый рендеринг
+            renderWithoutPremium(onDone);
         }
 
         function prefetchOtherSeasonsInBackground() {
-            if (!extract.is_series || !extract.season || extract.season.length < 2) return;
+            if (!extract.is_series || !extract.season || extract.season.length < 2 || destroyed) return;
 
             var current = currentSeasonId();
             var others = extract.season
                 .map(function (s) { return s.id; })
-                .filter(function (id) { return id != current; });
+                .filter(function (id) { return id != current; })
+                .slice(0, 8);
 
-            var MAX_SEASONS_TO_PREFETCH = 12;
-            others = others.slice(0, MAX_SEASONS_TO_PREFETCH);
-
-            var i = 0;
-            function next() {
-                if (i >= others.length) return;
-                var season_id = others[i++];
-                ensureAllVoiceData(season_id, function () {
-                    var voices_for_season = availableVoicesForSeason(season_id);
-                    var ids = voices_for_season.map(function (v) { return v.id; });
-                    checkAllPremium(ids, season_id, function () {
-                        setTimeout(next, 600);
+            setTimeout(function() {
+                var i = 0;
+                function next() {
+                    if (i >= others.length || destroyed) return;
+                    var season_id = others[i++];
+                    ensureAllVoiceDataFast(season_id, function() {
+                        if (destroyed) return;
+                        var voices_for_season = availableVoicesForSeason(season_id);
+                        var ids = voices_for_season.map(function (v) { return v.id; });
+                        // Фоновая проверка без UI
+                        checkPremiumBackground(ids, season_id, null, function() {});
+                        setTimeout(next, 400);
                     });
-                });
-            }
-
-            setTimeout(next, 1000);
+                }
+                next();
+            }, 500);
         }
 
         function success() {
+            if (destroyed) return;
             component.loading(false);
-            checkPremiumAndRender(false, prefetchOtherSeasonsInBackground);
+            renderWithoutPremium(prefetchOtherSeasonsInBackground);
         }
 
         function extractData(str) {
@@ -910,41 +943,47 @@
             if (blocked) extract.blocked = true;
         }
 
-        function fetchVoiceData(translator_id, season_id, callback) {
+        function fetchVoiceDataFast(translator_id, season_id, callback) {
+            if (destroyed) {
+                callback({ season: [], episode: [] });
+                return;
+            }
+            
             var key = translator_id + '::' + (season_id || '');
             if (extract.voice_data[key]) {
                 callback(extract.voice_data[key]);
                 return;
             }
+            
             var postdata = 'id=' + encodeURIComponent(extract.film_id);
             postdata += '&translator_id=' + encodeURIComponent(translator_id);
             postdata += '&favs=' + encodeURIComponent(extract.favs);
             if (season_id) postdata += '&season=' + encodeURIComponent(season_id);
             postdata += '&action=get_episodes';
 
-            var attempt = function (retries_left) {
-                var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
-                var req = new Lampa.Reguest();
-                req.timeout(10000);
-                req.silent(url, function (json) {
-                    var data = parseVoiceEpisodes(json, translator_id, key);
-                    callback(data);
-                }, function (a, c) {
-                    if (retries_left > 0) {
-                        var backoff = (2 - retries_left) * 700 + Math.floor(Math.random() * 400);
-                        setTimeout(function () { attempt(retries_left - 1); }, backoff);
-                    } else {
-                        var empty = { season: [], episode: [] };
-                        extract.voice_data[key] = empty;
-                        callback(empty);
-                    }
-                }, postdata, {
-                    withCredentials: true,
-                    headers: headers
-                });
-            };
-
-            attempt(1);
+            var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
+            var req = new Lampa.Reguest();
+            pendingRequests.push(req);
+            req.timeout(5000);
+            req.silent(url, function (json) {
+                if (destroyed) {
+                    callback({ season: [], episode: [] });
+                    return;
+                }
+                var data = parseVoiceEpisodes(json, translator_id, key);
+                callback(data);
+            }, function (a, c) {
+                if (destroyed) {
+                    callback({ season: [], episode: [] });
+                    return;
+                }
+                var empty = { season: [], episode: [] };
+                extract.voice_data[key] = empty;
+                callback(empty);
+            }, postdata, {
+                withCredentials: true,
+                headers: headers
+            });
         }
 
         function parseVoiceEpisodes(json, translator_id, key) {
@@ -974,23 +1013,38 @@
             return data;
         }
 
-        function ensureAllVoiceData(season_id, callback) {
+        function ensureAllVoiceDataFast(season_id, callback) {
+            if (destroyed) {
+                callback();
+                return;
+            }
+            
             var voices = extract.voice || [];
             var total = voices.length;
-            var done = 0;
             if (!total) {
                 callback();
                 return;
             }
-            runLimited(voices, 2, 300, function (v, queueDone) {
-                fetchVoiceData(v.id, season_id, function () {
-                    done++;
-                    if (done === total) {
-                        callback();
-                    }
-                    queueDone();
-                });
-            }, function () {});
+
+            var done = 0;
+            var CONCURRENCY = 4;
+            var idx = 0;
+
+            function tick() {
+                if (destroyed) { callback(); return; }
+                if (idx < total) {
+                    var v = voices[idx++];
+                    fetchVoiceDataFast(v.id, season_id, function() {
+                        done++;
+                        if (done === total) callback();
+                        else setTimeout(tick, 100);
+                    });
+                }
+            }
+
+            for (var i = 0; i < Math.min(CONCURRENCY, total); i++) {
+                setTimeout(tick, i * 80);
+            }
         }
 
         function currentSeasonId() {
@@ -1006,11 +1060,15 @@
                 var seasons = extract.voice_season_list[v.id];
                 return seasons && seasons.some(function (s) { return s.id == season_id; });
             });
-            var result = list.length ? list : extract.voice;
-            return result;
+            return list.length ? list : extract.voice;
         }
 
         function getEpisodes(call) {
+            if (destroyed) {
+                call();
+                return;
+            }
+            
             if (!extract.is_series) {
                 call();
                 return;
@@ -1018,7 +1076,11 @@
 
             var season_id = currentSeasonId();
 
-            ensureAllVoiceData(season_id, function () {
+            ensureAllVoiceDataFast(season_id, function () {
+                if (destroyed) {
+                    call();
+                    return;
+                }
                 voice_list_current = availableVoicesForSeason(season_id);
                 filterVoice();
 
@@ -1026,7 +1088,6 @@
                 var key = selected ? (selected.id + '::' + (season_id || '')) : null;
                 var data = key && extract.voice_data[key];
                 extract.episode = (data && data.episode) || [];
-
                 call();
             });
         }
@@ -1081,6 +1142,11 @@
         }
 
         function getStream(element, call, error) {
+            if (destroyed) {
+                error('Компонент уничтожен');
+                return;
+            }
+            
             if (element.stream) return call(element);
             var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
             var postdata = 'id=' + encodeURIComponent(extract.film_id);
@@ -1098,9 +1164,15 @@
                 postdata += '&favs=' + encodeURIComponent(extract.favs);
                 postdata += '&action=get_movie';
             }
-            network.clear();
-            network.timeout(10000);
-            network.silent(url, function (json) {
+            
+            var req = new Lampa.Reguest();
+            pendingRequests.push(req);
+            req.timeout(8000);
+            req.silent(url, function (json) {
+                if (destroyed) {
+                    error('Компонент уничтожен');
+                    return;
+                }
                 if (json && json.url) {
                     var video = decode(json.url),
                         file = '',
@@ -1123,7 +1195,6 @@
                             var block_season_id = extract.is_series ? element.media.season_id : null;
                             var block_key = premiumCacheKey(block_voice_id, block_season_id);
                             premium_cache[block_key] = true;
-                            setCachedPremium(block_voice_id, block_season_id, true);
                             error('Перевод доступен только с HDrezka Premium', true);
                             return;
                         }
@@ -1204,6 +1275,8 @@
         }
 
         function append(items) {
+            if (destroyed) return;
+            
             component.reset();
             var viewed = Lampa.Storage.cache('online_view', 5000, []);
             var last_episode = component.getLastEpisode(items);
@@ -1242,10 +1315,11 @@
                 }
                 
                 item.on('hover:enter', function () {
-                    if (element.loading) return;
+                    if (destroyed || element.loading) return;
                     if (object.movie.id) Lampa.Favorite.add('history', object.movie, 100);
                     element.loading = true;
                     getStream(element, function (element) {
+                        if (destroyed) return;
                         element.loading = false;
                         var first = {
                             url: component.getDefaultQuality(element.qualitys, element.stream),
@@ -1335,6 +1409,7 @@
             stype: 'quality'
         };
         var contextmenu_all = [];
+        var destroyed = false;
 
         if (last_bls[object.movie.id]) {
             balanser = last_bls[object.movie.id];
@@ -1939,6 +2014,7 @@
         this.stop = function () {};
 
         this.destroy = function () {
+            destroyed = true;
             network.clear();
             files.destroy();
             scroll.destroy();
@@ -1954,14 +2030,6 @@
     var isLocal = !startsWith(window.location.protocol, 'http');
     var network = new Lampa.Reguest();
     var online_loading = false;
-
-    function logApp() {
-        console.log('Online Mod');
-        console.log('App', 'is MSX:', isMSX);
-        console.log('App', 'is Tizen:', isTizen);
-        console.log('App', 'is iframe:', isIFrame);
-        console.log('App', 'is local:', isLocal);
-    }
 
     function initStorage() {
         Lampa.Storage.set('online_mod_proxy_rezka2', 'false');
@@ -2313,7 +2381,6 @@
 
     // --- Запуск ---
     function startPlugin() {
-        logApp();
         initStorage();
         initLang();
         resetTemplates();
