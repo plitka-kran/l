@@ -105,6 +105,39 @@
         return url;
     }
 
+    function decodeSecret(input, password) {
+        var result = '';
+        password = (password || Lampa.Storage.get('online_mod_secret_password', '')) + '';
+        if (input && password) {
+            var hash = salt('123456789' + password);
+            while (hash.length < input.length) {
+                hash += hash;
+            }
+            var i = 0;
+            while (i < input.length) {
+                result += String.fromCharCode(input[i] ^ hash.charCodeAt(i));
+                i++;
+            }
+        }
+        return result;
+    }
+
+    function salt(input) {
+        var str = (input || '') + '';
+        var hash = 0;
+        for (var i = 0; i < str.length; i++) {
+            var c = str.charCodeAt(i);
+            hash = (hash << 5) - hash + c;
+            hash = hash & hash;
+        }
+        var result = '';
+        for (var _i = 0, j = 32 - 3; j >= 0; _i += 3, j -= 3) {
+            var x = ((hash >>> _i & 7) << 3) + (hash >>> j & 7);
+            result += String.fromCharCode(x < 26 ? 97 + x : x < 52 ? 39 + x : x - 4);
+        }
+        return result;
+    }
+
     // --- Компонент Rezka2 ---
     function rezka2(component, _object) {
         var network = new Lampa.Reguest();
@@ -456,11 +489,15 @@
             if (a.stype == 'season') {
                 choice.season = b.index;
                 choice.season_id = filter_items.season_id[b.index];
+                // Сбрасываем выбор озвучки при смене сезона
+                choice.voice = 0;
+                choice.voice_name = '';
             }
             if (a.stype == 'voice') {
                 var current_voices = getAvailableVoicesForSeason(choice.season_id);
                 if (current_voices[b.index]) {
                     choice.voice_name = current_voices[b.index].name;
+                    choice.voice = b.index;
                 }
             }
             component.reset();
@@ -655,10 +692,16 @@
             if (extract.is_series && extract.voice.length) {
                 var pending = 0;
                 var total = extract.voice.length;
+                var timeout = setTimeout(function() {
+                    if (pending < total) {
+                        call();
+                    }
+                }, 10000);
 
                 function checkDone() {
                     pending++;
                     if (pending >= total) {
+                        clearTimeout(timeout);
                         call();
                     }
                 }
@@ -678,6 +721,7 @@
                             extractEpisodes(json, translator_id);
                             checkDone();
                         }, function () {
+                            extract.voice_data[translator_id] = { season: [], episode: [] };
                             checkDone();
                         }, postdata, {
                             withCredentials: true,
@@ -723,7 +767,6 @@
                 choice.voice = 0;
             }
         
-            // Вкладка "Перевод" будет добавляться только для сериалов
             var filter_to_send = {
                 season: filter_items.season,
                 season_id: filter_items.season_id
@@ -794,12 +837,23 @@
             if (extract.is_series) {
                 var season_id = choice.season_id || (extract.season[choice.season] ? extract.season[choice.season].id : null);
                 var available_voices = getAvailableVoicesForSeason(season_id);
+                
+                if (!available_voices || available_voices.length === 0) {
+                    available_voices = extract.voice;
+                }
+                
+                if (choice.voice >= available_voices.length) {
+                    choice.voice = 0;
+                }
+                
                 var voice_data = available_voices[choice.voice] || available_voices[0] || {};
                 var translator_id = voice_data.id;
                 var is_premium = voice_data.is_premium || false;
                 var voice_clean = voice_data.clean_name || voice_data.name || '';
                 
-                var ep_list = (extract.voice_data[translator_id] && extract.voice_data[translator_id].episode) ? extract.voice_data[translator_id].episode : extract.episode;
+                var ep_list = (extract.voice_data[translator_id] && extract.voice_data[translator_id].episode) ? 
+                              extract.voice_data[translator_id].episode : 
+                              extract.episode;
 
                 ep_list.forEach(function (episode) {
                     if (episode.season_id == season_id) {
@@ -1535,6 +1589,7 @@
     var isLocal = !startsWith(window.location.protocol, 'http');
     var network = new Lampa.Reguest();
     var online_loading = false;
+
     function logApp() {
         console.log('Online Mod');
         console.log('App', 'is MSX:', isMSX);
@@ -1542,6 +1597,7 @@
         console.log('App', 'is iframe:', isIFrame);
         console.log('App', 'is local:', isLocal);
     }
+
     function initStorage() {
         Lampa.Storage.set('online_mod_proxy_rezka2', 'false');
 
@@ -1585,26 +1641,24 @@
             online_mod_nolink: { ru: 'Не удалось извлечь ссылку', uk: 'Неможливо отримати посилання', be: 'Не ўдалося атрымаць спасылку', en: 'Failed to fetch link', zh: '获取链接失败' },
             online_mod_blockedlink: { ru: 'К сожалению, это видео не доступно в вашем регионе', uk: 'На жаль, це відео не доступне у вашому регіоні', be: 'Нажаль, гэта відэа не даступна ў вашым рэгіёне', en: 'Sorry, this video is not available in your region', zh: '抱歉，您所在的地区无法观看该视频' },
             online_mod_balanser: { ru: 'Балансер', uk: 'Балансер', be: 'Балансер', en: 'Balancer', zh: '平衡器' },
-            online_mod_file_helper: { ru: 'Удерживайте клавишу "ОК" для вызова контекстного меню', uk: 'Утримуйте клавішу "ОК" для виклику контекстного меню', be: 'Утрымлівайце клавішу "ОК" для выклику кантэкстнага меню', en: 'Hold the "OK" key to bring up the context menu', zh: '按住“确定”键调出上下文菜单' },
+            online_mod_file_helper: { ru: 'Удерживайте клавишу "ОК" для вызова контекстного меню', uk: 'Утримуйте клавішу "ОК" для виклику контекстного меню', be: 'Утрымлівайце клавішу "ОК" для выкліку кантэкстнага меню', en: 'Hold the "OK" key to bring up the context menu', zh: '按住“确定”键调出上下文菜单' },
             online_mod_clearmark_all: { ru: 'Снять отметку у всех', uk: 'Зняти позначку у всіх', be: 'Зняць адзнаку ва ўсіх', en: 'Uncheck all', zh: '取消所有' },
             online_mod_timeclear_all: { ru: 'Сбросить тайм-код у всех', uk: 'Скинути тайм-код у всіх', be: 'Скінуць тайм-код ва ўсіх', en: 'Reset timecode for all', zh: '为所有人重置时间码' },
             online_mod_query_start: { ru: 'По запросу', uk: 'На запит', be: 'Па запыце', en: 'On request', zh: '根据要求' },
-            online_mod_query_end: { ru: 'нет результатов', uk: 'немає результатів', be: 'няма винікаў', en: 'no results', zh: '没有结果' },
+            online_mod_query_end: { ru: 'нет результатов', uk: 'немає результатів', be: 'няма вынікаў', en: 'no results', zh: '没有结果' },
             online_mod_title: { ru: 'Онлайн HDrezka', uk: 'Онлайн HDrezka', be: 'Анлайн HDrezka', en: 'Online HDrezka', zh: '在线的 HDrezka' },
             online_mod_title_full: { ru: 'Онлайн Мод', uk: 'Онлайн Мод', be: 'Анлайн Мод', en: 'Online Mod', zh: '在线的 Mod' },
-            online_mod_prefer_http: { ru: 'Предпочитать поток по HTTP', uk: 'Віддавати перевагу потіку по HTTP', be: 'Аддаваць перевагу патоку па HTTP', en: 'Prefer stream over HTTP', zh: '优先于 HTTP 流式传输' },
+            online_mod_prefer_http: { ru: 'Предпочитать поток по HTTP', uk: 'Віддавати перевагу потіку по HTTP', be: 'Аддаваць перавагу патоку па HTTP', en: 'Prefer stream over HTTP', zh: '优先于 HTTP 流式传输' },
             online_mod_full_episode_title: { ru: 'Полный формат названия серии', uk: 'Повний формат назви серії', be: 'Поўны фармат назвы серыі', en: 'Full episode title format', zh: '完整剧集标题格式' },
             online_mod_save_last_balanser: { ru: 'Сохранять историю балансеров', uk: 'Зберігати історію балансерів', be: 'Захоўваць гісторыю балансараў', en: 'Save history of balancers', zh: '保存平衡器的历史记录' },
             online_mod_clear_last_balanser: { ru: 'Очистить историю балансеров', uk: 'Очистити історію балансерів', be: 'Ачысціць гісторыю балансараў', en: 'Clear history of balancers', zh: '清除平衡器的历史记录' },
             online_mod_rezka2_mirror: { ru: 'Url HDrezka', uk: 'Url HDrezka', be: 'Url HDrezka', en: 'Url HDrezka', zh: 'Url HDrezka' },
-            online_mod_rezka2_login: { ru: 'Войти в HDrezka', uk: 'Увійти до HDrezka', be: 'Увайсці ў HDrezka', en: 'Log in to HDrezka', zh: '登录HDrezka' },
-            online_mod_rezka2_logout: { ru: 'Выйти из HDrezka', uk: 'Вийти з HDrezka', be: 'Выйсці з HDrezka', en: 'Log out of HDrezka', zh: '注销HDrezka' },
-            online_mod_secret_password: { ru: 'Секретный пароль', uk: 'Секретний пароль', be: 'Сакрэтны пароль', en: 'Secret password', zh: '秘密密码' },
             online_mod_rezka2_name: { ru: 'Логин или email для HDrezka', uk: 'Логін чи email для HDrezka', be: 'Лагін ці email для HDrezka', en: 'Login or email for HDrezka', zh: 'HDrezka的登录名或电子邮件' },
             online_mod_rezka2_password: { ru: 'Пароль для HDrezka', uk: 'Пароль для HDrezka', be: 'Пароль для HDrezka', en: 'Password for HDrezka', zh: 'HDrezka的密码' },
             online_mod_rezka2_cookie: { ru: 'Куки для HDrezka', uk: 'Кукі для HDrezka', be: 'Кукі для HDrezka', en: 'Cookie for HDrezka', zh: 'HDrezka 的 Cookie' },
-            online_mod_authorization_required: { ru: 'Требуется авторизация', uk: 'Потрібна авторизація', be: 'Патрабуецца аўтарызацыя', en: 'Authorization required', zh: ' need authorization' },
+            online_mod_authorization_required: { ru: 'Требуется авторизация', uk: 'Потрібна авторизація', be: 'Патрабуецца аўтарызацыя', en: 'Authorization required', zh: '需要授权' },
             online_mod_unsupported_mirror: { ru: 'Неподдерживаемое зеркало', uk: 'Непідтримуване дзеркало', be: 'Непадтрымоўванае люстэрка', en: 'Unsupported mirror', zh: '不支持的镜子' },
+            online_mod_secret_password: { ru: 'Секретный пароль', uk: 'Секретний пароль', be: 'Сакрэтны пароль', en: 'Secret password', zh: '秘密密码' },
             online_mod_seasons_count: { ru: 'Сезонов', uk: 'Сезонів', be: 'Сезонаў', en: 'Seasons', zh: '季' },
             online_mod_episodes_count: { ru: 'Эпизодов', uk: 'Епізодів', be: 'Эпізодаў', en: 'Episodes', zh: '集' },
             online_mod_show_more: { ru: 'Показать ещё', uk: 'Показати ще', be: 'Паказаць яшчэ', en: 'Show more', zh: '展示更多' },
@@ -1634,6 +1688,7 @@
             page: 1
         });
     }
+
     function addSettingsOnlineMod() {
         if (Lampa.Settings.main && Lampa.Settings.main() && !Lampa.Settings.main().render().find('[data-component="online_mod"]').length) {
             var field = $(Lampa.Lang.translate("<div class=\"settings-folder selector\" data-component=\"online_mod\">\n            <div class=\"settings-folder__icon\">\n                <svg height=\"260\" viewBox=\"0 0 244 260\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n                <path d=\"M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7l0,0 L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88 L2,50.2L47.8,80L10,88z\" fill=\"white\"/>\n                </svg>\n            </div>\n            <div class=\"settings-folder__name\">#{online_mod_title_full}</div>\n        </div>"));
@@ -1878,8 +1933,8 @@
         };
         Lampa.Manifest.plugins = manifest;
 
-        var button = "<div class=\"full-start__button selector view--online_mod\" data-subtitle=\"\">\n        <svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" xmlns:svgjs=\"http://svgjs.com/svgjs\" version=\"1.1\" width=\"512\" height=\"512\" x=\"0\" y=\"0\" viewBox=\"0 0 244 260\" style=\"enable-background:new 0 0 512 512\" xml:space=\"preserve\" class=\"\">\n        <g xmlns=\"http://www.w3.org/2000/svg\">\n            <path d=\"M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7l0,0 L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88 L2,50.2L47.8,80L10,88z\" fill=\"currentColor\"/>\n        </g></svg>\n        <span>#{online_mod_title}</span>\n        </div>";
-        
+        var button = "<div class=\"full-start__button selector view--online_mod\" data-subtitle=\"\">\n        <svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" width=\"512\" height=\"512\" viewBox=\"0 0 244 260\" xml:space=\"preserve\"><g><path d=\"M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7l0,0 L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88 L2,50.2L47.8,80L10,88z\" fill=\"currentColor\"/></g></svg>\n        <span>#{online_mod_title}</span>\n        </div>";
+
         Lampa.Listener.follow('full', function (e) {
             if (e.type == 'complite') {
                 var btn = $(Lampa.Lang.translate(button));
@@ -1890,7 +1945,9 @@
                 e.object.activity.render().find('.view--torrent').after(btn);
             }
         });
+
         initSettings();
     }
+
     startPlugin();
 })();
