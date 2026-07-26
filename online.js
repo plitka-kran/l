@@ -1,4 +1,4 @@
-// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 33)
+// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 34)
 
 (function () {
     'use strict';
@@ -168,34 +168,17 @@
             season_id: ''
         };
         var error_message = '';
-        var premium_cache = {}; // Кеш премиум-статуса (быстрый, живёт в рамках текущего экземпляра)
+        var premium_cache = {}; // Кеш премиум-статуса — живёт только в рамках текущего
+        // открытия карточки (этот экземпляр пересоздаётся заново при выходе в меню
+        // и повторном заходе), поэтому свежий статус всегда перепроверяется, а не
+        // "залипает" на старом значении. Ключ учитывает сезон, т.к. на HDrezka
+        // премиум-статус озвучки может отличаться от сезона к сезону.
         var render_generation = 0; // Счётчик "поколений" рендера — защита от гонки:
         // если пользователь быстро переключает сезон/озвучку, старый (более
         // ранний) сетевой ответ не должен перетереть уже отрисованный новый выбор.
 
-        // Постоянный кэш премиум-статуса — переживает выход в меню и повторное
-        // открытие карточки (когда этот объект пересоздаётся заново), поэтому
-        // индикация ⭐ Premium не пропадает и не требует повторного выбора сезона.
-        // Ключ учитывает фильм + озвучку + сезон, т.к. на HDrezka премиум-статус
-        // озвучки может отличаться от сезона к сезону.
-        var PREMIUM_CACHE_STORAGE_KEY = 'online_mod_premium_status';
-        var PREMIUM_CACHE_TTL = 12 * 60 * 60 * 1000; // 12 часов
-
         function premiumCacheKey(voice_id, season_id) {
             return (extract.film_id || '') + '_' + voice_id + '_' + (season_id || '0');
-        }
-
-        function getPersistedPremium(key) {
-            var store = Lampa.Storage.cache(PREMIUM_CACHE_STORAGE_KEY, 3000, {});
-            var entry = store[key];
-            if (entry && (Date.now() - entry.ts) < PREMIUM_CACHE_TTL) return entry.value;
-            return undefined;
-        }
-
-        function setPersistedPremium(key, value) {
-            var store = Lampa.Storage.cache(PREMIUM_CACHE_STORAGE_KEY, 3000, {});
-            store[key] = { value: value, ts: Date.now() };
-            Lampa.Storage.set(PREMIUM_CACHE_STORAGE_KEY, store);
         }
 
         function checkErrorForm(str) {
@@ -326,10 +309,8 @@
 
                 if (!force) {
                     var cached = premium_cache[cache_key];
-                    if (cached === undefined) cached = getPersistedPremium(cache_key);
 
                     if (cached !== undefined) {
-                        premium_cache[cache_key] = cached;
                         results[voice_id] = cached;
                         checked++;
                         if (checked === total) {
@@ -349,10 +330,9 @@
                     }
                 };
 
-                // Подтверждённый ответ сервера — можно смело кэшировать (в т.ч. надолго).
+                // Подтверждённый ответ сервера — кэшируем в памяти на время текущего открытия.
                 var confirmed = function(isPremium) {
                     premium_cache[cache_key] = isPremium;
-                    setPersistedPremium(cache_key, isPremium);
                     finish(isPremium);
                 };
 
@@ -1036,7 +1016,6 @@
                             var block_season_id = extract.is_series ? element.media.season_id : null;
                             var block_key = premiumCacheKey(block_voice_id, block_season_id);
                             premium_cache[block_key] = true;
-                            setPersistedPremium(block_key, true);
                             error('Перевод доступен только с HDrezka Premium', true);
                             return;
                         }
