@@ -1,4 +1,4 @@
-// Online Mod v2.1 - Исправлена загрузка файлов при смене сезона
+// Online Mod v2.2 - Исправлена фильтрация переводов и сохранение выбора
 
 (function () {
     'use strict';
@@ -167,8 +167,8 @@
             season_id: ''
         };
         var error_message = '';
-        var is_loading_data = false;
-        var pending_episodes = {};
+        var all_voices_loaded = false;
+        var voice_cache = {};
 
         function checkPremium($element) {
             var premiumClasses = [
@@ -505,6 +505,7 @@
                 voice_name: '',
                 season_id: ''
             };
+            all_voices_loaded = false;
             component.loading(true);
             getEpisodes(success);
             component.saveChoice(choice);
@@ -512,17 +513,38 @@
 
         this.filter = function (type, a, b) {
             if (a.stype == 'season') {
+                var old_season_id = choice.season_id;
                 choice.season = b.index;
                 choice.season_id = filter_items.season_id[b.index];
-                // Сбрасываем озвучку и принудительно перезагружаем данные для сезона
-                choice.voice = 0;
-                choice.voice_name = '';
-                // Очищаем кеш для текущего сезона
-                var season_id = choice.season_id;
-                if (season_id) {
-                    pending_episodes[season_id] = false;
+                
+                // Если переключились на другой сезон, пытаемся сохранить выбор озвучки
+                if (old_season_id && choice.season_id !== old_season_id) {
+                    var old_voice_name = choice.voice_name;
+                    var available_voices = getAvailableVoicesForSeason(choice.season_id);
+                    var found = false;
+                    
+                    // Ищем такой же перевод в новом сезоне
+                    if (old_voice_name) {
+                        available_voices.forEach(function(v, idx) {
+                            if (v.clean_name === old_voice_name || v.name === old_voice_name) {
+                                choice.voice = idx;
+                                choice.voice_name = v.name;
+                                found = true;
+                            }
+                        });
+                    }
+                    
+                    // Если не нашли - выбираем первый доступный
+                    if (!found && available_voices.length > 0) {
+                        choice.voice = 0;
+                        choice.voice_name = available_voices[0].name;
+                    } else if (!found) {
+                        choice.voice = 0;
+                        choice.voice_name = '';
+                    }
                 }
             }
+            
             if (a.stype == 'voice') {
                 var current_voices = getAvailableVoicesForSeason(choice.season_id);
                 if (current_voices[b.index]) {
@@ -530,9 +552,9 @@
                     choice.voice = b.index;
                 }
             }
+            
             component.reset();
             component.loading(true);
-            // Принудительно перезагружаем эпизоды для выбранного сезона
             getEpisodesForSeason(choice.season_id, function() {
                 filter();
                 append(filtred());
@@ -567,6 +589,7 @@
         }
 
         function success() {
+            all_voices_loaded = true;
             component.loading(false);
             filter();
             append(filtred());
@@ -724,30 +747,18 @@
                 });
             }
             extract.voice_data[translator_id] = data;
+            
+            // Обновляем кеш
+            voice_cache[translator_id] = data;
         }
 
-        // ============ ЗАГРУЗКА ЭПИЗОДОВ ДЛЯ КОНКРЕТНОГО СЕЗОНА ============
+        // ============ ЗАГРУЗКА ЭПИЗОДОВ ============
         function getEpisodesForSeason(season_id, callback) {
             if (!extract.is_series || !extract.voice.length) {
                 if (callback) callback();
                 return;
             }
 
-            // Проверяем, загружены ли уже данные для этого сезона
-            var all_loaded = true;
-            extract.voice.forEach(function (v) {
-                var v_data = extract.voice_data[v.id];
-                if (!v_data || !v_data.episode || v_data.episode.length === 0) {
-                    all_loaded = false;
-                }
-            });
-
-            if (all_loaded) {
-                if (callback) callback();
-                return;
-            }
-
-            // Загружаем данные для всех переводов
             var pending = 0;
             var total = extract.voice.length;
             var timeout = setTimeout(function() {
@@ -760,13 +771,14 @@
                 pending++;
                 if (pending >= total) {
                     clearTimeout(timeout);
+                    all_voices_loaded = true;
                     if (callback) callback();
                 }
             }
 
             extract.voice.forEach(function (v) {
                 var translator_id = v.id;
-                if (extract.voice_data[translator_id] && extract.voice_data[translator_id].episode && extract.voice_data[translator_id].episode.length > 0) {
+                if (voice_cache[translator_id] || (extract.voice_data[translator_id] && extract.voice_data[translator_id].episode && extract.voice_data[translator_id].episode.length > 0)) {
                     checkDone();
                     return;
                 }
@@ -782,6 +794,7 @@
                     checkDone();
                 }, function () {
                     extract.voice_data[translator_id] = { season: [], episode: [] };
+                    voice_cache[translator_id] = { season: [], episode: [] };
                     checkDone();
                 }, postdata, {
                     withCredentials: true,
@@ -796,14 +809,22 @@
 
         function getAvailableVoicesForSeason(season_id) {
             if (!season_id) return extract.voice;
-            return extract.voice.filter(function (v) {
-                var v_data = extract.voice_data[v.id];
-                if (!v_data || !v_data.season || !v_data.season.length) {
-                    // Если данные не загружены - считаем что перевод доступен
-                    return true;
-                }
-                return v_data.season.some(function (s) { return s.id == season_id; });
-            });
+            
+            // Если все переводы загружены - фильтруем
+            if (all_voices_loaded) {
+                return extract.voice.filter(function (v) {
+                    var v_data = voice_cache[v.id] || extract.voice_data[v.id];
+                    if (!v_data || !v_data.season || !v_data.season.length) {
+                        return false;
+                    }
+                    return v_data.season.some(function (s) { 
+                        return s.id == season_id; 
+                    });
+                });
+            }
+            
+            // Если не все загружены - показываем все переводы
+            return extract.voice;
         }
 
         function filter() {
@@ -822,12 +843,29 @@
         
             if (!filter_items.season[choice.season]) choice.season = 0;
             
+            // Проверяем, есть ли выбранный перевод в доступных
             if (choice.voice_name) {
                 var inx = voice_names.indexOf(choice.voice_name);
-                if (inx !== -1) choice.voice = inx;
-                else choice.voice = 0;
+                if (inx !== -1) {
+                    choice.voice = inx;
+                } else {
+                    // Если нет - ищем по чистому названию
+                    var found = false;
+                    available_voices.forEach(function(v, idx) {
+                        if (v.clean_name === choice.voice_name) {
+                            choice.voice = idx;
+                            choice.voice_name = v.name;
+                            found = true;
+                        }
+                    });
+                    if (!found) {
+                        choice.voice = 0;
+                        choice.voice_name = voice_names[0] || '';
+                    }
+                }
             } else if (!filter_items.voice[choice.voice]) {
                 choice.voice = 0;
+                choice.voice_name = voice_names[0] || '';
             }
         
             var filter_to_send = {
@@ -857,7 +895,6 @@
 
                 network.silent(url, function (json) {
                     extractEpisodes(json, element.media.translator_id);
-                    // После загрузки пробуем получить поток
                     getStream(element, call, error);
                 }, function () {
                     error('Не удалось загрузить данные для этого перевода');
@@ -964,25 +1001,27 @@
                     return ep.season_id == season_id;
                 });
 
-                if (filtered_episodes.length === 0) {
-                    // Если нет эпизодов для этого сезона - пробуем другие переводы
-                    var found_any = false;
-                    extract.voice.forEach(function(v) {
-                        if (found_any) return;
+                // Если нет эпизодов для этого сезона - пробуем другие переводы
+                if (filtered_episodes.length === 0 && available_voices.length > 0) {
+                    // Ищем первый перевод, у которого есть эпизоды для этого сезона
+                    for (var i = 0; i < available_voices.length; i++) {
+                        var v = available_voices[i];
                         var v_data = extract.voice_data[v.id];
                         if (v_data && v_data.episode) {
                             var eps = v_data.episode.filter(function(ep) {
                                 return ep.season_id == season_id;
                             });
                             if (eps.length > 0) {
-                                found_any = true;
                                 filtered_episodes = eps;
                                 voice_clean = v.clean_name || v.name || '';
                                 is_premium = v.is_premium || false;
                                 translator_id = v.id;
+                                choice.voice = i;
+                                choice.voice_name = v.name;
+                                break;
                             }
                         }
-                    });
+                    }
                 }
 
                 filtered_episodes.forEach(function (episode) {
@@ -1756,7 +1795,7 @@
     var online_loading = false;
 
     function logApp() {
-        console.log('Online Mod v2.1');
+        console.log('Online Mod v2.2');
         console.log('App', 'is MSX:', isMSX);
         console.log('App', 'is Tizen:', isTizen);
         console.log('App', 'is iframe:', isIFrame);
