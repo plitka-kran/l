@@ -1,4 +1,4 @@
-// Online Mod (без прокси) с премиум-индикацией 86
+// Online Mod (без прокси) с премиум-индикацией 87
 
 (function () {
     'use strict';
@@ -526,7 +526,7 @@
             append(filtred());
         }
 
-        // ============ ОСНОВНОЕ ИЗМЕНЕНИЕ - ПАРСИНГ ПРЕМИУМ ПЕРЕВОДОВ ============
+        // ============ ПАРСИНГ ПЕРЕВОДОВ С ПРОВЕРКОЙ НА PREMIUM ============
         function extractData(str) {
             extract.voice = [];
             extract.season = [];
@@ -560,7 +560,7 @@
                 defVoice = { name: devVoiceName, id: cdnMovie[2], is_camrip: cdnMovie[3], is_ads: cdnMovie[4], is_director: cdnMovie[5] };
             }
             
-            // ============ ПАРСИНГ ПЕРЕВОДОВ С ПРОВЕРКОЙ НА PREMIUM ============
+            // ============ ПАРСИНГ ПЕРЕВОДОВ ============
             var voices = str.match(/(<ul id="translators-list".*?<\/ul>)/);
             if (voices) {
                 var select = $(voices[1]);
@@ -574,17 +574,13 @@
                         if (lang && title.indexOf(lang) == -1) title += ' (' + lang + ')';
                     });
                     
-                    // ===== ПРОВЕРКА НА PREMIUM =====
-                    // Класс b-prem_translator указывает на премиум-перевод
+                    // ===== ПРОВЕРКА НА PREMIUM (класс b-prem_translator) =====
                     var is_premium = $this.hasClass('b-prem_translator') || 
                                     $this.hasClass('premium') || 
                                     $this.hasClass('premium-translator') ||
                                     $this.attr('data-premium') === 'true';
                     
-                    // Если премиум - добавляем звёздочку в название
-                    if (is_premium) {
-                        title += ' ⭐';
-                    }
+                    // НЕ ДОБАВЛЯЕМ ЗВЁЗДОЧКУ В НАЗВАНИЕ (чтобы не было дублирования)
                     
                     extract.voice.push({
                         name: title,
@@ -814,7 +810,7 @@
                         filtred.push({
                             title: component.formatEpisodeTitle(episode.season_id, null, episode.name),
                             quality: '360p ~ 1080p',
-                            info: ' / ' + voice + (is_premium ? ' ⭐' : ''), // ЗВЁЗДОЧКА
+                            info: ' / ' + voice + (is_premium ? ' ⭐' : ''), // ЗВЁЗДОЧКА ТОЛЬКО ЗДЕСЬ
                             season: parseInt(episode.season_id),
                             episode: parseInt(episode.episode_id),
                             media: episode,
@@ -827,7 +823,7 @@
                     filtred.push({
                         title: voice.name || select_title,
                         quality: '360p ~ 1080p',
-                        info: voice.is_premium ? ' ⭐' : '', // ЗВЁЗДОЧКА
+                        info: voice.is_premium ? ' ⭐' : '', // ЗВЁЗДОЧКА ТОЛЬКО ЗДЕСЬ
                         media: voice,
                         is_premium: voice.is_premium || false
                     });
@@ -836,7 +832,7 @@
             return filtred;
         }
 
-        // ============ ОТОБРАЖЕНИЕ С ПРЕМИУМ-СТИЛЯМИ ============
+        // ============ ОТОБРАЖЕНИЕ СПИСКА ============
         function append(items) {
             component.reset();
             var viewed = Lampa.Storage.cache('online_view', 5000, []);
@@ -852,10 +848,9 @@
                 // Получаем HTML элемента
                 var item = $(Lampa.Template.get('online_mod', element));
                 
-                // Если премиум - добавляем класс и звёздочку
+                // Если премиум - добавляем класс для стилизации (НО НЕ ДОБАВЛЯЕМ ЛИШНЮЮ ЗВЁЗДОЧКУ)
                 if (element.is_premium) {
                     item.addClass('premium');
-                    // Добавляем бейдж премиум
                     item.find('.online__title').css('color', '#FFD700');
                     item.find('.online__quality').append('<span style="color: #FFD700; margin-left: 5px;"> Premium</span>');
                 }
