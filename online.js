@@ -1,16 +1,14 @@
-// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 49)
+// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 50)
 
 (function () {
     'use strict';
 
     // --- Утилиты ---
     function startsWith(str, searchString) {
-        if (!str) return false;
         return str.lastIndexOf(searchString, 0) === 0;
     }
 
     function endsWith(str, searchString) {
-        if (!str) return false;
         var start = str.length - searchString.length;
         if (start < 0) return false;
         return str.indexOf(searchString, start) === start;
@@ -103,30 +101,22 @@
         var active = 0;
         var finished = 0;
         var total = items.length;
-        if (!total) { onAllDone(); return; }
-        
-        var cancelled = false;
+        if (!total) { if (onAllDone) onAllDone(); return; }
 
         function tick() {
-            if (cancelled) return;
             if (idx < total && active < limit) {
                 active++;
                 var item = items[idx++];
                 worker(item, function () {
-                    if (cancelled) return;
                     active--;
                     finished++;
-                    if (finished === total) onAllDone();
+                    if (finished === total && onAllDone) onAllDone();
                 });
             }
-            if (idx < total && !cancelled) setTimeout(tick, stagger);
+            if (idx < total) setTimeout(tick, stagger);
         }
 
         tick();
-        
-        return function() {
-            cancelled = true;
-        };
     }
 
     // --- Настройки ---
@@ -138,43 +128,10 @@
         return url;
     }
 
-    function decodeSecret(input, password) {
-        var result = '';
-        password = (password || Lampa.Storage.get('online_mod_secret_password', '')) + '';
-        if (input && password) {
-            var hash = salt('123456789' + password);
-            while (hash.length < input.length) {
-                hash += hash;
-            }
-            var i = 0;
-            while (i < input.length) {
-                result += String.fromCharCode(input[i] ^ hash.charCodeAt(i));
-                i++;
-            }
-        }
-        return result;
-    }
-
-    function salt(input) {
-        var str = (input || '') + '';
-        var hash = 0;
-        for (var i = 0; i < str.length; i++) {
-            var c = str.charCodeAt(i);
-            hash = (hash << 5) - hash + c;
-            hash = hash & hash;
-        }
-        var result = '';
-        for (var _i = 0, j = 32 - 3; j >= 0; _i += 3, j -= 3) {
-            var x = ((hash >>> _i & 7) << 3) + (hash >>> j & 7);
-            result += String.fromCharCode(x < 26 ? 97 + x : x < 52 ? 39 + x : x - 4);
-        }
-        return result;
-    }
-
     // --- Компонент Rezka2 ---
     function rezka2(component, _object) {
         var network = new Lampa.Reguest();
-        var extract = null;
+        var extract = {};
         var object = _object;
         var select_title = '';
         var prefer_http = Lampa.Storage.field('online_mod_prefer_http') === true;
@@ -203,37 +160,17 @@
         var error_message = '';
         var premium_cache = {};
         var render_generation = 0;
-        var isDestroyed = false;
-        var activeRequests = [];
-        var pendingCallbacks = [];
+        var destroyed = false;
 
-        function safeExtract(callback) {
-            return function() {
-                if (isDestroyed || !extract) {
-                    if (callback) callback(null);
-                    return;
-                }
-                callback.apply(null, arguments);
-            };
-        }
-
-        function cancelAllRequests() {
-            activeRequests.forEach(function(req) {
-                try {
-                    if (req && req.clear) req.clear();
-                } catch(e) {}
-            });
-            activeRequests = [];
-            pendingCallbacks = [];
+        function isAlive() {
+            return !destroyed && extract !== null;
         }
 
         function premiumCacheKey(voice_id, season_id) {
-            if (!extract) return '';
-            return (extract.film_id || '') + '_' + voice_id + '_' + (season_id || '0');
+            return (extract && extract.film_id || '') + '_' + voice_id + '_' + (season_id || '0');
         }
 
         function checkErrorForm(str) {
-            if (!str) return;
             var login_form = str.match(/<form id="check-form" class="check-form" method="post" action="\/ajax\/login\/">/);
             if (login_form) {
                 error_message = Lampa.Lang.translate('online_mod_authorization_required') + ' HDrezka';
@@ -256,7 +193,7 @@
         }
 
         function decode(data) {
-            if (!data || !startsWith(data, '#')) return data;
+            if (!startsWith(data, '#')) return data;
             var enc = function (str) {
                 return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, function (match, p1) {
                     return String.fromCharCode('0x' + p1);
@@ -325,23 +262,18 @@
         }
 
         function checkAllPremium(voice_ids, season_id, callback, force) {
-            if (isDestroyed || !extract) {
-                if (callback) callback({});
-                return;
-            }
-
+            if (!isAlive()) return;
             var total = voice_ids.length;
             var checked = 0;
             var results = {};
-            var isCancelled = false;
 
             if (total === 0) {
                 if (callback) callback(results);
                 return;
             }
-            
+
             var fallbackTimer = setTimeout(function() {
-                if (isCancelled || isDestroyed || !extract) return;
+                if (!isAlive()) return;
                 if (checked < total) {
                     var unfinished = voice_ids.filter(function (id) {
                         return results[id] === undefined;
@@ -350,18 +282,14 @@
                     results.__timedOut = unfinished;
                     if (callback) callback(results);
                 }
-            }, Math.max(12000, total * 4000));
+            }, 10000);
 
             var current_season_id = season_id;
-            var PREMIUM_CONCURRENCY = 2;
-            var PREMIUM_STAGGER_MS = 250;
+            var PREMIUM_CONCURRENCY = 3;
+            var PREMIUM_STAGGER_MS = 150;
 
-            var cancelLimited = runLimited(voice_ids, PREMIUM_CONCURRENCY, PREMIUM_STAGGER_MS, function (voice_id, queueDone) {
-                if (isCancelled || isDestroyed || !extract) {
-                    queueDone();
-                    return;
-                }
-
+            runLimited(voice_ids, PREMIUM_CONCURRENCY, PREMIUM_STAGGER_MS, function (voice_id, queueDone) {
+                if (!isAlive()) { queueDone(); return; }
                 var cache_key = premiumCacheKey(voice_id, current_season_id);
 
                 if (!force) {
@@ -371,7 +299,7 @@
                         checked++;
                         if (checked === total) {
                             clearTimeout(fallbackTimer);
-                            if (callback) callback(results);
+                            if (isAlive() && callback) callback(results);
                         }
                         queueDone();
                         return;
@@ -379,31 +307,23 @@
                 }
 
                 var finish = function(isPremium) {
-                    if (isCancelled || isDestroyed) {
-                        queueDone();
-                        return;
-                    }
+                    if (!isAlive()) { queueDone(); return; }
                     results[voice_id] = isPremium;
                     checked++;
                     if (checked === total) {
                         clearTimeout(fallbackTimer);
-                        if (callback) callback(results);
+                        if (isAlive() && callback) callback(results);
                     }
                     queueDone();
                 };
 
                 var confirmed = function(isPremium) {
-                    if (isCancelled || isDestroyed) return;
-                    premium_cache[cache_key] = isPremium;
+                    if (isAlive()) premium_cache[cache_key] = isPremium;
                     finish(isPremium);
                 };
 
                 var attempt = function(retries_left) {
-                    if (isCancelled || isDestroyed || !extract) {
-                        finish(false);
-                        return;
-                    }
-
+                    if (!isAlive()) { queueDone(); return; }
                     var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
                     var postdata = 'id=' + encodeURIComponent(extract.film_id);
                     postdata += '&translator_id=' + encodeURIComponent(voice_id);
@@ -418,15 +338,10 @@
                     }
 
                     var req = new Lampa.Reguest();
-                    activeRequests.push(req);
-                    
-                    req.timeout(3000);
+                    req.timeout(3500);
+
                     req.silent(url, function (json) {
-                        activeRequests = activeRequests.filter(function(r) { return r !== req; });
-                        if (isCancelled || isDestroyed || !extract) {
-                            finish(false);
-                            return;
-                        }
+                        if (!isAlive()) { queueDone(); return; }
                         var isPremium = false;
                         if (json && json.url) {
                             var video = decode(json.url);
@@ -444,17 +359,12 @@
                             }
                         }
                         confirmed(isPremium);
-                    }, function (a, c) {
-                        activeRequests = activeRequests.filter(function(r) { return r !== req; });
-                        if (isCancelled || isDestroyed || !extract) {
-                            finish(false);
-                            return;
-                        }
+                    }, function () {
+                        if (!isAlive()) { queueDone(); return; }
                         if (retries_left > 0) {
-                            var backoff = (3 - retries_left) * 400 + Math.floor(Math.random() * 300);
                             setTimeout(function () {
                                 attempt(retries_left - 1);
-                            }, backoff);
+                            }, 300);
                         } else {
                             finish(false);
                         }
@@ -465,26 +375,14 @@
                 };
 
                 attempt(1);
-            }, function() {
-                // Все запросы завершены
             });
-
-            // Функция отмены
-            return function() {
-                isCancelled = true;
-                clearTimeout(fallbackTimer);
-                if (cancelLimited) cancelLimited();
-            };
         }
 
         this.search = function (_object, kinopoisk_id, data) {
             var _this = this;
             object = _object;
             select_title = object.search || object.movie.title;
-            if (this.wait_similars && data && data[0] && data[0].is_similars) {
-                getPage(data[0].link);
-                return;
-            }
+            if (this.wait_similars && data && data[0].is_similars) return getPage(data[0].link);
             error_message = '';
             var search_date = object.search_date || !object.clarification && (object.movie.release_date || object.movie.first_air_date || object.movie.last_air_date) || '0000';
             var search_year = parseInt((search_date + '').slice(0, 4));
@@ -499,12 +397,11 @@
             var more_url = embed + 'search/?do=search&subaction=search';
 
             var query_more = function (query, page, data, callback) {
-                if (isDestroyed) return;
                 var url = more_url + '&q=' + encodeURIComponent(query) + '&page=' + encodeURIComponent(page);
                 network.clear();
-                network.timeout(8000);
+                network.timeout(10000);
                 network.silent(url, function (str) {
-                    if (isDestroyed) return;
+                    if (!isAlive()) return;
                     str = (str || '').replace(/\n/g, '');
                     checkErrorForm(str);
                     var links = str.match(/<div class="b-content__inline_item-link">\s*<a [^>]*>[^<]*<\/a>\s*<div>[^<]*<\/div>\s*<\/div>/g);
@@ -531,10 +428,9 @@
                         });
                         data = data.concat(items);
                     }
-                    if (callback && !isDestroyed) callback(data, have_more);
+                    if (callback && isAlive()) callback(data, have_more);
                 }, function (a, c) {
-                    if (isDestroyed) return;
-                    component.empty(network.errorDecode(a, c));
+                    if (isAlive()) component.empty(network.errorDecode(a, c));
                 }, false, {
                     dataType: 'text',
                     withCredentials: true,
@@ -543,12 +439,11 @@
             };
 
             var search_more = function (params) {
-                if (isDestroyed) return;
                 var items = params.items || [];
                 var query = params.query || '';
                 var page = params.page || 1;
                 query_more(query, page, items, function (items, have_more) {
-                    if (isDestroyed) return;
+                    if (!isAlive()) return;
                     if (items && items.length) {
                         _this.wait_similars = true;
                         items.forEach(function (c) {
@@ -570,7 +465,7 @@
             };
 
             var display = function (links, have_more, query) {
-                if (isDestroyed) return;
+                if (!isAlive()) return;
                 if (links && links.length && links.forEach) {
                     var is_sure = false;
                     var items = links.map(function (l) {
@@ -665,20 +560,19 @@
             };
 
             var query_search = function (query, data, callback) {
-                if (isDestroyed) return;
                 var postdata = 'q=' + encodeURIComponent(query);
                 network.clear();
-                network.timeout(8000);
+                network.timeout(10000);
                 network.silent(url, function (str) {
-                    if (isDestroyed) return;
+                    if (!isAlive()) return;
                     str = (str || '').replace(/\n/g, '');
                     checkErrorForm(str);
                     var links = str.match(/<li><a href=.*?<\/li>/g);
                     var have_more = str.indexOf('<a class="b-search__live_all"') !== -1;
                     if (links && links.length) data = data.concat(links);
-                    if (callback && !isDestroyed) callback(data, have_more, query);
+                    if (callback && isAlive()) callback(data, have_more, query);
                 }, function (a, c) {
-                    if (isDestroyed) return;
+                    if (!isAlive()) return;
                     if (a.status == 403 && a.responseText) {
                         var str = (a.responseText || '').replace(/\n/g, '');
                         checkErrorForm(str);
@@ -693,9 +587,7 @@
             };
 
             var query_title_search = function () {
-                if (isDestroyed) return;
                 query_search(component.cleanTitle(select_title), [], function (data, have_more, query) {
-                    if (isDestroyed) return;
                     if (data && data.length && data.forEach) display(data, have_more, query);
                     else display([]);
                 });
@@ -709,7 +601,6 @@
         };
 
         this.reset = function () {
-            if (isDestroyed) return;
             component.reset();
             choice = {
                 season: 0,
@@ -719,14 +610,11 @@
             };
             premium_cache = {};
             component.loading(true);
-            getEpisodes(function() {
-                if (!isDestroyed) success();
-            });
+            getEpisodes(success);
             component.saveChoice(choice);
         };
 
         this.filter = function (type, a, b) {
-            if (isDestroyed || !extract) return;
             choice[a.stype] = b.index;
             if (a.stype == 'voice') {
                 var raw_name = filter_items.voice[b.index] || '';
@@ -736,12 +624,10 @@
             
             component.reset();
             component.loading(true);
-
             premium_cache = {};
-            getEpisodes(function() {
-                if (!isDestroyed && extract) {
-                    checkPremiumAndRender(true);
-                }
+
+            getEpisodes(function () {
+                checkPremiumAndRender(true);
             });
 
             component.saveChoice(choice);
@@ -749,31 +635,25 @@
         };
 
         this.destroy = function () {
-            isDestroyed = true;
-            cancelAllRequests();
+            destroyed = true;
             network.clear();
             extract = null;
             premium_cache = {};
-            voice_list_current = [];
         };
 
         function getPage(url) {
-            if (isDestroyed) return;
             url = fixLink(url, ref);
             network.clear();
-            network.timeout(8000);
+            network.timeout(10000);
             network.silent(url, function (str) {
-                if (isDestroyed) return;
+                if (!isAlive()) return;
                 extractData(str);
-                if (extract && extract.film_id) {
-                    getEpisodes(function() {
-                        if (!isDestroyed && extract) success();
-                    });
+                if (extract.film_id) {
+                    getEpisodes(success);
                 } else if (error_message) component.empty(error_message);
                 else component.emptyForQuery(select_title);
             }, function (a, c) {
-                if (isDestroyed) return;
-                component.empty(network.errorDecode(a, c));
+                if (isAlive()) component.empty(network.errorDecode(a, c));
             }, false, {
                 dataType: 'text',
                 withCredentials: true,
@@ -782,7 +662,6 @@
         }
 
         function sortVoicesByPremium(list, premium_results) {
-            if (!list || !list.length) return list;
             var mode = Lampa.Storage.get('online_mod_premium_sort', 'default');
             if (mode !== 'premium_first' && mode !== 'premium_last') return list;
 
@@ -797,11 +676,7 @@
         }
 
         function checkPremiumAndRender(force, onDone) {
-            if (isDestroyed || !extract) {
-                if (onDone) onDone();
-                return;
-            }
-
+            if (!isAlive()) return;
             var my_gen = ++render_generation;
             var voices_source = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
             var voice_ids = voices_source.map(function (v) { return v.id; });
@@ -809,37 +684,15 @@
             if (voice_ids.length > 0) {
                 component.loading(true);
                 checkAllPremium(voice_ids, currentSeasonId(), function (results) {
-                    if (isDestroyed || !extract || my_gen !== render_generation) {
-                        return;
-                    }
+                    if (!isAlive() || my_gen !== render_generation) return;
                     component.loading(false);
-                    
                     var sorted = sortVoicesByPremium(voices_source, results);
-                    if (extract.is_series && voice_list_current.length) {
-                        voice_list_current = sorted;
-                    } else {
-                        extract.voice = sorted;
-                    }
-                    
+                    if (extract.is_series && voice_list_current.length) voice_list_current = sorted;
+                    else extract.voice = sorted;
                     filter(results);
                     var items = filtred(results);
                     append(items);
                     if (onDone) onDone();
-
-                    if (results.__timedOut && results.__timedOut.length) {
-                        var retry_gen = my_gen;
-                        var retry_season = currentSeasonId();
-                        setTimeout(function () {
-                            if (isDestroyed || !extract || retry_gen !== render_generation) return;
-                            checkAllPremium(results.__timedOut, retry_season, function (retry_results) {
-                                if (isDestroyed || !extract || retry_gen !== render_generation) return;
-                                for (var vid in retry_results) {
-                                    if (vid === '__timedOut') continue;
-                                    if (retry_results[vid]) markPremiumDiscovered(items, vid);
-                                }
-                            }, true);
-                        }, 1500);
-                    }
                 }, force);
             } else {
                 component.loading(false);
@@ -850,70 +703,22 @@
             }
         }
 
-        function prefetchOtherSeasonsInBackground() {
-            if (isDestroyed || !extract || !extract.is_series || !extract.season || extract.season.length < 2) return;
-
-            var current = currentSeasonId();
-            var others = extract.season
-                .map(function (s) { return s.id; })
-                .filter(function (id) { return id != current; });
-
-            var MAX_SEASONS_TO_PREFETCH = 6;
-            others = others.slice(0, MAX_SEASONS_TO_PREFETCH);
-
-            var i = 0;
-            function next() {
-                if (isDestroyed || !extract || i >= others.length) return;
-                var season_id = others[i++];
-                ensureAllVoiceData(season_id, function () {
-                    if (isDestroyed || !extract) return;
-                    var voices_for_season = availableVoicesForSeason(season_id);
-                    var ids = voices_for_season.map(function (v) { return v.id; });
-                    checkAllPremium(ids, season_id, function() {}, false);
-                    setTimeout(next, 400);
-                });
-            }
-
-            setTimeout(next, 600);
-        }
-
         function success() {
-            if (isDestroyed || !extract) return;
+            if (!isAlive()) return;
             component.loading(false);
-            checkPremiumAndRender(false, function() {
-                if (!isDestroyed) prefetchOtherSeasonsInBackground();
-            });
+            checkPremiumAndRender(false);
         }
 
         function extractData(str) {
-            if (isDestroyed) return;
-            if (!str) {
-                extract = { 
-                    voice: [], 
-                    season: [], 
-                    episode: [], 
-                    voice_data: {}, 
-                    voice_season_list: {}, 
-                    is_series: false, 
-                    film_id: '', 
-                    favs: '',
-                    blocked: false 
-                };
-                return;
-            }
-            
-            var newExtract = {
-                voice: [],
-                season: [],
-                episode: [],
-                voice_data: {},
-                voice_season_list: {},
-                is_series: false,
-                film_id: '',
-                favs: '',
-                blocked: false
-            };
-            
+            if (!isAlive()) return;
+            extract.voice = [];
+            extract.season = [];
+            extract.episode = [];
+            extract.voice_data = {};
+            extract.voice_season_list = {};
+            extract.is_series = false;
+            extract.film_id = '';
+            extract.favs = '';
             str = (str || '').replace(/\n/g, '');
             checkErrorForm(str);
             var translation = str.match(/<h2>В переводе<\/h2>:<\/td>\s*(<td>.*?<\/td>)/);
@@ -926,13 +731,13 @@
             if (!devVoiceName) devVoiceName = 'Оригинал';
             var defVoice, defSeason, defEpisode;
             if (cdnSeries) {
-                newExtract.is_series = true;
-                newExtract.film_id = cdnSeries[1];
+                extract.is_series = true;
+                extract.film_id = cdnSeries[1];
                 defVoice = { name: devVoiceName, id: cdnSeries[2] };
                 defSeason = { name: 'Сезон ' + cdnSeries[3], id: cdnSeries[3] };
                 defEpisode = { name: 'Серия ' + cdnSeries[4], season_id: cdnSeries[3], episode_id: cdnSeries[4] };
             } else if (cdnMovie) {
-                newExtract.film_id = cdnMovie[1];
+                extract.film_id = cdnMovie[1];
                 defVoice = { name: devVoiceName, id: cdnMovie[2], is_camrip: cdnMovie[3], is_ads: cdnMovie[4], is_director: cdnMovie[5] };
             }
             var voices = str.match(/(<ul id="translators-list".*?<\/ul>)/);
@@ -944,7 +749,7 @@
                         var lang = ($(this).attr('title') || $(this).attr('alt') || '').trim();
                         if (lang && title.indexOf(lang) == -1) title += ' (' + lang + ')';
                     });
-                    newExtract.voice.push({
+                    extract.voice.push({
                         name: title,
                         id: $(this).attr('data-translator_id'),
                         is_camrip: $(this).attr('data-camrip'),
@@ -953,51 +758,46 @@
                     });
                 });
             }
-            if (!newExtract.voice.length && defVoice) {
-                newExtract.voice.push(defVoice);
+            if (!extract.voice.length && defVoice) {
+                extract.voice.push(defVoice);
             }
-            if (newExtract.is_series) {
+            if (extract.is_series) {
                 var seasons = str.match(/(<ul id="simple-seasons-tabs".*?<\/ul>)/);
                 if (seasons) {
                     var _select = $(seasons[1]);
                     $('.b-simple_season__item', _select).each(function () {
-                        newExtract.season.push({
+                        extract.season.push({
                             name: $(this).text(),
                             id: $(this).attr('data-tab_id')
                         });
                     });
                 }
-                if (!newExtract.season.length && defSeason) {
-                    newExtract.season.push(defSeason);
+                if (!extract.season.length && defSeason) {
+                    extract.season.push(defSeason);
                 }
                 var episodes = str.match(/(<div id="simple-episodes-tabs".*?<\/div>)/);
                 if (episodes) {
                     var _select2 = $(episodes[1]);
                     $('.b-simple_episode__item', _select2).each(function () {
-                        newExtract.episode.push({
+                        extract.episode.push({
                             name: $(this).text(),
                             season_id: $(this).attr('data-season_id'),
                             episode_id: $(this).attr('data-episode_id')
                         });
                     });
                 }
-                if (!newExtract.episode.length && defEpisode) {
-                    newExtract.episode.push(defEpisode);
+                if (!extract.episode.length && defEpisode) {
+                    extract.episode.push(defEpisode);
                 }
             }
             var favs = str.match(/<input type="hidden" id="ctrl_favs" value="([^"]*)"/);
-            if (favs) newExtract.favs = favs[1];
+            if (favs) extract.favs = favs[1];
             var blocked = str.match(/class="b-player__restricted__block_message"/);
-            if (blocked) newExtract.blocked = true;
-            
-            extract = newExtract;
+            if (blocked) extract.blocked = true;
         }
 
         function fetchVoiceData(translator_id, season_id, callback) {
-            if (isDestroyed || !extract) {
-                if (callback) callback({ season: [], episode: [] });
-                return;
-            }
+            if (!isAlive()) return;
             var key = translator_id + '::' + (season_id || '');
             if (extract.voice_data[key]) {
                 if (callback) callback(extract.voice_data[key]);
@@ -1010,40 +810,22 @@
             postdata += '&action=get_episodes';
 
             var attempt = function (retries_left) {
-                if (isDestroyed || !extract) {
-                    if (callback) callback({ season: [], episode: [] });
-                    return;
-                }
+                if (!isAlive()) return;
                 var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
                 var req = new Lampa.Reguest();
-                activeRequests.push(req);
-                
-                req.timeout(6000);
+                req.timeout(8000);
                 req.silent(url, function (json) {
-                    activeRequests = activeRequests.filter(function(r) { return r !== req; });
-                    if (isDestroyed || !extract) {
-                        if (callback) callback({ season: [], episode: [] });
-                        return;
-                    }
+                    if (!isAlive()) return;
                     var data = parseVoiceEpisodes(json, translator_id, key);
                     if (callback) callback(data);
-                }, function (a, c) {
-                    activeRequests = activeRequests.filter(function(r) { return r !== req; });
-                    if (isDestroyed || !extract) {
-                        if (callback) callback({ season: [], episode: [] });
-                        return;
-                    }
+                }, function () {
+                    if (!isAlive()) return;
                     if (retries_left > 0) {
-                        var backoff = (2 - retries_left) * 400 + Math.floor(Math.random() * 300);
-                        setTimeout(function () { 
-                            attempt(retries_left - 1); 
-                        }, backoff);
+                        setTimeout(function () { attempt(retries_left - 1); }, 400);
                     } else {
-                        if (extract) {
-                            var empty = { season: [], episode: [] };
-                            extract.voice_data[key] = empty;
-                        }
-                        if (callback) callback({ season: [], episode: [] });
+                        var empty = { season: [], episode: [] };
+                        if (extract) extract.voice_data[key] = empty;
+                        if (callback) callback(empty);
                     }
                 }, postdata, {
                     withCredentials: true,
@@ -1056,6 +838,7 @@
 
         function parseVoiceEpisodes(json, translator_id, key) {
             var data = { season: [], episode: [] };
+            if (!isAlive()) return data;
             if (json && json.seasons) {
                 var select = $('<ul>' + json.seasons + '</ul>');
                 $('.b-simple_season__item', select).each(function () {
@@ -1076,103 +859,56 @@
                     });
                 });
             }
-            if (!isDestroyed && extract) {
+            if (extract) {
                 extract.voice_data[key] = data;
                 if (data.season.length) extract.voice_season_list[translator_id] = data.season;
             }
             return data;
         }
 
-        function ensureAllVoiceData(season_id, callback) {
-            if (isDestroyed || !extract) {
-                if (callback) callback();
-                return;
-            }
-            var voices = extract.voice || [];
-            var total = voices.length;
-            var done = 0;
-            if (!total) {
-                if (callback) callback();
-                return;
-            }
-            
-            var cancelled = false;
-            runLimited(voices, 2, 200, function (v, queueDone) {
-                if (cancelled || isDestroyed || !extract) {
-                    queueDone();
-                    return;
-                }
-                fetchVoiceData(v.id, season_id, function () {
-                    if (cancelled || isDestroyed) {
-                        queueDone();
-                        return;
-                    }
-                    done++;
-                    if (done === total) {
-                        if (callback) callback();
-                    }
-                    queueDone();
-                });
-            }, function() {
-                if (!cancelled && !isDestroyed && done < total) {
-                    // Если что-то пошло не так, всё равно вызываем callback
-                    if (callback) callback();
-                }
-            });
-        }
-
         function currentSeasonId() {
-            if (!extract) return null;
             if (choice.season_id) return choice.season_id;
-            if (extract.season && extract.season[choice.season]) return extract.season[choice.season].id;
-            if (extract.season && extract.season.length) return extract.season[0].id;
+            if (extract && extract.season && extract.season[choice.season]) return extract.season[choice.season].id;
+            if (extract && extract.season && extract.season.length) return extract.season[0].id;
             return null;
         }
 
         function availableVoicesForSeason(season_id) {
-            if (!extract) return [];
-            if (!season_id) return extract.voice || [];
-            var list = (extract.voice || []).filter(function (v) {
+            if (!season_id || !extract) return (extract && extract.voice) || [];
+            var list = extract.voice.filter(function (v) {
                 var seasons = extract.voice_season_list[v.id];
                 return seasons && seasons.some(function (s) { return s.id == season_id; });
             });
-            return list.length ? list : (extract.voice || []);
+            return list.length ? list : extract.voice;
         }
 
         function getEpisodes(call) {
-            if (isDestroyed || !extract) {
-                if (call) call();
-                return;
-            }
+            if (!isAlive()) return;
             if (!extract.is_series) {
-                if (call) call();
+                call();
                 return;
             }
 
             var season_id = currentSeasonId();
-            if (!season_id) {
-                if (call) call();
-                return;
+            voice_list_current = availableVoicesForSeason(season_id);
+            filterVoice();
+
+            var selected = voice_list_current[choice.voice] || extract.voice[0];
+            if (selected) {
+                fetchVoiceData(selected.id, season_id, function () {
+                    if (!isAlive()) return;
+                    var key = selected.id + '::' + (season_id || '');
+                    var data = extract.voice_data[key];
+                    extract.episode = (data && data.episode) || [];
+                    call();
+                });
+            } else {
+                call();
             }
-
-            ensureAllVoiceData(season_id, function() {
-                if (isDestroyed || !extract) {
-                    if (call) call();
-                    return;
-                }
-                voice_list_current = availableVoicesForSeason(season_id);
-                filterVoice();
-
-                var selected = voice_list_current[choice.voice];
-                var key = selected ? (selected.id + '::' + (season_id || '')) : null;
-                var data = key && extract.voice_data[key];
-                extract.episode = (data && data.episode) || [];
-                if (call) call();
-            });
         }
 
         function filterVoice() {
-            if (!extract) return;
+            if (!isAlive()) return;
             var list = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
             var voice = list.map(function (v) { return v.name; });
             if (!voice[choice.voice]) choice.voice = 0;
@@ -1186,7 +922,7 @@
         }
 
         function filter(premium_results) {
-            if (!extract) return;
+            if (!isAlive()) return;
             premium_results = premium_results || {};
 
             var voices_source = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
@@ -1223,14 +959,8 @@
         }
 
         function getStream(element, call, error) {
-            if (isDestroyed || !extract) {
-                if (error) error();
-                return;
-            }
-            if (element.stream) {
-                if (call) call(element);
-                return;
-            }
+            if (!isAlive()) return;
+            if (element.stream) return call(element);
             var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
             var postdata = 'id=' + encodeURIComponent(extract.film_id);
             if (extract.is_series) {
@@ -1241,27 +971,20 @@
                 postdata += '&action=get_stream';
             } else {
                 postdata += '&translator_id=' + encodeURIComponent(element.media.id);
-                postdata += '&is_camrip=' + encodeURIComponent(element.media.is_camrip || '');
-                postdata += '&is_ads=' + encodeURIComponent(element.media.is_ads || '');
-                postdata += '&is_director=' + encodeURIComponent(element.media.is_director || '');
+                postdata += '&is_camrip=' + encodeURIComponent(element.media.is_camrip);
+                postdata += '&is_ads=' + encodeURIComponent(element.media.is_ads);
+                postdata += '&is_director=' + encodeURIComponent(element.media.is_director);
                 postdata += '&favs=' + encodeURIComponent(extract.favs || '');
                 postdata += '&action=get_movie';
             }
-            
-            var req = new Lampa.Reguest();
-            activeRequests.push(req);
-            
-            req.timeout(6000);
-            req.silent(url, function (json) {
-                activeRequests = activeRequests.filter(function(r) { return r !== req; });
-                if (isDestroyed || !extract) {
-                    if (error) error();
-                    return;
-                }
+            network.clear();
+            network.timeout(10000);
+            network.silent(url, function (json) {
+                if (!isAlive()) return;
                 if (json && json.url) {
-                    var video = decode(json.url);
-                    var file = '';
-                    var quality = false;
+                    var video = decode(json.url),
+                        file = '',
+                        quality = false;
                     var items = extractItems(video);
                     if (items && items.length) {
                         file = items[0].file;
@@ -1279,8 +1002,8 @@
                             var block_voice_id = extract.is_series ? element.media.translator_id : element.media.id;
                             var block_season_id = extract.is_series ? element.media.season_id : null;
                             var block_key = premiumCacheKey(block_voice_id, block_season_id);
-                            if (block_key) premium_cache[block_key] = true;
-                            if (error) error('Перевод доступен только с HDrezka Premium', true);
+                            premium_cache[block_key] = true;
+                            error('Перевод доступен только с HDrezka Premium', true);
                             return;
                         }
                     }
@@ -1288,20 +1011,11 @@
                         element.stream = file;
                         element.qualitys = quality;
                         element.subtitles = parseSubtitles(json.subtitle);
-                        if (call) call(element);
-                    } else {
-                        if (error) error();
-                    }
-                } else {
-                    if (error) error();
-                }
-            }, function (a, c) {
-                activeRequests = activeRequests.filter(function(r) { return r !== req; });
-                if (isDestroyed) {
-                    if (error) error();
-                    return;
-                }
-                if (error) error();
+                        call(element);
+                    } else error();
+                } else error();
+            }, function () {
+                if (isAlive()) error();
             }, postdata, {
                 withCredentials: true,
                 headers: headers
@@ -1309,7 +1023,7 @@
         }
 
         function filtred(premium_results) {
-            if (!extract) return [];
+            if (!isAlive()) return [];
             premium_results = premium_results || {};
             var filtred = [];
             if (extract.is_series) {
@@ -1318,7 +1032,7 @@
                 extract.season.forEach(function (season) {
                     if (season.name == season_name) season_id = season.id;
                 });
-                var voice = filter_items.voice[choice.voice] || '';
+                var voice = filter_items.voice[choice.voice];
                 var voices_source = voice_list_current.length ? voice_list_current : extract.voice;
                 var voice_obj = voices_source[choice.voice];
                 var voice_id = voice_obj ? voice_obj.id : null;
@@ -1339,7 +1053,7 @@
                     }
                 });
             } else {
-                (extract.voice || []).forEach(function (voice) {
+                extract.voice.forEach(function (voice) {
                     var is_prem = premium_results[voice.id] || false;
                     filtred.push({
                         title: voice.name || select_title,
@@ -1355,15 +1069,13 @@
         }
 
         function markPremiumDiscovered(items, voice_id) {
-            if (!items) return;
+            if (!isAlive()) return;
             items.forEach(function (el) {
                 if (el.voice_id != voice_id || el.is_premium) return;
                 el.is_premium = true;
                 if (el.dom) {
                     var titleEl = el.dom.find('.online__title');
-                    if (titleEl.length && !startsWith(titleEl.text().trim(), '⭐')) {
-                        titleEl.text('⭐ ' + titleEl.text());
-                    }
+                    if (!startsWith(titleEl.text().trim(), '⭐')) titleEl.text('⭐ ' + titleEl.text());
                     titleEl.css('color', '#FFD700');
                     if (!el.dom.find('.online__quality span').length) {
                         el.dom.find('.online__quality').append('<span style="color: #FFD700; margin-left: 5px;">⭐ Premium</span>');
@@ -1373,7 +1085,7 @@
         }
 
         function append(items) {
-            if (isDestroyed || !extract) return;
+            if (!isAlive()) return;
             component.reset();
             var viewed = Lampa.Storage.cache('online_view', 5000, []);
             var last_episode = component.getLastEpisode(items);
@@ -1381,7 +1093,7 @@
             items.forEach(function (element) {
                 if (element.season) {
                     element.translate_episode_end = last_episode;
-                    element.translate_voice = filter_items.voice[choice.voice] || '';
+                    element.translate_voice = filter_items.voice[choice.voice];
                 }
                 var hash = Lampa.Utils.hash(element.season ? [element.season, element.season > 10 ? ':' : '', element.episode, object.movie.original_title].join('') : object.movie.original_title);
                 var view = Lampa.Timeline.view(hash);
@@ -1398,7 +1110,7 @@
                 });
                 element.dom = item;
                 
-                var hash_file = Lampa.Utils.hash(element.season ? [element.season, element.season > 10 ? ':' : '', element.episode, object.movie.original_title, filter_items.voice[choice.voice] || ''].join('') : object.movie.original_title + element.title);
+                var hash_file = Lampa.Utils.hash(element.season ? [element.season, element.season > 10 ? ':' : '', element.episode, object.movie.original_title, filter_items.voice[choice.voice]].join('') : object.movie.original_title + element.title);
                 element.timeline = view;
                 item.append(Lampa.Timeline.render(view));
                 if (Lampa.Timeline.details) {
@@ -1412,12 +1124,12 @@
                 }
                 
                 item.on('hover:enter', function () {
-                    if (isDestroyed || !extract) return;
-                    if (element.loading) return;
+                    if (element.loading || !isAlive()) return;
                     if (object.movie.id) Lampa.Favorite.add('history', object.movie, 100);
                     element.loading = true;
                     getStream(element, function (element) {
                         element.loading = false;
+                        if (!isAlive()) return;
                         var first = {
                             url: component.getDefaultQuality(element.qualitys, element.stream),
                             quality: component.renameQualityMap(element.qualitys),
@@ -1435,13 +1147,14 @@
                                     var cell = {
                                         url: function (call) {
                                             getStream(elem, function (elem) {
+                                                if (!isAlive()) { call(); return; }
                                                 cell.url = component.getDefaultQuality(elem.qualitys, elem.stream);
                                                 cell.quality = component.renameQualityMap(elem.qualitys);
                                                 cell.subtitles = elem.subtitles;
-                                                if (call) call();
+                                                call();
                                             }, function () {
                                                 cell.url = '';
-                                                if (call) call();
+                                                call();
                                             });
                                         },
                                         timeline: elem.timeline,
@@ -1461,6 +1174,7 @@
                         }
                     }, function (error, is_premium_block) {
                         element.loading = false;
+                        if (!isAlive()) return;
                         if (is_premium_block) markPremiumDiscovered(items, element.voice_id);
                         Lampa.Noty.show(error || Lampa.Lang.translate(extract && extract.blocked ? 'online_mod_blockedlink' : 'online_mod_nolink'));
                     });
@@ -1474,11 +1188,12 @@
                     element: element,
                     file: function (call) {
                         getStream(element, function (element) {
-                            if (call) call({
+                            call({
                                 file: element.stream,
                                 quality: element.qualitys
                             });
                         }, function (error, is_premium_block) {
+                            if (!isAlive()) return;
                             if (is_premium_block) markPremiumDiscovered(items, element.voice_id);
                             Lampa.Noty.show(error || Lampa.Lang.translate(extract && extract.blocked ? 'online_mod_blockedlink' : 'online_mod_nolink'));
                         });
@@ -1489,16 +1204,586 @@
         }
     }
 
-    // --- Остальной код (component, настройки, инициализация) остаётся без изменений ---
-    // [Код component и инициализации такой же как в оригинале, 
-    //  только с добавлением проверок isDestroyed в нужных местах]
-    
-    // --- Настройки и инициализация ---
-    var isMSX = !!(window.TVXHost || window.TVXManager);
+    // --- Компонент Online Mod ---
+    function component(object) {
+        var network = new Lampa.Reguest();
+        var scroll = new Lampa.Scroll({ mask: true, over: true });
+        var files = new Lampa.Explorer(object);
+        var filter = new Lampa.Filter(object);
+        var balanser = 'rezka2';
+        var last_bls = Lampa.Storage.field('online_mod_save_last_balanser') === true ? Lampa.Storage.cache('online_mod_last_balanser', 200, {}) : {};
+        var prefer_http = Lampa.Storage.field('online_mod_prefer_http') === true;
+        var forcedQuality = '';
+        var qualityFilter = {
+            title: Lampa.Lang.translate('settings_player_quality'),
+            subtitle: '',
+            items: [],
+            stype: 'quality'
+        };
+        var contextmenu_all = [];
+
+        if (last_bls[object.movie.id]) {
+            balanser = last_bls[object.movie.id];
+        }
+
+        this.proxy = function () { return ''; };
+        this.fixLink = function (link, referrer) { return fixLink(link, referrer); };
+        this.fixLinkProtocol = function (link, prefer_http, replace_protocol) { return fixLinkProtocol(link, prefer_http, replace_protocol); };
+        this.proxyLink = function (link) { return link; };
+        this.proxyStream = function (url) { return url; };
+        this.processSubs = function (url) { return url; };
+        this.proxyStreamSubs = function (url) { return this.processSubs(url); };
+        this.checkMyIp = function (onComplite) { onComplite(); };
+
+        var last;
+        var extended;
+        var selected_id;
+        var filter_translate = {
+            season: Lampa.Lang.translate('torrent_serial_season'),
+            voice: Lampa.Lang.translate('torrent_parser_voice'),
+            source: Lampa.Lang.translate('settings_rest_source')
+        };
+
+        var source = new rezka2(this, object);
+
+        scroll.body().addClass('torrent-list');
+        scroll.minus(files.render().find('.explorer__files-head'));
+
+        this.create = function () {
+            var _this = this;
+            this.activity.loader(true);
+
+            filter.onSearch = function (value) {
+                Lampa.Activity.replace({
+                    search: value,
+                    search_date: '',
+                    clarification: true
+                });
+            };
+
+            filter.onBack = function () {
+                _this.start();
+            };
+
+            filter.onSelect = function (type, a, b) {
+                if (type == 'filter') {
+                    if (a.reset) {
+                        if (extended) source.reset();
+                        else _this.start();
+                    } else if (a.stype == 'quality') {
+                        forcedQuality = b.title;
+                        _this.updateQualityFilter();
+                    } else {
+                        source.filter(type, a, b);
+                    }
+                }
+            };
+
+            filter.render().find('.filter--sort span').text(Lampa.Lang.translate('online_mod_balanser'));
+            files.appendHead(filter.render());
+            files.appendFiles(scroll.render());
+            this.search();
+            return this.render();
+        };
+
+        this.updateQualityFilter = function () {
+            var preferably = forcedQuality;
+            if (!preferably) {
+                preferably = Lampa.Storage.get('video_quality_default', '1080') + 'p';
+                if (preferably === '1080p') preferably = '1080p Ultra';
+            }
+            var items = ['2160p', '1440p', '1080p Ultra', '1080p', '720p', '480p'].map(function (quality, i) {
+                return {
+                    title: quality,
+                    selected: quality === preferably,
+                    index: i
+                };
+            });
+            qualityFilter.subtitle = preferably;
+            qualityFilter.items = items;
+            setTimeout(this.closeFilter, 10);
+        };
+
+        this.search = function () {
+            this.activity.loader(true);
+            this.filter({ source: ['HDrezka'] }, { source: 0 });
+            this.reset();
+            this.find();
+        };
+
+        this.cleanTitle = function (str) {
+            return str.replace(/[\s.,:;’'`!?]+/g, ' ').trim();
+        };
+
+        this.kpCleanTitle = function (str) {
+            return this.cleanTitle(str).replace(/^[ \/\\]+/, '').replace(/[ \/\\]+$/, '').replace(/\+( *[+\/\\])+/g, '+').replace(/([+\/\\] *)+\+/g, '+').replace(/( *[\/\\]+ *)+/g, '+');
+        };
+
+        this.normalizeTitle = function (str) {
+            return this.cleanTitle(str.toLowerCase().replace(/[\-\u2010-\u2015\u2E3A\u2E3B\uFE58\uFE63\uFF0D]+/g, '-').replace(/ё/g, 'е'));
+        };
+
+        this.equalTitle = function (t1, t2) {
+            return typeof t1 === 'string' && typeof t2 === 'string' && this.normalizeTitle(t1) === this.normalizeTitle(t2);
+        };
+
+        this.containsTitle = function (str, title) {
+            return typeof str === 'string' && typeof title === 'string' && this.normalizeTitle(str).indexOf(this.normalizeTitle(title)) !== -1;
+        };
+
+        this.equalAnyTitle = function (strings, titles) {
+            var _this2 = this;
+            return titles.some(function (title) {
+                return title && strings.some(function (str) {
+                    return str && _this2.equalTitle(str, title);
+                });
+            });
+        };
+
+        this.containsAnyTitle = function (strings, titles) {
+            var _this3 = this;
+            return titles.some(function (title) {
+                return title && strings.some(function (str) {
+                    return str && _this3.containsTitle(str, title);
+                });
+            });
+        };
+
+        this.find = function () {
+            var query = object.search || object.movie.title;
+            if (!query) {
+                this.emptyForQuery(query);
+                return;
+            }
+            this.extendChoice();
+            source.search(object, null);
+        };
+
+        this.parsePlaylist = function (str) {
+            var pl = [];
+            try {
+                if (startsWith(str, '[')) {
+                    str.substring(1).split(/, *\[/).forEach(function (item) {
+                        item = item.trim();
+                        if (endsWith(item, ',')) item = item.substring(0, item.length - 1).trim();
+                        var label_end = item.indexOf(']');
+                        if (label_end >= 0) {
+                            var label = item.substring(0, label_end).trim();
+                            if (item.charAt(label_end + 1) === '{') {
+                                item.substring(label_end + 2).split(/; *\{/).forEach(function (voice_item) {
+                                    voice_item = voice_item.trim();
+                                    if (endsWith(voice_item, ';')) voice_item = voice_item.substring(0, voice_item.length - 1).trim();
+                                    var voice_end = voice_item.indexOf('}');
+                                    if (voice_end >= 0) {
+                                        var voice = voice_item.substring(0, voice_end).trim();
+                                        pl.push({
+                                            label: label,
+                                            voice: voice,
+                                            links: voice_item.substring(voice_end + 1).split(' or ').map(function (link) {
+                                                return link.trim();
+                                            }).filter(function (link) { return link; })
+                                        });
+                                    }
+                                });
+                            } else {
+                                pl.push({
+                                    label: label,
+                                    links: item.substring(label_end + 1).split(' or ').map(function (link) {
+                                        return link.trim();
+                                    }).filter(function (link) { return link; })
+                                });
+                            }
+                        }
+                    });
+                    pl = pl.filter(function (item) { return item.links.length; });
+                }
+            } catch (e) {}
+            return pl;
+        };
+
+        this.formatEpisodeTitle = function (s_num, e_num, name) {
+            var title = '';
+            var full = Lampa.Storage.field('online_mod_full_episode_title') === true;
+            if (s_num != null && s_num !== '') {
+                title = (full ? Lampa.Lang.translate('torrent_serial_season') + ' ' : 'S') + s_num + ' / ';
+            }
+            if (name == null || name === '') name = Lampa.Lang.translate('torrent_serial_episode') + ' ' + e_num;
+            else if (e_num != null && e_num !== '') name = Lampa.Lang.translate('torrent_serial_episode') + ' ' + e_num + ' - ' + name;
+            title += name;
+            return title;
+        };
+
+        this.extendChoice = function () {
+            var data = Lampa.Storage.cache('online_mod_choice_rezka2', 500, {});
+            var save = data[selected_id || object.movie.id] || {};
+            extended = true;
+            source.extendChoice(save);
+        };
+
+        this.saveChoice = function (choice) {
+            var data = Lampa.Storage.cache('online_mod_choice_rezka2', 500, {});
+            data[selected_id || object.movie.id] = choice;
+            Lampa.Storage.set('online_mod_choice_rezka2', data);
+        };
+
+        this.similars = function (json, search_more, more_params) {
+            var _this5 = this;
+            json.forEach(function (elem) {
+                var title = elem.title || elem.ru_title || elem.nameRu || elem.en_title || elem.nameEn || elem.orig_title || elem.nameOriginal;
+                var orig_title = elem.orig_title || elem.nameOriginal || elem.en_title || elem.nameEn;
+                var year = elem.start_date || elem.year || '';
+                var info = [];
+                if (orig_title && orig_title != elem.title) info.push(orig_title);
+                if (elem.seasons_count) info.push(Lampa.Lang.translate('online_mod_seasons_count') + ': ' + elem.seasons_count);
+                if (elem.episodes_count) info.push(Lampa.Lang.translate('online_mod_episodes_count') + ': ' + elem.episodes_count);
+                elem.title = title;
+                elem.quality = year ? (year + '').slice(0, 4) : '----';
+                elem.info = info.length ? ' / ' + info.join(' / ') : '';
+                var item = Lampa.Template.get('online_mod_folder', elem);
+                item.on('hover:enter', function () {
+                    _this5.activity.loader(true);
+                    _this5.reset();
+                    object.search = elem.title;
+                    object.search_date = year;
+                    selected_id = elem.id;
+                    _this5.extendChoice();
+                    source.search(object, null, [elem]);
+                });
+                _this5.append(item);
+            });
+            if (search_more) {
+                var elem = {
+                    title: Lampa.Lang.translate('online_mod_show_more'),
+                    quality: '...',
+                    info: ''
+                };
+                var item = Lampa.Template.get('online_mod_folder', elem);
+                item.on('hover:enter', function () {
+                    _this5.activity.loader(true);
+                    _this5.reset();
+                    search_more(more_params);
+                });
+                this.append(item);
+            }
+        };
+
+        this.reset = function () {
+            contextmenu_all = [];
+            last = filter.render().find('.selector').eq(0)[0];
+            scroll.render().find('.empty').remove();
+            scroll.clear();
+            scroll.reset();
+        };
+
+        this.inActivity = function () {
+            var body = $('body');
+            return !(body.hasClass('settings--open') || body.hasClass('menu--open') || body.hasClass('keyboard-input--visible') || body.hasClass('selectbox--open') || body.hasClass('search--open') || body.hasClass('ambience--enable') || $('div.modal').length);
+        };
+
+        this.loading = function (status) {
+            if (status) this.activity.loader(true);
+            else {
+                this.activity.loader(false);
+                if (Lampa.Activity.active().activity === this.activity && this.inActivity()) this.activity.toggle();
+            }
+        };
+
+        this.getDefaultQuality = function (qualityMap, defValue) {
+            if (qualityMap) {
+                var preferably = forcedQuality;
+                if (!preferably) {
+                    preferably = Lampa.Storage.get('video_quality_default', '1080') + 'p';
+                    if (preferably === '1080p') preferably = '1080p Ultra';
+                }
+                var items = ['2160p', '2160', '4K', '1440p', '1440', '2K', '1080p Ultra', '1080p', '1080', '720p', '720', '480p', '480', '360p', '360', '240p', '240'];
+                var idx = items.indexOf(preferably);
+                if (idx !== -1) {
+                    for (var i = idx; i < items.length; i++) {
+                        var item = items[i];
+                        if (qualityMap[item]) return qualityMap[item];
+                    }
+                    for (var _i = idx - 1; _i >= 0; _i--) {
+                        var _item = items[_i];
+                        if (qualityMap[_item]) return qualityMap[_item];
+                    }
+                }
+            }
+            return defValue;
+        };
+
+        this.renameQualityMap = function (qualityMap) {
+            if (!qualityMap) return qualityMap;
+            var renamed = {};
+            for (var label in qualityMap) {
+                renamed["\u200B" + label] = qualityMap[label];
+            }
+            return renamed;
+        };
+
+        this.filter = function (filter_items, choice) {
+            var select = [];
+            var add = function (type, title) {
+                var need = Lampa.Storage.get('online_mod_filter', '{}');
+                var items = filter_items[type];
+                var subitems = [];
+                var value = need[type];
+                items.forEach(function (name, i) {
+                    subitems.push({
+                        title: name,
+                        selected: value == i,
+                        index: i
+                    });
+                });
+                select.push({
+                    title: title,
+                    subtitle: items[value],
+                    items: subitems,
+                    stype: type
+                });
+            };
+            choice.source = 0;
+            Lampa.Storage.set('online_mod_filter', choice);
+            select.push({
+                title: Lampa.Lang.translate('torrent_parser_reset'),
+                reset: true
+            });
+            filter_items.source = ['HDrezka'];
+            add('source', Lampa.Lang.translate('online_mod_balanser'));
+            if (filter_items.voice && filter_items.voice.length) add('voice', Lampa.Lang.translate('torrent_parser_voice'));
+            if (filter_items.season && filter_items.season.length) add('season', Lampa.Lang.translate('torrent_serial_season'));
+            if (filter_items.server && filter_items.server.length) add('server', Lampa.Lang.translate('online_mod_server'));
+            this.updateQualityFilter();
+            select.push(qualityFilter);
+            filter.set('filter', select);
+            filter.set('sort', [{ source: 'rezka2', title: 'HDrezka', selected: true }]);
+            this.selected(filter_items);
+        };
+
+        this.closeFilter = function () {
+            if ($('body').hasClass('selectbox--open')) Lampa.Select.close();
+        };
+
+        this.selected = function (filter_items) {
+            var need = Lampa.Storage.get('online_mod_filter', '{}'),
+                select = [];
+            for (var i in need) {
+                if (i !== 'source' && filter_translate[i] && filter_items[i] && filter_items[i].length > 1) {
+                    select.push(filter_translate[i] + ': ' + filter_items[i][need[i]]);
+                }
+            }
+            filter.chosen('filter', select);
+            filter.chosen('sort', ['HDrezka']);
+        };
+
+        this.append = function (item) {
+            item.on('hover:focus', function (e) {
+                last = e.target;
+                scroll.update($(e.target), true);
+            });
+            scroll.append(item);
+        };
+
+        this.contextmenu = function (params) {
+            contextmenu_all.push(params);
+            params.item.on('hover:long', function () {
+                function selectQuality(title, callback) {
+                    return function (extra) {
+                        if (extra.quality) {
+                            var qual = [];
+                            for (var i in extra.quality) {
+                                qual.push({
+                                    title: i,
+                                    file: extra.quality[i]
+                                });
+                            }
+                            Lampa.Select.show({
+                                title: title,
+                                items: qual,
+                                onBack: function () {
+                                    Lampa.Controller.toggle(enabled);
+                                },
+                                onSelect: callback
+                            });
+                        } else callback(null, extra);
+                    };
+                }
+                var enabled = Lampa.Controller.enabled().name;
+                var menu = [{
+                    title: Lampa.Lang.translate('torrent_parser_label_title'),
+                    mark: true
+                }, {
+                    title: Lampa.Lang.translate('torrent_parser_label_cancel_title'),
+                    clearmark: true
+                }, {
+                    title: Lampa.Lang.translate('online_mod_clearmark_all'),
+                    clearmark_all: true
+                }, {
+                    title: Lampa.Lang.translate('time_reset'),
+                    timeclear: true
+                }, {
+                    title: Lampa.Lang.translate('online_mod_timeclear_all'),
+                    timeclear_all: true
+                }];
+                if (Lampa.Platform.is('webos')) {
+                    menu.push({
+                        title: Lampa.Lang.translate('player_lauch') + ' - Webos',
+                        player: 'webos'
+                    });
+                }
+                if (Lampa.Platform.is('android')) {
+                    menu.push({
+                        title: Lampa.Lang.translate('player_lauch') + ' - Android',
+                        player: 'android'
+                    });
+                }
+                menu.push({
+                    title: Lampa.Lang.translate('player_lauch') + ' - Lampa',
+                    player: 'lampa'
+                });
+                if (params.file) {
+                    menu.push({
+                        title: Lampa.Lang.translate('copy_link'),
+                        copylink: true
+                    });
+                }
+                Lampa.Select.show({
+                    title: Lampa.Lang.translate('title_action'),
+                    items: menu,
+                    onBack: function () {
+                        Lampa.Controller.toggle(enabled);
+                    },
+                    onSelect: function (a) {
+                        if (a.clearmark) {
+                            Lampa.Arrays.remove(params.viewed, params.hash_file);
+                            Lampa.Storage.set('online_view', params.viewed);
+                            params.item.find('.torrent-item__viewed').remove();
+                        }
+                        if (a.clearmark_all) {
+                            contextmenu_all.forEach(function (params) {
+                                Lampa.Arrays.remove(params.viewed, params.hash_file);
+                                Lampa.Storage.set('online_view', params.viewed);
+                                params.item.find('.torrent-item__viewed').remove();
+                            });
+                        }
+                        if (a.mark) {
+                            if (params.viewed.indexOf(params.hash_file) == -1) {
+                                params.viewed.push(params.hash_file);
+                                params.item.append('<div class="torrent-item__viewed">' + Lampa.Template.get('icon_star', {}, true) + '</div>');
+                                Lampa.Storage.set('online_view', params.viewed);
+                            }
+                        }
+                        if (a.timeclear) {
+                            params.view.percent = 0;
+                            params.view.time = 0;
+                            params.view.duration = 0;
+                            Lampa.Timeline.update(params.view);
+                        }
+                        if (a.timeclear_all) {
+                            contextmenu_all.forEach(function (params) {
+                                params.view.percent = 0;
+                                params.view.time = 0;
+                                params.view.duration = 0;
+                                Lampa.Timeline.update(params.view);
+                            });
+                        }
+                        Lampa.Controller.toggle(enabled);
+                        if (a.player) {
+                            Lampa.Player.runas(a.player);
+                            params.item.trigger('hover:enter', { runas: a.player });
+                        }
+                        if (a.copylink) {
+                            params.file(selectQuality('Ссылки', function (b, extra) {
+                                Lampa.Utils.copyTextToClipboard(b && b.file || extra && extra.file, function () {
+                                    Lampa.Noty.show(Lampa.Lang.translate('copy_secuses'));
+                                }, function () {
+                                    Lampa.Noty.show(Lampa.Lang.translate('copy_error'));
+                                });
+                            }));
+                        }
+                    }
+                });
+            }).on('hover:focus', function () {
+                if (Lampa.Helper) Lampa.Helper.show('online_file', Lampa.Lang.translate('online_mod_file_helper'), params.item);
+            });
+        };
+
+        this.empty = function (msg) {
+            var empty = Lampa.Template.get('list_empty');
+            if (msg) empty.find('.empty__descr').text(msg);
+            scroll.append(empty);
+            this.loading(false);
+        };
+
+        this.emptyForQuery = function (query) {
+            this.empty(Lampa.Lang.translate('online_mod_query_start') + ' (' + query + ') ' + Lampa.Lang.translate('online_mod_query_end'));
+        };
+
+        this.getLastEpisode = function (items) {
+            var last_episode = 0;
+            items.forEach(function (e) {
+                if (typeof e.episode !== 'undefined') last_episode = Math.max(last_episode, parseInt(e.episode));
+            });
+            return last_episode;
+        };
+
+        this.start = function (first_select) {
+            if (Lampa.Activity.active().activity !== this.activity) return;
+            if (first_select) {
+                var last_views = scroll.render().find('.selector.online').find('.torrent-item__viewed').parent().last();
+                if (object.movie.number_of_seasons && last_views.length) last = last_views.eq(0)[0];
+                else last = scroll.render().find('.selector').eq(0)[0];
+            }
+            Lampa.Background.immediately(Lampa.Utils.cardImgBackground(object.movie));
+            Lampa.Controller.add('content', {
+                toggle: function () {
+                    Lampa.Controller.collectionSet(scroll.render(), files.render());
+                    Lampa.Controller.collectionFocus(last || false, scroll.render());
+                },
+                up: function () {
+                    if (Navigator.canmove('up')) {
+                        Navigator.move('up');
+                    } else Lampa.Controller.toggle('head');
+                },
+                down: function () {
+                    Navigator.move('down');
+                },
+                right: function () {
+                    if (Navigator.canmove('right')) Navigator.move('right');
+                    else filter.show(Lampa.Lang.translate('title_filter'), 'filter');
+                },
+                left: function () {
+                    if (Navigator.canmove('left')) Navigator.move('left');
+                    else Lampa.Controller.toggle('menu');
+                },
+                back: this.back
+            });
+            if (this.inActivity()) Lampa.Controller.toggle('content');
+        };
+
+        this.render = function () {
+            return files.render();
+        };
+
+        this.back = function () {
+            Lampa.Activity.backward();
+        };
+
+        this.pause = function () {};
+
+        this.stop = function () {};
+
+        this.destroy = function () {
+            network.clear();
+            files.destroy();
+            scroll.destroy();
+            network = null;
+            source.destroy();
+        };
+    }
+
+    // --- Инициализация и настройки ---
     var isTizen = navigator.userAgent.toLowerCase().indexOf('tizen') !== -1;
-    var isIFrame = window.parent !== window;
     var isLocal = !startsWith(window.location.protocol, 'http');
-    var network = new Lampa.Reguest();
     var online_loading = false;
 
     function initStorage() {
@@ -1520,7 +1805,6 @@
         Lampa.Params.select('online_mod_rezka2_name', '', '');
         Lampa.Params.select('online_mod_rezka2_password', '', '');
         Lampa.Params.select('online_mod_rezka2_cookie', '', '');
-        Lampa.Params.select('online_mod_secret_password', '', '');
 
         if (window.location.protocol === 'https:') {
             Lampa.Storage.set('online_mod_prefer_http', 'false');
@@ -1531,12 +1815,8 @@
         if (!Lampa.Lang) {
             var lang_data = {};
             Lampa.Lang = {
-                add: function (data) {
-                    lang_data = data;
-                },
-                translate: function (key) {
-                    return lang_data[key] ? lang_data[key].ru : key;
-                }
+                add: function (data) { lang_data = data; },
+                translate: function (key) { return lang_data[key] ? lang_data[key].ru : key; }
             };
         }
 
@@ -1559,13 +1839,9 @@
             online_mod_rezka2_mirror: { ru: 'Url HDrezka', uk: 'Url HDrezka', be: 'Url HDrezka', en: 'Url HDrezka', zh: 'Url HDrezka' },
             online_mod_rezka2_name: { ru: 'Логин или email для HDrezka', uk: 'Логін чи email для HDrezka', be: 'Лагін ці email для HDrezka', en: 'Login or email for HDrezka', zh: 'HDrezka的登录名或电子邮件' },
             online_mod_rezka2_password: { ru: 'Пароль для HDrezka', uk: 'Пароль для HDrezka', be: 'Пароль для HDrezka', en: 'Password for HDrezka', zh: 'HDrezka的密码' },
-            online_mod_rezka2_login: { ru: 'Войти в HDrezka', uk: 'Увійти до HDrezka', be: 'Увайсці ў HDrezka', en: 'Log in to HDrezka', zh: '登录HDrezka' },
-            online_mod_rezka2_logout: { ru: 'Выйти из HDrezka', uk: 'Вийти з HDrezka', be: 'Выйсці з HDrezka', en: 'Log out of HDrezka', zh: '注销HDrezka' },
             online_mod_rezka2_cookie: { ru: 'Куки для HDrezka', uk: 'Кукі для HDrezka', be: 'Кукі для HDrezka', en: 'Cookie for HDrezka', zh: 'HDrezka 的 Cookie' },
-            online_mod_rezka2_fill_cookie: { ru: 'Заполнить куки для HDrezka', uk: 'Заповнити кукі для HDrezka', be: 'Запоўніць кукі для HDrezka', en: 'Fill cookie for HDrezka', zh: '为HDrezka填充Cookie' },
             online_mod_authorization_required: { ru: 'Требуется авторизация', uk: 'Потрібна авторизація', be: 'Патрабуецца аўтарызацыя', en: 'Authorization required', zh: ' need authorization' },
             online_mod_unsupported_mirror: { ru: 'Неподдерживаемое зеркало', uk: 'Непідтримуване дзеркало', be: 'Непадтрымоўванае люстэрка', en: 'Unsupported mirror', zh: '不支持的镜子' },
-            online_mod_secret_password: { ru: 'Секретный пароль', uk: 'Секретний пароль', be: 'Сакрэтны пароль', en: 'Secret password', zh: '秘密密码' },
             online_mod_seasons_count: { ru: 'Сезонов', uk: 'Сезонів', be: 'Сезонаў', en: 'Seasons', zh: '季' },
             online_mod_episodes_count: { ru: 'Эпизодов', uk: 'Епізодів', be: 'Эпізодаў', en: 'Episodes', zh: '集' },
             online_mod_show_more: { ru: 'Показать ещё', uk: 'Показати ще', be: 'Паказаць яшчэ', en: 'Show more', zh: '展示更多' },
@@ -1582,10 +1858,10 @@
         Lampa.Template.add('online_mod', "<div class=\"online selector\">\n        <div class=\"online__body\">\n            <div style=\"position: absolute;left: 0;top: -0.3em;width: 2.4em;height: 2.4em\">\n                <svg style=\"height: 2.4em; width:  2.4em;\" viewBox=\"0 0 128 128\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n                    <circle cx=\"64\" cy=\"64\" r=\"56\" stroke=\"white\" stroke-width=\"16\"/>\n                    <path d=\"M90.5 64.3827L50 87.7654L50 41L90.5 64.3827Z\" fill=\"white\"/>\n                </svg>\n            </div>\n            <div class=\"online__title\" style=\"padding-left: 2.1em;\">{title}</div>\n            <div class=\"online__quality\" style=\"padding-left: 3.4em;\">{quality}{info}</div>\n        </div>\n    </div>");
         Lampa.Template.add('online_mod_folder', "<div class=\"online selector\">\n        <div class=\"online__body\">\n            <div style=\"position: absolute;left: 0;top: -0.3em;width: 2.4em;height: 2.4em\">\n                <svg style=\"height: 2.4em; width:  2.4em;\" viewBox=\"0 0 128 112\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n                    <rect y=\"20\" width=\"128\" height=\"92\" rx=\"13\" fill=\"white\"/>\n                    <path d=\"M29.9963 8H98.0037C96.0446 3.3021 91.4079 0 86 0H42C36.5921 0 31.9555 3.3021 29.9963 8Z\" fill=\"white\" fill-opacity=\"0.23\"/>\n                    <rect x=\"11\" y=\"8\" width=\"106\" height=\"76\" rx=\"13\" fill=\"white\" fill-opacity=\"0.51\"/>\n                </svg>\n            </div>\n            <div class=\"online__title\" style=\"padding-left: 2.1em;\">{title}</div>\n            <div class=\"online__quality\" style=\"padding-left: 3.4em;\">{quality}{info}</div>\n        </div>\n    </div>");
     }
+
     function loadOnline(object) {
         if (online_loading) return;
         online_loading = true;
-        online_loading = false;
         resetTemplates();
         Lampa.Component.add('online_mod', component);
         Lampa.Activity.push({
@@ -1598,6 +1874,7 @@
             movie: object,
             page: 1
         });
+        online_loading = false;
     }
 
     function addSettingsOnlineMod() {
@@ -1610,283 +1887,74 @@
 
     function initSettings() {
         var template = "<div>";
-
         template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_prefer_http\" data-type=\"toggle\">\n            <div class=\"settings-param__name\">#{online_mod_prefer_http}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
         template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_full_episode_title\" data-type=\"toggle\">\n            <div class=\"settings-param__name\">#{online_mod_full_episode_title}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
         template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_save_last_balanser\" data-type=\"toggle\">\n            <div class=\"settings-param__name\">#{online_mod_save_last_balanser}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>\n        <div class=\"settings-param selector\" data-name=\"online_mod_clear_last_balanser\" data-static=\"true\">\n            <div class=\"settings-param__name\">#{online_mod_clear_last_balanser}</div>\n            <div class=\"settings-param__status\"></div>\n        </div>";
         template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_premium_sort\" data-type=\"select\">\n            <div class=\"settings-param__name\">#{online_mod_premium_sort}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
         template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_mirror\" data-type=\"input\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_mirror}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
-        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_name\" data-type=\"input\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_name}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_password\" data-type=\"input\" data-string=\"true\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_password}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
+        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_cookie\" data-type=\"input\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_cookie}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
+        template += "</div>";
 
-        if (Lampa.Platform.is('android')) {
-            Lampa.Storage.set("online_mod_rezka2_status", 'false');
-        } else {
-            template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_login\" data-static=\"true\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_login}</div>\n            <div class=\"settings-param__status\"></div>\n        </div>\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_logout\" data-static=\"true\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_logout}</div>\n            <div class=\"settings-param__status\"></div>\n        </div>";
-        }
+        Lampa.Settings.add({
+            component: 'online_mod',
+            icon: '<svg height="260" viewBox="0 0 244 260" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7l0,0 L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88 L2,50.2L47.8,80L10,88z" fill="white"/></svg>',
+            name: Lampa.Lang.translate('online_mod_title_full'),
+            render: function () {
+                var body = $(Lampa.Lang.translate(template));
 
-        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_cookie\" data-type=\"input\" data-string=\"true\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_cookie}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_fill_cookie\" data-static=\"true\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_fill_cookie}</div>\n            <div class=\"settings-param__status\"></div>\n        </div>";
-        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_secret_password\" data-type=\"input\" data-string=\"true\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_secret_password}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
-        template += "\n    </div>";
-
-        Lampa.Template.add('settings_online_mod', template);
-
-        if (window.appready) addSettingsOnlineMod();
-        else {
-            Lampa.Listener.follow('app', function (e) {
-                if (e.type == 'ready') addSettingsOnlineMod();
-            });
-        }
-
-        Lampa.Settings.listener.follow('open', function (e) {
-            if (e.name == 'online_mod') {
-                var clear_last_balanser = e.body.find('[data-name="online_mod_clear_last_balanser"]');
-                clear_last_balanser.unbind('hover:enter').on('hover:enter', function () {
-                    Lampa.Storage.set('online_mod_last_balanser', {});
-                    $('.settings-param__status', clear_last_balanser).removeClass('active error wait').addClass('active');
-                });
-
-                var premium_sort_options = [
-                    { title: Lampa.Lang.translate('online_mod_premium_sort_default'), value: 'default' },
-                    { title: Lampa.Lang.translate('online_mod_premium_sort_premium_first'), value: 'premium_first' },
-                    { title: Lampa.Lang.translate('online_mod_premium_sort_premium_last'), value: 'premium_last' }
-                ];
-                var premium_sort_current = Lampa.Storage.get('online_mod_premium_sort', 'default');
-                var premium_sort_field = e.body.find('[data-name="online_mod_premium_sort"]');
-                var premium_sort_selected = premium_sort_options.filter(function (o) { return o.value === premium_sort_current; })[0] || premium_sort_options[0];
-                $('.settings-param__value', premium_sort_field).text(premium_sort_selected.title);
-                premium_sort_field.unbind('hover:enter').on('hover:enter', function () {
+                body.find('[data-name="online_mod_premium_sort"]').on('hover:enter', function () {
                     Lampa.Select.show({
                         title: Lampa.Lang.translate('online_mod_premium_sort'),
-                        items: premium_sort_options.map(function (o) {
-                            return {
-                                title: o.title,
-                                value: o.value,
-                                selected: o.value === Lampa.Storage.get('online_mod_premium_sort', 'default')
-                            };
-                        }),
-                        onBack: function () {
-                            Lampa.Controller.toggle('settings');
-                        },
+                        items: [
+                            { title: Lampa.Lang.translate('online_mod_premium_sort_default'), value: 'default' },
+                            { title: Lampa.Lang.translate('online_mod_premium_sort_premium_first'), value: 'premium_first' },
+                            { title: Lampa.Lang.translate('online_mod_premium_sort_premium_last'), value: 'premium_last' }
+                        ],
                         onSelect: function (a) {
                             Lampa.Storage.set('online_mod_premium_sort', a.value);
-                            $('.settings-param__value', premium_sort_field).text(a.title);
-                            Lampa.Controller.toggle('settings');
+                            Lampa.Settings.update();
                         }
                     });
                 });
 
-                var rezka2_login = e.body.find('[data-name="online_mod_rezka2_login"]');
-                rezka2_login.unbind('hover:enter').on('hover:enter', function () {
-                    var rezka2_login_status = $('.settings-param__status', rezka2_login).removeClass('active error wait').addClass('wait');
-                    rezka2Login(function () {
-                        rezka2_login_status.removeClass('active error wait').addClass('active');
-                    }, function () {
-                        rezka2_login_status.removeClass('active error wait').addClass('error');
-                    });
+                body.find('[data-name="online_mod_clear_last_balanser"]').on('hover:enter', function () {
+                    Lampa.Storage.set('online_mod_last_balanser', {});
+                    Lampa.Noty.show(Lampa.Lang.translate('time_reset'));
                 });
 
-                var rezka2_logout = e.body.find('[data-name="online_mod_rezka2_logout"]');
-                rezka2_logout.unbind('hover:enter').on('hover:enter', function () {
-                    var rezka2_logout_status = $('.settings-param__status', rezka2_logout).removeClass('active error wait').addClass('wait');
-                    rezka2Logout(function () {
-                        rezka2_logout_status.removeClass('active error wait').addClass('active');
-                    }, function () {
-                        rezka2_logout_status.removeClass('active error wait').addClass('error');
-                    });
-                });
-
-                var rezka2_fill_cookie = e.body.find('[data-name="online_mod_rezka2_fill_cookie"]');
-                rezka2_fill_cookie.unbind('hover:enter').on('hover:enter', function () {
-                    var rezka2_fill_cookie_status = $('.settings-param__status', rezka2_fill_cookie).removeClass('active error wait').addClass('wait');
-                    rezka2FillCookie(function () {
-                        rezka2_fill_cookie_status.removeClass('active error wait').addClass('active');
-                        Lampa.Params.update(e.body.find('[data-name="online_mod_rezka2_cookie"]'), [], e.body);
-                    }, function () {
-                        rezka2_fill_cookie_status.removeClass('active error wait').addClass('error');
-                        Lampa.Params.update(e.body.find('[data-name="online_mod_rezka2_cookie"]'), [], e.body);
-                    });
-                });
+                return body;
             }
-        });
-    }
-
-    function rezka2Login(success, error) {
-        var host = rezka2Mirror();
-        var url = host + '/ajax/login/';
-        var postdata = 'login_name=' + encodeURIComponent(Lampa.Storage.get('online_mod_rezka2_name', ''));
-        postdata += '&login_password=' + encodeURIComponent(Lampa.Storage.get('online_mod_rezka2_password', ''));
-        postdata += '&login_not_save=0';
-        network.clear();
-        network.timeout(8000);
-        network.silent(url, function (json) {
-            if (json && (json.success || json.message == 'Уже авторизован на сайте. Необходимо обновить страницу!')) {
-                Lampa.Storage.set('online_mod_rezka2_status', 'true');
-                network.clear();
-                network.timeout(8000);
-                network.silent(host + '/', function (str) {
-                    str = (str || '').replace(/\n/g, '');
-                    var error_form = str.match(/(<div class="error-code">[^<]*<div>[^<]*<\/div>[^<]*<\/div>)\s*(<div class="error-title">[^<]*<\/div>)/);
-                    if (error_form) {
-                        Lampa.Noty.show(error_form[0]);
-                        if (error) error();
-                        return;
-                    }
-                    var verify_form = str.match(/<span>MIRROR<\/span>.*<button type="submit" onclick="\$\.cookie(\([^)]*\))/);
-                    if (verify_form) {
-                        Lampa.Noty.show(Lampa.Lang.translate('online_mod_unsupported_mirror') + ' HDrezka');
-                        rezka2Logout(error, error);
-                        return;
-                    }
-                    if (success) success();
-                }, function (a, c) {
-                    if (success) success();
-                }, false, {
-                    dataType: 'text',
-                    withCredentials: true
-                });
-            } else {
-                Lampa.Storage.set('online_mod_rezka2_status', 'false');
-                if (json && json.message) Lampa.Noty.show(json.message);
-                if (error) error();
-            }
-        }, function (a, c) {
-            Lampa.Noty.show(network.errorDecode(a, c));
-            if (error) error();
-        }, postdata, {
-            withCredentials: true
-        });
-    }
-
-    function rezka2Logout(success, error) {
-        var url = rezka2Mirror() + '/logout/';
-        network.clear();
-        network.timeout(8000);
-        network.silent(url, function (str) {
-            Lampa.Storage.set('online_mod_rezka2_status', 'false');
-            if (success) success();
-        }, function (a, c) {
-            Lampa.Storage.set('online_mod_rezka2_status', 'false');
-            Lampa.Noty.show(network.errorDecode(a, c));
-            if (error) error();
-        }, false, {
-            dataType: 'text',
-            withCredentials: true
-        });
-    }
-
-    function rezka2FillCookie(success, error) {
-        var host = rezka2Mirror();
-        var url = host + '/ajax/login/';
-        var postdata = 'login_name=' + encodeURIComponent(Lampa.Storage.get('online_mod_rezka2_name', ''));
-        postdata += '&login_password=' + encodeURIComponent(Lampa.Storage.get('online_mod_rezka2_password', ''));
-        postdata += '&login_not_save=0';
-        network.clear();
-        network.timeout(8000);
-        network.silent(url, function (json) {
-            var cookie = '';
-            var values = {};
-            var sid = '';
-            if (!json.success) {
-                if (json.message) Lampa.Noty.show(json.message);
-                if (error) error();
-                return;
-            }
-            var cookieHeaders = json.headers && json.headers['set-cookie'] || null;
-            if (cookieHeaders && cookieHeaders.forEach) {
-                cookieHeaders.forEach(function (param) {
-                    var parts = param.split(';')[0].split('=');
-                    if (parts[0]) {
-                        if (parts[1] === 'deleted') delete values[parts[0]];
-                        else values[parts[0]] = parts[1] || '';
-                    }
-                });
-                sid = values['PHPSESSID'];
-                delete values['PHPSESSID'];
-                var cookies = [];
-                for (var name in values) {
-                    cookies.push(name + '=' + values[name]);
-                }
-                cookie = cookies.join('; ');
-            }
-            if (cookie) {
-                Lampa.Storage.set('online_mod_rezka2_cookie', cookie);
-                if (cookie.indexOf('PHPSESSID=') == -1) cookie = 'PHPSESSID=' + (sid || randomId2(26)) + (cookie ? '; ' + cookie : '');
-                network.clear();
-                network.timeout(8000);
-                network.silent(host + '/', function (str) {
-                    var body = (str || '').replace(/\n/g, '');
-                    var error_form = body.match(/(<div class="error-code">[^<]*<div>[^<]*<\/div>[^<]*<\/div>)\s*(<div class="error-title">[^<]*<\/div>)/);
-                    if (error_form) {
-                        Lampa.Noty.show(error_form[0]);
-                        if (error) error();
-                        return;
-                    }
-                    var verify_form = body.match(/<span>MIRROR<\/span>.*<button type="submit" onclick="\$\.cookie(\([^)]*\))/);
-                    if (verify_form) {
-                        Lampa.Storage.set('online_mod_rezka2_cookie', '');
-                        Lampa.Lang.translate('online_mod_unsupported_mirror') + ' HDrezka';
-                        if (error) error();
-                        return;
-                    }
-                    if (success) success();
-                }, function (a, c) {
-                    if (success) success();
-                }, false, {
-                    dataType: 'text',
-                    withCredentials: true,
-                    headers: { Cookie: cookie }
-                });
-            } else {
-                if (error) error();
-            }
-        }, function (a, c) {
-            Lampa.Noty.show(network.errorDecode(a, c));
-            if (error) error();
-        }, postdata, {
-            withCredentials: true
         });
     }
 
     function startPlugin() {
-        initStorage();
         initLang();
-        resetTemplates();
-
-        Lampa.Component.add('online_mod', component);
-
-        var manifest = {
-            type: 'video',
-            name: Lampa.Lang.translate('online_mod_title_full'),
-            description: Lampa.Lang.translate('online_mod_watch'),
-            component: 'online_mod',
-            onContextMenu: function (object) {
-                return {
-                    name: Lampa.Lang.translate('online_mod_watch'),
-                    description: ''
-                };
-            },
-            onContextLauch: function (object) {
-                online_loading = false;
-                loadOnline(object);
-            }
-        };
-        Lampa.Manifest.plugins = manifest;
-
-        var button = "<div class=\"full-start__button selector view--online_mod\" data-subtitle=\"\">\n        <svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" xmlns:svgjs=\"http://svgjs.com/svgjs\" version=\"1.1\" width=\"512\" height=\"512\" x=\"0\" y=\"0\" viewBox=\"0 0 244 260\" style=\"enable-background:new 0 0 512 512\" xml:space=\"preserve\" class=\"\">\n        <g xmlns=\"http://www.w3.org/2000/svg\">\n            <path d=\"M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7l0,0 L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88 L2,50.2L47.8,80L10,88z\" fill=\"currentColor\"/>\n        </g></svg>\n        <span>#{online_mod_title}</span>\n        </div>";
+        initStorage();
+        initSettings();
 
         Lampa.Listener.follow('full', function (e) {
             if (e.type == 'complite') {
-                var btn = $(Lampa.Lang.translate(button));
-                online_loading = false;
+                var btn = $(Lampa.Template.get('button_online', { title: Lampa.Lang.translate('online_mod_watch') }));
                 btn.on('hover:enter', function () {
                     loadOnline(e.data.movie);
                 });
-                e.object.activity.render().find('.view--torrent').after(btn);
+                var render = e.object.activity.render();
+                render.find('.full-start-new__buttons, .full-start__buttons').append(btn);
             }
         });
 
-        initSettings();
+        Lampa.Listener.follow('app', function (e) {
+            if (e.type == 'ready') {
+                addSettingsOnlineMod();
+            }
+        });
     }
 
-    startPlugin();
+    if (window.appready) {
+        startPlugin();
+    } else {
+        Lampa.Listener.follow('app', function (e) {
+            if (e.type == 'ready') startPlugin();
+        });
+    }
 })();
