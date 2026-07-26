@@ -1,4 +1,4 @@
-// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 34)
+// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 35)
 
 (function () {
     'use strict';
@@ -295,12 +295,17 @@
                 return;
             }
             
+            // Таймаут должен быть больше, чем худший случай "запрос + 2 повтора"
+            // (см. attempt() ниже), иначе он сработает ДО того, как повторная
+            // попытка успеет завершиться — и переводы, которые просто чуть
+            // дольше отвечали, будут ошибочно посчитаны "не премиум" именно
+            // при первом автоматическом открытии (пока соединение не "прогрето").
             var fallbackTimer = setTimeout(function() {
                 if (checked < total) {
                     checked = total;
                     callback(results);
                 }
-            }, 8000);
+            }, 15000);
 
             var current_season_id = extract.is_series ? (choice.season_id || (extract.season && extract.season[choice.season] ? extract.season[choice.season].id : (extract.season && extract.season.length > 0 ? extract.season[0].id : 1))) : null;
 
@@ -351,7 +356,7 @@
                     }
 
                     var req = new Lampa.Reguest();
-                    req.timeout(4500);
+                    req.timeout(4000);
 
                     req.silent(url, function (json) {
                         var isPremium = false;
