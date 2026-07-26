@@ -1,4 +1,4 @@
-// Online Mod (без прокси) с премиум-индикацией и фильтрацией переводов по сезона 90
+// Online Mod (без прокси) с премиум-индикацией и фильтрацией переводов по сезонам
 
 (function () {
     'use strict';
@@ -552,7 +552,7 @@
                                     $this.attr('data-premium') === 'true';
                     
                     var display_name = title;
-                    if (is_premium) {
+                    if (is_premium && display_name.indexOf('⭐') === -1) {
                         display_name += ' ⭐';
                     }
                     
@@ -570,7 +570,7 @@
             
             if (!extract.voice.length && defVoice) {
                 var def_display = defVoice.name;
-                if (defVoice.is_premium) {
+                if (defVoice.is_premium && def_display.indexOf('⭐') === -1) {
                     def_display += ' ⭐';
                 }
                 extract.voice.push({
@@ -703,16 +703,16 @@
             if (!choice.season_id && extract.season[choice.season]) {
                 choice.season_id = extract.season[choice.season].id;
             }
-
+        
             var available_voices = getAvailableVoicesForSeason(choice.season_id);
             var voice_names = available_voices.map(function (v) { return v.name; });
-
+        
             filter_items = {
                 season: extract.season.map(function (s) { return s.name; }),
                 season_id: extract.season.map(function (s) { return s.id; }),
                 voice: voice_names
             };
-
+        
             if (!filter_items.season[choice.season]) choice.season = 0;
             
             if (choice.voice_name) {
@@ -722,8 +722,17 @@
             } else if (!filter_items.voice[choice.voice]) {
                 choice.voice = 0;
             }
-
-            component.filter(filter_items, choice);
+        
+            // Вкладка "Перевод" будет добавляться только для сериалов
+            var filter_to_send = {
+                season: filter_items.season,
+                season_id: filter_items.season_id
+            };
+            if (extract.is_series) {
+                filter_to_send.voice = filter_items.voice;
+            }
+        
+            component.filter(filter_to_send, choice);
         }
 
         function getStream(element, call, error) {
@@ -738,9 +747,9 @@
                 postdata += '&action=get_stream';
             } else {
                 postdata += '&translator_id=' + encodeURIComponent(element.media.id);
-                postdata += '&is_camrip=' + encodeURIComponent(element.media.is_camrip);
-                postdata += '&is_ads=' + encodeURIComponent(element.media.is_ads);
-                postdata += '&is_director=' + encodeURIComponent(element.media.is_director);
+                postdata += '&is_camrip=' + encodeURIComponent(element.media.is_camrip || 0);
+                postdata += '&is_ads=' + encodeURIComponent(element.media.is_ads || 0);
+                postdata += '&is_director=' + encodeURIComponent(element.media.is_director || 0);
                 postdata += '&favs=' + encodeURIComponent(extract.favs);
                 postdata += '&action=get_movie';
             }
@@ -754,14 +763,9 @@
                     var items = extractItems(video);
                     if (items && items.length) {
                         file = items[0].file;
-                        var premium_content = json.premium_content || false;
-                        var prev_file = '';
+                        var premium_content = (json.premium_content === true || json.premium_content === '1');
                         quality = {};
                         items.forEach(function (item) {
-                            if (item.label !== '1080p Ultra') {
-                                if (prev_file !== '' && prev_file !== item.file) premium_content = false;
-                                prev_file = item.file;
-                            }
                             quality[item.label] = item.file;
                         });
                         if (premium_content) {
@@ -800,7 +804,7 @@
                 ep_list.forEach(function (episode) {
                     if (episode.season_id == season_id) {
                         filtred.push({
-                            title: component.formatEpisodeTitle(episode.season_id, null, episode.name) + (is_premium ? ' <span style="font-size: 0.7em; vertical-align: super; color: #FFD700;">⭐ premium</span>' : ''),
+                            title: component.formatEpisodeTitle(episode.season_id, episode.episode_id, episode.name) + (is_premium ? ' <span style="font-size: 0.7em; vertical-align: super; color: #FFD700;">⭐ premium</span>' : ''),
                             quality: '360p ~ 1080p',
                             info: voice_clean ? ' / ' + voice_clean : '',
                             season: parseInt(episode.season_id),
@@ -1579,10 +1583,10 @@
             online_mod_clearmark_all: { ru: 'Снять отметку у всех', uk: 'Зняти позначку у всіх', be: 'Зняць адзнаку ва ўсіх', en: 'Uncheck all', zh: '取消所有' },
             online_mod_timeclear_all: { ru: 'Сбросить тайм-код у всех', uk: 'Скинути тайм-код у всіх', be: 'Скінуць тайм-код ва ўсіх', en: 'Reset timecode for all', zh: '为所有人重置时间码' },
             online_mod_query_start: { ru: 'По запросу', uk: 'На запит', be: 'Па запыце', en: 'On request', zh: '根据要求' },
-            online_mod_query_end: { ru: 'нет результатов', uk: 'немає результатів', be: 'няма вынікаў', en: 'no results', zh: '没有结果' },
+            online_mod_query_end: { ru: 'нет результатов', uk: 'немає результатів', be: 'няма винікаў', en: 'no results', zh: '没有结果' },
             online_mod_title: { ru: 'Онлайн HDrezka', uk: 'Онлайн HDrezka', be: 'Анлайн HDrezka', en: 'Online HDrezka', zh: '在线的 HDrezka' },
             online_mod_title_full: { ru: 'Онлайн Мод', uk: 'Онлайн Мод', be: 'Анлайн Мод', en: 'Online Mod', zh: '在线的 Mod' },
-            online_mod_prefer_http: { ru: 'Предпочитать поток по HTTP', uk: 'Віддавати перевагу потіку по HTTP', be: 'Аддаваць перавагу патоку па HTTP', en: 'Prefer stream over HTTP', zh: '优先于 HTTP 流式传输' },
+            online_mod_prefer_http: { ru: 'Предпочитать поток по HTTP', uk: 'Віддавати перевагу потіку по HTTP', be: 'Аддаваць перевагу патоку па HTTP', en: 'Prefer stream over HTTP', zh: '优先于 HTTP 流式传输' },
             online_mod_full_episode_title: { ru: 'Полный формат названия серии', uk: 'Повний формат назви серії', be: 'Поўны фармат назвы серыі', en: 'Full episode title format', zh: '完整剧集标题格式' },
             online_mod_save_last_balanser: { ru: 'Сохранять историю балансеров', uk: 'Зберігати історію балансерів', be: 'Захоўваць гісторыю балансараў', en: 'Save history of balancers', zh: '保存平衡器的历史记录' },
             online_mod_clear_last_balanser: { ru: 'Очистить историю балансеров', uk: 'Очистити історію балансерів', be: 'Ачысціць гісторыю балансараў', en: 'Clear history of balancers', zh: '清除平衡器的历史记录' },
