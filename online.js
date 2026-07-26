@@ -1920,6 +1920,7 @@
     // --- Запуск ---
     function startPlugin() {
         logApp();
+        initStorage();
         initLang();
         resetTemplates();
 
