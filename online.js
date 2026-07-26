@@ -823,7 +823,7 @@
                 extract.episode.forEach(function (episode) {
                     if (episode.season_id == season_id) {
                         filtred.push({
-                            title: component.formatEpisodeTitle(episode.season_id, null, episode.name) + (is_premium ? ' ⭐' : ''),
+                            title: component.formatEpisodeTitle(episode.season_id, null, episode.name) + (is_premium ? ' <span style="font-size: 0.7em; vertical-align: super; color: #FFD700;">⭐ premium</span>' : ''),
                             quality: '360p ~ 1080p',
                             info: ' / ' + voice_clean,
                             season: parseInt(episode.season_id),
@@ -837,7 +837,7 @@
                 extract.voice.forEach(function (voice) {
                     var display_title = voice.clean_name || voice.name;
                     filtred.push({
-                        title: (voice.clean_name || voice.name) + (voice.is_premium ? ' ⭐' : ''),
+                        title: (voice.clean_name || voice.name) + (voice.is_premium ? ' <span style="font-size: 0.7em; vertical-align: super; color: #FFD700;">⭐ premium</span>' : ''),
                         quality: '360p ~ 1080p',
                         info: '',
                         media: voice,
