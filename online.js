@@ -651,34 +651,40 @@
         }
 
         function getEpisodes(call) {
-            if (extract.is_series) {
-                filterVoice();
-                if (extract.voice[choice.voice]) {
-                    var translator_id = extract.voice[choice.voice].id;
-                    var data = extract.voice_data[translator_id];
-                    if (data) {
-                        extract.season = data.season;
-                        extract.episode = data.episode;
+            if (extract.is_series && extract.voice.length) {
+                var pending = 0;
+                var total = extract.voice.length;
+        
+                function checkDone() {
+                    pending++;
+                    if (pending >= total) {
+                        call();
+                    }
+                }
+        
+                extract.voice.forEach(function (v) {
+                    var translator_id = v.id;
+                    if (extract.voice_data[translator_id]) {
+                        checkDone();
                     } else {
                         var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
                         var postdata = 'id=' + encodeURIComponent(extract.film_id);
                         postdata += '&translator_id=' + encodeURIComponent(translator_id);
                         postdata += '&favs=' + encodeURIComponent(extract.favs);
                         postdata += '&action=get_episodes';
-                        network.clear();
-                        network.timeout(10000);
+        
                         network.silent(url, function (json) {
                             extractEpisodes(json, translator_id);
-                            call();
-                        }, function (a, c) {
-                            component.empty(network.errorDecode(a, c));
+                            checkDone();
+                        }, function () {
+                            checkDone();
                         }, postdata, {
                             withCredentials: true,
                             headers: headers
                         });
-                        return;
                     }
-                }
+                });
+                return;
             }
             call();
         }
@@ -723,27 +729,27 @@
         }
 
         function filter() {
+            var selected_season_id = extract.season[choice.season] ? extract.season[choice.season].id : null;
+        
+            // Отбираем только те переводы, где присутствует выбранный сезон
+            var available_voices = extract.voice.filter(function (v) {
+                if (!selected_season_id) return true;
+                var v_data = extract.voice_data[v.id];
+                if (!v_data || !v_data.season) return true;
+                return v_data.season.some(function (s) {
+                    return s.id == selected_season_id;
+                });
+            });
+        
             filter_items = {
                 season: extract.season.map(function (s) { return s.name; }),
                 season_id: extract.season.map(function (s) { return s.id; }),
-                voice: extract.is_series ? extract.voice.map(function (v) { return v.name; }) : []
+                voice: available_voices.map(function (v) { return v.name; })
             };
+        
             if (!filter_items.season[choice.season]) choice.season = 0;
             if (!filter_items.voice[choice.voice]) choice.voice = 0;
-            if (choice.voice_name) {
-                var inx = filter_items.voice.indexOf(choice.voice_name);
-                if (inx == -1) choice.voice = 0;
-                else if (inx !== choice.voice) {
-                    choice.voice = inx;
-                }
-            }
-            if (choice.season_id) {
-                var _inx = filter_items.season_id.indexOf(choice.season_id);
-                if (_inx == -1) choice.season = 0;
-                else if (_inx !== choice.season) {
-                    choice.season = _inx;
-                }
-            }
+        
             component.filter(filter_items, choice);
         }
 
