@@ -825,7 +825,7 @@
                         filtred.push({
                             title: component.formatEpisodeTitle(episode.season_id, null, episode.name) + (is_premium ? ' ⭐' : ''),
                             quality: '',
-                            info: voice_clean,
+                            info: ' / ' + voice_clean,
                             season: parseInt(episode.season_id),
                             episode: parseInt(episode.episode_id),
                             media: episode,
