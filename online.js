@@ -1,4 +1,4 @@
-// Online Mod (без прокси) с премиум-индикацией и переводами по сезонам
+// Online Mod (без прокси) с премиум-индикацией 90
 
 (function () {
     'use strict';
@@ -488,7 +488,12 @@
         this.filter = function (type, a, b) {
             choice[a.stype] = b.index;
             if (a.stype == 'voice') choice.voice_name = filter_items.voice[b.index];
-            if (a.stype == 'season') choice.season_id = filter_items.season_id[b.index];
+            if (a.stype == 'season') {
+                choice.season_id = filter_items.season_id[b.index];
+                // При смене сезона сбрасываем выбор озвучки на первую доступную
+                choice.voice = 0;
+                choice.voice_name = filter_items.voice[0] || '';
+            }
             component.reset();
             component.loading(true);
             getEpisodes(success);
@@ -526,13 +531,12 @@
             append(filtred());
         }
 
-        // ============ ПАРСИНГ ПЕРЕВОДОВ ============
+        // ============ ПАРСИНГ ПЕРЕВОДОВ С ПРОВЕРКОЙ НА PREMIUM ============
         function extractData(str) {
             extract.voice = [];
             extract.season = [];
             extract.episode = [];
             extract.voice_data = {};
-            extract.season_voices = {};
             extract.is_series = false;
             extract.film_id = '';
             extract.favs = '';
@@ -584,14 +588,6 @@
                         display_name += ' ⭐';
                     }
                     
-                    // Получаем ID сезонов для этого перевода
-                    var season_ids = [];
-                    $this.find('.b-translator__season').each(function() {
-                        var sid = $(this).attr('data-season_id');
-                        if (sid) season_ids.push(sid);
-                    });
-                    var available_for_all = season_ids.length === 0;
-                    
                     extract.voice.push({
                         name: display_name,
                         clean_name: title,
@@ -599,9 +595,7 @@
                         is_camrip: $this.attr('data-camrip'),
                         is_ads: $this.attr('data-ads'),
                         is_director: $this.attr('data-director'),
-                        is_premium: is_premium,
-                        season_ids: season_ids,
-                        available_for_all: available_for_all
+                        is_premium: is_premium
                     });
                 });
             }
@@ -615,60 +609,25 @@
                     name: def_display,
                     clean_name: defVoice.name,
                     id: defVoice.id,
-                    is_premium: defVoice.is_premium || false,
-                    season_ids: [],
-                    available_for_all: true
+                    is_premium: defVoice.is_premium || false
                 });
             }
             
-            // ============ ПАРСИНГ СЕЗОНОВ И СЕРИЙ ============
+            // ============ ПАРСИНГ СЕЗОНОВ ============
             if (extract.is_series) {
                 var seasons = str.match(/(<ul id="simple-seasons-tabs".*?<\/ul>)/);
                 if (seasons) {
                     var _select = $(seasons[1]);
                     $('.b-simple_season__item', _select).each(function () {
-                        var season_id = $(this).attr('data-tab_id');
                         extract.season.push({
                             name: $(this).text(),
-                            id: season_id
+                            id: $(this).attr('data-tab_id')
                         });
-                        extract.season_voices[season_id] = [];
                     });
                 }
                 if (!extract.season.length && defSeason) {
                     extract.season.push(defSeason);
-                    extract.season_voices[defSeason.id] = [];
                 }
-                
-                var episodes = str.match(/(<div id="simple-episodes-tabs".*?<\/div>)/);
-                if (episodes) {
-                    var _select2 = $(episodes[1]);
-                    $('.b-simple_episode__item', _select2).each(function () {
-                        extract.episode.push({
-                            name: $(this).text(),
-                            season_id: $(this).attr('data-season_id'),
-                            episode_id: $(this).attr('data-episode_id')
-                        });
-                    });
-                }
-                if (!extract.episode.length && defEpisode) {
-                    extract.episode.push(defEpisode);
-                }
-                
-                // ============ СОБИРАЕМ ПЕРЕВОДЫ ДЛЯ КАЖДОГО СЕЗОНА ============
-                extract.voice.forEach(function(voice) {
-                    if (voice.available_for_all) {
-                        for (var sid in extract.season_voices) {
-                            extract.season_voices[sid].push(voice);
-                        }
-                    } else {
-                        voice.season_ids.forEach(function(sid) {
-                            if (extract.season_voices[sid]) {
-                                extract.season_voices[sid].push(voice);
-                            }
-                        });
-                    }
-                });
             }
             
             var favs = str.match(/<input type="hidden" id="ctrl_favs" value="([^"]*)"/);
@@ -678,40 +637,57 @@
             if (blocked) extract.blocked = true;
         }
 
+        // ============ ЗАГРУЗКА ЭПИЗОДОВ ДЛЯ ВСЕХ ПЕРЕВОДОВ ============
         function getEpisodes(call) {
             if (extract.is_series) {
-                filterVoice();
-                if (extract.voice[choice.voice]) {
-                    var translator_id = extract.voice[choice.voice].id;
-                    var data = extract.voice_data[translator_id];
-                    if (data) {
-                        extract.season = data.season;
-                        extract.episode = data.episode;
-                        updateSeasonVoices();
-                        call();
-                    } else {
-                        var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
-                        var postdata = 'id=' + encodeURIComponent(extract.film_id);
-                        postdata += '&translator_id=' + encodeURIComponent(translator_id);
-                        postdata += '&favs=' + encodeURIComponent(extract.favs);
-                        postdata += '&action=get_episodes';
-                        network.clear();
-                        network.timeout(10000);
-                        network.silent(url, function (json) {
-                            extractEpisodes(json, translator_id);
-                            updateSeasonVoices();
+                var voice_list = extract.voice || [];
+                var total_voices = voice_list.length;
+                var loaded_voices = 0;
+                
+                // Если нет переводов - сразу вызываем callback
+                if (total_voices === 0) {
+                    call();
+                    return;
+                }
+                
+                voice_list.forEach(function (voice) {
+                    var translator_id = voice.id;
+                    
+                    if (extract.voice_data[translator_id]) {
+                        loaded_voices++;
+                        if (loaded_voices >= total_voices) {
                             call();
-                        }, function (a, c) {
-                            component.empty(network.errorDecode(a, c));
-                        }, postdata, {
-                            withCredentials: true,
-                            headers: headers
-                        });
+                        }
                         return;
                     }
-                }
+                    
+                    var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
+                    var postdata = 'id=' + encodeURIComponent(extract.film_id);
+                    postdata += '&translator_id=' + encodeURIComponent(translator_id);
+                    postdata += '&favs=' + encodeURIComponent(extract.favs);
+                    postdata += '&action=get_episodes';
+                    
+                    network.clear();
+                    network.timeout(10000);
+                    network.silent(url, function (json) {
+                        extractEpisodes(json, translator_id);
+                        loaded_voices++;
+                        if (loaded_voices >= total_voices) {
+                            call();
+                        }
+                    }, function (a, c) {
+                        loaded_voices++;
+                        if (loaded_voices >= total_voices) {
+                            call();
+                        }
+                    }, postdata, {
+                        withCredentials: true,
+                        headers: headers
+                    });
+                });
+            } else {
+                call();
             }
-            call();
         }
 
         function extractEpisodes(json, translator_id) {
@@ -737,28 +713,6 @@
                 });
             }
             extract.voice_data[translator_id] = data;
-            extract.season = data.season;
-            extract.episode = data.episode;
-        }
-
-        function updateSeasonVoices() {
-            for (var sid in extract.season_voices) {
-                extract.season_voices[sid] = [];
-            }
-            
-            extract.voice.forEach(function(voice) {
-                if (voice.available_for_all) {
-                    for (var sid in extract.season_voices) {
-                        extract.season_voices[sid].push(voice);
-                    }
-                } else {
-                    voice.season_ids.forEach(function(sid) {
-                        if (extract.season_voices[sid]) {
-                            extract.season_voices[sid].push(voice);
-                        }
-                    });
-                }
-            });
         }
 
         function filterVoice() {
@@ -773,34 +727,24 @@
             }
         }
 
-        // ============ ФИЛЬТР С ПЕРЕВОДАМИ ДЛЯ ТЕКУЩЕГО СЕЗОНА ============
         function filter() {
-            var current_season_id = extract.season[choice.season] ? extract.season[choice.season].id : null;
-            
-            var season_voices = [];
-            if (current_season_id && extract.season_voices[current_season_id]) {
-                season_voices = extract.season_voices[current_season_id].map(function(v) { return v.name; });
-            } else {
-                season_voices = extract.voice.map(function(v) { return v.name; });
-            }
-            
             filter_items = {
                 season: extract.season.map(function (s) { return s.name; }),
                 season_id: extract.season.map(function (s) { return s.id; }),
-                voice: season_voices
+                voice: extract.is_series ? extract.voice.map(function (v) { return v.name; }) : []
             };
             
-            if (!filter_items.voice[choice.voice]) {
-                choice.voice = 0;
-            }
+            if (!filter_items.season[choice.season]) choice.season = 0;
+            if (!filter_items.voice[choice.voice]) choice.voice = 0;
+            
             if (choice.voice_name) {
                 var inx = filter_items.voice.indexOf(choice.voice_name);
-                if (inx == -1) {
-                    choice.voice = 0;
-                } else if (inx !== choice.voice) {
+                if (inx == -1) choice.voice = 0;
+                else if (inx !== choice.voice) {
                     choice.voice = inx;
                 }
             }
+            
             if (choice.season_id) {
                 var _inx = filter_items.season_id.indexOf(choice.season_id);
                 if (_inx == -1) choice.season = 0;
@@ -808,6 +752,7 @@
                     choice.season = _inx;
                 }
             }
+            
             component.filter(filter_items, choice);
         }
 
@@ -869,7 +814,7 @@
             });
         }
 
-        // ============ ФОРМИРОВАНИЕ СПИСКА ============
+        // ============ ФОРМИРОВАНИЕ СПИСКА С ПЕРЕВОДАМИ ДЛЯ КАЖДОГО СЕЗОНА ============
         function filtred() {
             var filtred = [];
             if (extract.is_series) {
@@ -878,30 +823,68 @@
                 extract.season.forEach(function (season) {
                     if (season.name == season_name) season_id = season.id;
                 });
-                var voice = filter_items.voice[choice.voice];
-                var voice_data = extract.voice[choice.voice] || {};
-                var is_premium = voice_data.is_premium || false;
-                var voice_clean = voice_data.clean_name || voice;
-                
-                extract.episode.forEach(function (episode) {
-                    if (episode.season_id == season_id) {
-                        filtred.push({
-                            title: component.formatEpisodeTitle(episode.season_id, null, episode.name) + (is_premium ? ' <span style="font-size: 0.7em; vertical-align: super; color: #FFD700;">⭐</span>' : ''),
-                            quality: 'Сезон ' + episode.season_id,
-                            info: ' / ' + voice_clean,
-                            season: parseInt(episode.season_id),
-                            episode: parseInt(episode.episode_id),
-                            media: episode,
-                            is_premium: is_premium
+
+                extract.voice.forEach(function (voice_data, voice_index) {
+                    var is_premium = voice_data.is_premium || false;
+                    var voice_clean = voice_data.clean_name || voice_data.name;
+                    
+                    var has_episodes = false;
+                    var season_episodes = [];
+                    
+                    if (extract.voice_data[voice_data.id]) {
+                        var voice_episodes = extract.voice_data[voice_data.id].episode || [];
+                        
+                        voice_episodes.forEach(function (episode) {
+                            if (episode.season_id == season_id) {
+                                has_episodes = true;
+                                season_episodes.push(episode);
+                            }
+                        });
+                    }
+                    
+                    if (has_episodes && season_episodes.length > 0) {
+                        season_episodes.forEach(function (episode) {
+                            filtred.push({
+                                title: component.formatEpisodeTitle(episode.season_id, null, episode.name) + (is_premium ? ' <span style="font-size: 0.7em; vertical-align: super; color: #FFD700;">⭐ premium</span>' : ''),
+                                quality: '360p ~ 1080p',
+                                info: ' / ' + voice_clean,
+                                season: parseInt(episode.season_id),
+                                episode: parseInt(episode.episode_id),
+                                media: episode,
+                                voice_index: voice_index,
+                                is_premium: is_premium,
+                                voice_name: voice_clean
+                            });
                         });
                     }
                 });
+                
+                if (filtred.length === 0) {
+                    var voice = filter_items.voice[choice.voice];
+                    var voice_data = extract.voice[choice.voice] || {};
+                    var is_premium = voice_data.is_premium || false;
+                    var voice_clean = voice_data.clean_name || voice;
+                    
+                    extract.episode.forEach(function (episode) {
+                        if (episode.season_id == season_id) {
+                            filtred.push({
+                                title: component.formatEpisodeTitle(episode.season_id, null, episode.name) + (is_premium ? ' <span style="font-size: 0.7em; vertical-align: super; color: #FFD700;">⭐ premium</span>' : ''),
+                                quality: '360p ~ 1080p',
+                                info: ' / ' + voice_clean,
+                                season: parseInt(episode.season_id),
+                                episode: parseInt(episode.episode_id),
+                                media: episode,
+                                is_premium: is_premium,
+                                voice_name: voice_clean
+                            });
+                        }
+                    });
+                }
             } else {
                 extract.voice.forEach(function (voice) {
-                    var display_title = voice.clean_name || voice.name;
                     filtred.push({
-                        title: (voice.clean_name || voice.name) + (voice.is_premium ? ' <span style="font-size: 0.7em; vertical-align: super; color: #FFD700;">⭐</span>' : ''),
-                        quality: '',
+                        title: (voice.clean_name || voice.name) + (voice.is_premium ? ' <span style="font-size: 0.7em; vertical-align: super; color: #FFD700;">⭐ premium</span>' : ''),
+                        quality: '360p ~ 1080p',
                         info: '',
                         media: voice,
                         is_premium: voice.is_premium || false
@@ -936,11 +919,7 @@
                 element.timeline = view;
                 item.append(Lampa.Timeline.render(view));
                 if (Lampa.Timeline.details) {
-                    if (element.is_premium) {
-                        item.find('.online__quality').append(Lampa.Timeline.details(view, ' / '));
-                    } else {
-                        item.find('.online__quality').append(Lampa.Timeline.details(view, ' '));
-                    }
+                    item.find('.online__quality').append(Lampa.Timeline.details(view, ' / '));
                 }
                 if (viewed.indexOf(hash_file) !== -1) item.append('<div class="torrent-item__viewed">' + Lampa.Template.get('icon_star', {}, true) + '</div>');
                 
