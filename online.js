@@ -805,7 +805,7 @@
             });
         }
 
-        // ============ ФОРМИРОВАНИЕ СПИСКА С РЕАЛЬНЫМИ КАЧЕСТВАМИ ============
+        // ============ ФОРМИРОВАНИЕ СПИСКА ============
         function filtred() {
             var filtred = [];
             if (extract.is_series) {
@@ -817,16 +817,14 @@
                 var voice = filter_items.voice[choice.voice];
                 var voice_data = extract.voice[choice.voice] || {};
                 var is_premium = voice_data.is_premium || false;
+                // Для info используем чистое название без звёздочки
                 var voice_clean = voice_data.clean_name || voice;
                 
                 extract.episode.forEach(function (episode) {
                     if (episode.season_id == season_id) {
-                        // Получаем качество для каждого эпизода
-                        var quality_text = getEpisodeQuality(episode);
-                        
                         filtred.push({
                             title: component.formatEpisodeTitle(episode.season_id, null, episode.name),
-                            quality: quality_text, // РЕАЛЬНОЕ КАЧЕСТВО
+                            quality: '',
                             info: ' / ' + voice_clean + (is_premium ? ' ⭐' : ''),
                             season: parseInt(episode.season_id),
                             episode: parseInt(episode.episode_id),
@@ -837,13 +835,10 @@
                 });
             } else {
                 extract.voice.forEach(function (voice) {
-                    // Для фильмов получаем качество
-                    var quality_text = getMovieQuality(voice);
-                    
                     var display_title = voice.clean_name || voice.name;
                     filtred.push({
                         title: display_title || select_title,
-                        quality: quality_text, // РЕАЛЬНОЕ КАЧЕСТВО
+                        quality: '',
                         info: voice.is_premium ? ' ⭐' : '',
                         media: voice,
                         is_premium: voice.is_premium || false
@@ -851,28 +846,6 @@
                 });
             }
             return filtred;
-        }
-        
-        // ============ ПОЛУЧЕНИЕ КАЧЕСТВА ДЛЯ СЕРИИ ============
-        function getEpisodeQuality(episode) {
-            // Пытаемся получить качество из кэша или делаем запрос
-            var translator_id = extract.voice[choice.voice] ? extract.voice[choice.voice].id : null;
-            if (!translator_id) return '360p ~ 1080p';
-            
-            // Проверяем, есть ли уже загруженные данные для этого перевода
-            var data = extract.voice_data[translator_id];
-            if (data && data.quality) {
-                return data.quality;
-            }
-            
-            // Если данных нет, возвращаем заглушку
-            return '360p ~ 1080p';
-        }
-        
-        function getMovieQuality(voice) {
-            // Для фильмов можно сделать запрос на получение качества
-            // Или вернуть заглушку
-            return '360p ~ 1080p';
         }
 
         // ============ ОТОБРАЖЕНИЕ СПИСКА ============
@@ -1696,8 +1669,8 @@
     }
 
     function resetTemplates() {
-        Lampa.Template.add('online_mod', "<div class=\"online selector\">\n        <div class=\"online__body\">\n            <div style=\"position: absolute;left: 0;top: -0.3em;width: 2.4em;height: 2.4em\">\n                <svg style=\"height: 2.4em; width:  2.4em;\" viewBox=\"0 0 128 128\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n                    <circle cx=\"64\" cy=\"64\" r=\"56\" stroke=\"white\" stroke-width=\"16\"/>\n                    <path d=\"M90.5 64.3827L50 87.7654L50 41L90.5 64.3827Z\" fill=\"white\"/>\n                </svg>\n            </div>\n            <div class=\"online__title\" style=\"padding-left: 2.1em;\">{title}</div>\n            <div class=\"online__quality\" style=\"padding-left: 3.4em;\">{quality}{info}</div>\n        </div>\n    </div>");
-        Lampa.Template.add('online_mod_folder', "<div class=\"online selector\">\n        <div class=\"online__body\">\n            <div style=\"position: absolute;left: 0;top: -0.3em;width: 2.4em;height: 2.4em\">\n                <svg style=\"height: 2.4em; width:  2.4em;\" viewBox=\"0 0 128 112\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n                    <rect y=\"20\" width=\"128\" height=\"92\" rx=\"13\" fill=\"white\"/>\n                    <path d=\"M29.9963 8H98.0037C96.0446 3.3021 91.4079 0 86 0H42C36.5921 0 31.9555 3.3021 29.9963 8Z\" fill=\"white\" fill-opacity=\"0.23\"/>\n                    <rect x=\"11\" y=\"8\" width=\"106\" height=\"76\" rx=\"13\" fill=\"white\" fill-opacity=\"0.51\"/>\n                </svg>\n            </div>\n            <div class=\"online__title\" style=\"padding-left: 2.1em;\">{title}</div>\n            <div class=\"online__quality\" style=\"padding-left: 3.4em;\">{quality}{info}</div>\n        </div>\n    </div>");
+    Lampa.Template.add('online_mod', "<div class=\"online selector\">\n        <div class=\"online__body\" style=\"display: flex; align-items: center; min-height: 3.2em;\">\n            <div style=\"position: absolute;left: 0;top: 50%;transform: translateY(-50%);width: 2.4em;height: 2.4em;\">\n                <svg style=\"height: 2.4em; width:  2.4em;\" viewBox=\"0 0 128 128\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n                    <circle cx=\"64\" cy=\"64\" r=\"56\" stroke=\"white\" stroke-width=\"16\"/>\n                    <path d=\"M90.5 64.3827L50 87.7654L50 41L90.5 64.3827Z\" fill=\"white\"/>\n                </svg>\n            </div>\n            <div class=\"online__title\" style=\"padding-left: 2.8em; line-height: 1.4;\">{title}</div>\n        </div>\n    </div>");
+    Lampa.Template.add('online_mod_folder', "<div class=\"online selector\">\n        <div class=\"online__body\" style=\"display: flex; align-items: center; min-height: 3.2em;\">\n            <div style=\"position: absolute;left: 0;top: 50%;transform: translateY(-50%);width: 2.4em;height: 2.4em;\">\n                <svg style=\"height: 2.4em; width:  2.4em;\" viewBox=\"0 0 128 112\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n                    <rect y=\"20\" width=\"128\" height=\"92\" rx=\"13\" fill=\"white\"/>\n                    <path d=\"M29.9963 8H98.0037C96.0446 3.3021 91.4079 0 86 0H42C36.5921 0 31.9555 3.3021 29.9963 8Z\" fill=\"white\" fill-opacity=\"0.23\"/>\n                    <rect x=\"11\" y=\"8\" width=\"106\" height=\"76\" rx=\"13\" fill=\"white\" fill-opacity=\"0.51\"/>\n                </svg>\n            </div>\n            <div class=\"online__title\" style=\"padding-left: 2.8em; line-height: 1.4;\">{title}</div>\n        </div>\n    </div>");
     }
 
     function loadOnline(object) {
