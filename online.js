@@ -1,4 +1,4 @@
-// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 60)
+// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 61)
 
 (function () {
     'use strict';
@@ -102,12 +102,6 @@
     // ajax-запросов разом — HDrezka (или её CDN/анти-флуд) в ответ на такую
     // пачку валит большинство запросов с HTTP 503, и это не лечится
     // повторными попытками "в лоб", т.к. повтор тоже летит в общей пачке.
-    //
-    // ВАЖНО: раньше первые `limit` запусков стартовали синхронно, залпом,
-    // без паузы между ними (баг) — из-за этого даже при limit=2 два запроса
-    // всё равно улетали практически одновременно. Теперь запуск нового
-    // элемента происходит СТРОГО не чаще раза в `stagger` мс, вне
-    // зависимости от того, сколько слотов параллелизма свободно.
     function runLimited(items, limit, stagger, worker, onAllDone) {
         var idx = 0;
         var active = 0;
@@ -195,7 +189,7 @@
         }
         var embed = ref;
         var filter_items = {};
-        var voice_list_current = []; // Озвучки, доступные для ТЕКУЩЕГО выбранного сезона
+        var voice_list_current = [];
         var choice = {
             season: 0,
             voice: 0,
@@ -203,22 +197,39 @@
             season_id: ''
         };
         var error_message = '';
-        var premium_cache = {}; // Кеш премиум-статуса — живёт только в рамках текущего
-        // открытия карточки (этот экземпляр пересоздаётся заново при выходе в меню
-        // и повторном заходе), поэтому свежий статус всегда перепроверяется, а не
-        // "залипает" на старом значении. Ключ учитывает сезон, т.к. на HDrezka
-        // премиум-статус озвучки может отличаться от сезона к сезону.
-        var render_generation = 0; // Счётчик "поколений" рендера — защита от гонки:
-        // если пользователь быстро переключает сезон/озвучку, старый (более
-        // ранний) сетевой ответ не должен перетереть уже отрисованный новый выбор.
+        var premium_cache = {};
+        var render_generation = 0;
 
-        var destroyed = false; // Компонент закрыт (destroy()), но фоновые
-        // запросы (checkAllPremium/fetchVoiceData через свои собственные
-        // Lampa.Reguest — их не отменяет network.clear() в destroy()) могут
-        // ещё лететь и вернуться ПОСЛЕ этого. Их коллбеки должны проверять
-        // этот флаг перед обращением к extract, иначе — падение с
-        // "Cannot read properties of null (reading 'voice_data')" и т.п.,
-        // т.к. extract к этому моменту уже обнулён в destroy().
+        var destroyed = false;
+
+        // Постоянное хранилище для кэша премиум-статуса на 24 часа
+        var PREMIUM_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 часа в миллисекундах
+
+        function getPremiumCacheKey(voice_id, season_id, film_id) {
+            return 'premium_cache_' + (film_id || extract.film_id || '') + '_' + voice_id + '_' + (season_id || '0');
+        }
+
+        function getCachedPremium(voice_id, season_id) {
+            var key = getPremiumCacheKey(voice_id, season_id);
+            var cached = Lampa.Storage.get(key, null);
+            if (cached) {
+                var parsed = JSON.parse(cached);
+                if (parsed && parsed.timestamp && (Date.now() - parsed.timestamp) < PREMIUM_CACHE_DURATION) {
+                    return parsed.value;
+                }
+                // Просроченный кэш удаляем
+                Lampa.Storage.set(key, null);
+            }
+            return null;
+        }
+
+        function setCachedPremium(voice_id, season_id, value) {
+            var key = getPremiumCacheKey(voice_id, season_id);
+            Lampa.Storage.set(key, JSON.stringify({
+                value: value,
+                timestamp: Date.now()
+            }));
+        }
 
         function premiumCacheKey(voice_id, season_id) {
             return (extract.film_id || '') + '_' + voice_id + '_' + (season_id || '0');
@@ -311,13 +322,6 @@
             return subtitles.length ? subtitles : false;
         }
 
-        // Проверка премиум-статуса для всех озвучек.
-        // Пробуем 1-ю серию сезона как индикатор премиум-статуса озвучки —
-        // это самый надёжный вариант (не зависит от того, успели ли подгрузиться
-        // данные по конкретным эпизодам этого сезона для этой озвучки).
-        // Если в сезоне премиум только у ПОЗДНИХ серий, а не с начала — это всё
-        // равно поймается "на лету" при реальном клике на серию: см.
-        // markPremiumDiscovered() и её вызов в обработчике ошибки getStream().
         function getProbeEpisodeId() {
             return '1';
         }
@@ -327,41 +331,23 @@
             var checked = 0;
             var results = {};
 
-            dlog('checkAllPremium() START total=', total, 'season_id=', season_id, 'force=', !!force, 'voice_ids=', voice_ids);
-
             if (total === 0) {
-                dlog('checkAllPremium() total=0, callback сразу');
                 callback(results);
                 return;
             }
             
-            // Таймаут должен быть больше, чем худший случай "запрос + 2 повтора"
-            // (см. attempt() ниже), иначе он сработает ДО того, как повторная
-            // попытка успеет завершиться — и переводы, которые просто чуть
-            // дольше отвечали, будут ошибочно посчитаны "не премиум" именно
-            // при первом автоматическом открытии (пока соединение не "прогрето").
             var fallbackTimer = setTimeout(function() {
                 if (checked < total) {
                     var unfinished = voice_ids.filter(function (id) {
                         return results[id] === undefined;
                     });
-                    dlog('checkAllPremium() FALLBACK TIMER сработал! checked=', checked, '/', total, 'unfinished=', unfinished);
                     checked = total;
-                    // Помечаем, кто не успел ответить, чтобы можно было
-                    // тихо перепроверить именно их позже — не кэшируя
-                    // false как достоверный факт (см. finish() выше).
                     results.__timedOut = unfinished;
                     callback(results);
                 }
             }, Math.max(20000, total * 6000));
 
             var current_season_id = season_id;
-
-            // ВАЖНО: раньше все voice_ids запускались через forEach одновременно —
-            // пачка из 8-10 параллельных запросов на ajax/get_cdn_series почти
-            // всегда ловит HTTP 503 от анти-флуд защиты HDrezka (подтверждено
-            // логами: 8 из 9 запросов = 503 мгновенно). Поэтому теперь запросы
-            // идут очередью не более чем по PREMIUM_CONCURRENCY штук одновременно.
             var PREMIUM_CONCURRENCY = 2;
             var PREMIUM_STAGGER_MS = 300;
 
@@ -369,15 +355,27 @@
                 var cache_key = premiumCacheKey(voice_id, current_season_id);
 
                 if (!force) {
+                    // Проверяем оперативный кэш (в памяти)
                     var cached = premium_cache[cache_key];
-
                     if (cached !== undefined) {
-                        dlog('checkAllPremium() voice=', voice_id, 'ИЗ КЭША, isPremium=', cached, 'key=', cache_key);
                         results[voice_id] = cached;
                         checked++;
                         if (checked === total) {
                             clearTimeout(fallbackTimer);
-                            dlog('checkAllPremium() DONE (все из кэша) results=', results);
+                            callback(results);
+                        }
+                        queueDone();
+                        return;
+                    }
+
+                    // Проверяем постоянный кэш (в localStorage)
+                    var persistentCached = getCachedPremium(voice_id, current_season_id);
+                    if (persistentCached !== null) {
+                        premium_cache[cache_key] = persistentCached;
+                        results[voice_id] = persistentCached;
+                        checked++;
+                        if (checked === total) {
+                            clearTimeout(fallbackTimer);
                             callback(results);
                         }
                         queueDone();
@@ -386,20 +384,19 @@
                 }
 
                 var finish = function(isPremium) {
-                    dlog('checkAllPremium() voice=', voice_id, 'FINISH isPremium=', isPremium, 'checked=', checked + 1, '/', total);
                     results[voice_id] = isPremium;
                     checked++;
                     if (checked === total) {
                         clearTimeout(fallbackTimer);
-                        dlog('checkAllPremium() DONE results=', results);
                         callback(results);
                     }
                     queueDone();
                 };
 
-                // Подтверждённый ответ сервера — кэшируем в памяти на время текущего открытия.
                 var confirmed = function(isPremium) {
                     premium_cache[cache_key] = isPremium;
+                    // Сохраняем в постоянный кэш на 24 часа
+                    setCachedPremium(voice_id, current_season_id, isPremium);
                     finish(isPremium);
                 };
 
@@ -417,7 +414,6 @@
                         postdata += '&action=get_movie';
                     }
 
-                    dlog('checkAllPremium() voice=', voice_id, 'ЗАПРОС season=', current_season_id, 'retries_left=', retries_left);
                     var req = new Lampa.Reguest();
                     req.timeout(4000);
 
@@ -437,29 +433,11 @@
                                 });
                                 isPremium = premium_content;
                             }
-                            dlog('checkAllPremium() voice=', voice_id, 'ОТВЕТ ОК, items=', items.length, 'isPremium=', isPremium, 'premium_content_raw=', json.premium_content);
-                        } else {
-                            dlog('checkAllPremium() voice=', voice_id, 'ОТВЕТ БЕЗ json.url! json=', json);
                         }
-                        // Сервер ответил (пусть и без video-ссылок) — это подтверждённый результат.
                         confirmed(isPremium);
                     }, function (a, c) {
-                        // Сетевая ошибка/таймаут — это НЕ подтверждённый ответ "бесплатно",
-                        // а просто "не удалось проверить". Раньше такой сбой сразу кэшировался
-                        // как premium:false на 12 часов, из-за чего плохо ответивший запрос
-                        // мог навсегда "спрятать" реальный премиум. Поэтому сначала пробуем
-                        // ещё раз (до 2 повторов), и только если так и не смогли получить
-                        // ответ — считаем "не премиум" ТОЛЬКО для текущей отрисовки,
-                        // не сохраняя это как достоверный факт в кэш.
-                        //
-                        // ВАЖНО: при 503 (rate-limit) повтор БЕЗ паузы почти гарантированно
-                        // словит тот же 503 снова — поэтому перед повтором ждём небольшой
-                        // бекоф (растущий с каждой попыткой + немного случайности, чтобы
-                        // повторы разных переводов не сбивались в новую пачку разом).
-                        dlog('checkAllPremium() voice=', voice_id, 'ОШИБКА/ТАЙМАУТ retries_left=', retries_left, 'status=', a && a.status, 'err=', c);
                         if (retries_left > 0) {
                             var backoff = (3 - retries_left) * 600 + Math.floor(Math.random() * 400);
-                            dlog('checkAllPremium() voice=', voice_id, 'жду', backoff, 'мс перед повтором (backoff)');
                             setTimeout(function () {
                                 attempt(retries_left - 1);
                             }, backoff);
@@ -474,10 +452,8 @@
 
                 attempt(2);
             }, function () {
-                // Очередь полностью разобрана. Обычно к этому моменту callback(results)
-                // уже вызван через checked===total выше — это просто safety-net.
                 if (checked < total) {
-                    dlog('checkAllPremium() runLimited ЗАВЕРШЁН, но checked=', checked, '<', total, '- расхождение счётчиков!');
+                    // fallback
                 }
             });
         }
@@ -714,7 +690,6 @@
         };
 
         this.filter = function (type, a, b) {
-            dlog('rezka2.filter() stype=', a.stype, 'index=', b.index, 'title=', b.title);
             choice[a.stype] = b.index;
             if (a.stype == 'voice') {
                 var raw_name = filter_items.voice[b.index] || '';
@@ -725,18 +700,8 @@
             component.reset();
             component.loading(true);
 
-            // Кеш премиум-статуса сбрасывается при ИЗМЕНЕНИИ ЛЮБОГО параметра
-            // фильтра (сезон, озвучка, источник и т.п.) — this.filter вызывается
-            // на каждое такое взаимодействие (см. filter.onSelect в component()),
-            // поэтому проверка премиума здесь универсальна, а не завязана на сезон.
-            // force=true: игнорируем и оперативный, и постоянный кэш — пользователь
-            // явно переключает фильтр, значит ждёт актуальный результат, а не
-            // старое (возможно, ошибочное) значение из хранилища.
             premium_cache = {};
-            dlog('rezka2.filter() -> premium_cache cleared, choice=', choice);
-
             getEpisodes(function () {
-                dlog('rezka2.filter() -> getEpisodes done, calling checkPremiumAndRender(force=true)');
                 checkPremiumAndRender(true);
             });
 
@@ -747,22 +712,20 @@
         this.destroy = function () {
             network.clear();
             extract = null;
+            destroyed = true;
         };
 
         function getPage(url) {
             url = fixLink(url, ref);
-            dlog('getPage() url=', url);
             network.clear();
             network.timeout(10000);
             network.silent(url, function (str) {
                 extractData(str);
-                dlog('getPage() extractData готово, film_id=', extract.film_id, 'is_series=', extract.is_series, 'choice=', choice);
                 if (extract.film_id) {
                     getEpisodes(success);
                 } else if (error_message) component.empty(error_message);
                 else component.emptyForQuery(select_title);
             }, function (a, c) {
-                dlog('getPage() ОШИБКА', a && a.status, c);
                 component.empty(network.errorDecode(a, c));
             }, false, {
                 dataType: 'text',
@@ -771,10 +734,6 @@
             });
         }
 
-        // Сортировка списка озвучек по премиум-статусу согласно настройке
-        // "online_mod_premium_sort". Сортируем сам массив-источник (а не только
-        // отображаемые подписи), чтобы filter() и filtred() всегда видели
-        // одинаковый порядок и индекс choice.voice не «расходился» между ними.
         function sortVoicesByPremium(list, premium_results) {
             var mode = Lampa.Storage.get('online_mod_premium_sort', 'default');
             if (mode !== 'premium_first' && mode !== 'premium_last') return list;
@@ -784,54 +743,36 @@
                 var pa = premium_results[a.v.id] ? 1 : 0;
                 var pb = premium_results[b.v.id] ? 1 : 0;
                 if (pa !== pb) return mode === 'premium_first' ? (pb - pa) : (pa - pb);
-                return a.i - b.i; // стабильная сортировка для равных
+                return a.i - b.i;
             });
             return indexed.map(function (o) { return o.v; });
         }
 
-        // Универсальная проверка премиум-статуса + рендер списка.
-        // Вызывается при ЛЮБОМ изменении фильтра (сезон, озвучка, источник и т.д.),
-        // а не только при смене сезона — иначе кеш премиум-статуса может
-        // «протухнуть», и переключение любого другого параметра фильтра
-        // отдаст премиум-контент без активной подписки.
         function checkPremiumAndRender(force, onDone) {
             var my_gen = ++render_generation;
             var voices_source = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
             var voice_ids = voices_source.map(function (v) { return v.id; });
 
-            dlog('checkPremiumAndRender() gen=', my_gen, 'force=', !!force, 'season_id=', currentSeasonId(), 'voice_ids=', voice_ids, 'voice_list_current.length=', voice_list_current.length, 'extract.voice.length=', extract.voice.length);
-
             if (voice_ids.length > 0) {
                 component.loading(true);
                 checkAllPremium(voice_ids, currentSeasonId(), function (results) {
                     if (my_gen !== render_generation) {
-                        dlog('checkPremiumAndRender() gen=', my_gen, 'ОТМЕНЕНО, текущий render_generation=', render_generation, '- результат ИГНОРИРУЕТСЯ, ничего не отрисовано!');
-                        return; // отменено более новым выбором фильтра
+                        return;
                     }
-                    dlog('checkPremiumAndRender() gen=', my_gen, 'РЕНДЕРИМ results=', results);
                     component.loading(false);
                     var sorted = sortVoicesByPremium(voices_source, results);
                     if (extract.is_series && voice_list_current.length) voice_list_current = sorted;
                     else extract.voice = sorted;
                     filter(results);
                     var items = filtred(results);
-                    dlog('checkPremiumAndRender() gen=', my_gen, 'append() items=', items.length, 'is_premium_flags=', items.map(function(i){return i.is_premium;}));
                     append(items);
                     if (onDone) onDone();
 
-                    // Часть переводов могла не успеть ответить за отведённое
-                    // время (см. fallbackTimer в checkAllPremium) — типично
-                    // при первом открытии ещё не посещённого сезона, когда
-                    // одновременно с проверкой премиума ещё и грузится список
-                    // серий. Такой результат не кэшируется как достоверный,
-                    // поэтому тихо перепроверяем именно их в фоне и, если
-                    // окажется премиум — обновляем уже отрисованные элементы
-                    // без необходимости вручную повторно щёлкать по сезону.
                     if (results.__timedOut && results.__timedOut.length) {
                         var retry_gen = my_gen;
                         var retry_season = currentSeasonId();
                         setTimeout(function () {
-                            if (retry_gen !== render_generation) return; // сезон/озвучка уже сменились
+                            if (retry_gen !== render_generation) return;
                             checkAllPremium(results.__timedOut, retry_season, function (retry_results) {
                                 if (retry_gen !== render_generation) return;
                                 for (var vid in retry_results) {
@@ -851,15 +792,6 @@
             }
         }
 
-        // Тихая фоновая подгрузка остальных сезонов сразу при открытии сериала:
-        // список серий + премиум-статус переводов. Не блокирует интерфейс.
-        // Запускается ТОЛЬКО ПОСЛЕ того, как проверка и отрисовка ТЕКУЩЕГО
-        // сезона уже полностью завершилась (см. вызов из success() ниже) —
-        // а не через фиксированную паузу. Иначе, если проверка текущего сезона
-        // почему-то не укладывалась в эту паузу, фоновые запросы стартовали
-        // ПАРАЛЛЕЛЬНО с ней и отбирали у неё сеть/ответ сервера, из-за чего
-        // видимый (текущий) сезон иногда оставался без звёздочек при первом
-        // открытии — и помогал только повторный клик, когда фон уже утихал.
         function prefetchOtherSeasonsInBackground() {
             if (!extract.is_series || !extract.season || extract.season.length < 2) return;
 
@@ -868,7 +800,7 @@
                 .map(function (s) { return s.id; })
                 .filter(function (id) { return id != current; });
 
-            var MAX_SEASONS_TO_PREFETCH = 12; // защита от очень длинных сериалов — не долбим сервер бесконечно
+            var MAX_SEASONS_TO_PREFETCH = 12;
             others = others.slice(0, MAX_SEASONS_TO_PREFETCH);
 
             var i = 0;
@@ -879,16 +811,15 @@
                     var voices_for_season = availableVoicesForSeason(season_id);
                     var ids = voices_for_season.map(function (v) { return v.id; });
                     checkAllPremium(ids, season_id, function () {
-                        setTimeout(next, 600); // пауза между сезонами
+                        setTimeout(next, 600);
                     });
                 });
             }
 
-            setTimeout(next, 1000); // небольшая пауза "на всякий случай", основной сезон уже отрисован
+            setTimeout(next, 1000);
         }
 
         function success() {
-            dlog('success() choice=', choice, 'currentSeasonId=', currentSeasonId());
             component.loading(false);
             checkPremiumAndRender(false, prefetchOtherSeasonsInBackground);
         }
@@ -979,15 +910,9 @@
             if (blocked) extract.blocked = true;
         }
 
-        // Загружает (с кешированием) список серий ОДНОЙ озвучки для КОНКРЕТНОГО
-        // сезона. Раньше кэш был только по id озвучки (без сезона) — из-за
-        // этого первый же загруженный сезон "прилипал" навсегда, и при
-        // переключении на другой сезон подставлялся тот же (неверный) список
-        // серий, отфильтрованный список получался пустым ("ничего нет").
         function fetchVoiceData(translator_id, season_id, callback) {
             var key = translator_id + '::' + (season_id || '');
             if (extract.voice_data[key]) {
-                dlog('fetchVoiceData() key=', key, 'ИЗ КЭША, episode.length=', extract.voice_data[key].episode.length);
                 callback(extract.voice_data[key]);
                 return;
             }
@@ -999,20 +924,16 @@
 
             var attempt = function (retries_left) {
                 var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
-                dlog('fetchVoiceData() key=', key, 'ЗАПРОС... retries_left=', retries_left);
                 var req = new Lampa.Reguest();
                 req.timeout(10000);
                 req.silent(url, function (json) {
                     var data = parseVoiceEpisodes(json, translator_id, key);
-                    dlog('fetchVoiceData() key=', key, 'ОТВЕТ ОК, episode.length=', data.episode.length, 'season.length=', data.season.length);
                     callback(data);
                 }, function (a, c) {
-                    dlog('fetchVoiceData() key=', key, 'ОШИБКА/ТАЙМАУТ status=', a && a.status, 'err=', c, 'retries_left=', retries_left);
                     if (retries_left > 0) {
                         var backoff = (2 - retries_left) * 700 + Math.floor(Math.random() * 400);
                         setTimeout(function () { attempt(retries_left - 1); }, backoff);
                     } else {
-                        dlog('fetchVoiceData() key=', key, '-> закэшируется ПУСТОЙ результат навсегда до reset()!');
                         var empty = { season: [], episode: [] };
                         extract.voice_data[key] = empty;
                         callback(empty);
@@ -1049,34 +970,22 @@
                 });
             }
             extract.voice_data[key] = data;
-            // Список доступных сезонов у переводчика не зависит от того, какой
-            // конкретно сезон мы запросили — сохраняем его отдельно, чтобы
-            // availableVoicesForSeason() мог проверить любую озвучку на
-            // покрытие сезона, даже если серии именно для него ещё не грузили.
             if (data.season.length) extract.voice_season_list[translator_id] = data.season;
             return data;
         }
 
-        // Догружает данные по сезонам/сериям для ВСЕХ озвучек (не только выбранной
-        // в данный момент) для КОНКРЕТНОГО сезона, чтобы можно было понять, какие
-        // озвучки реально покрывают текущий сезон, и не показывать в фильтре те,
-        // что его не покрывают.
         function ensureAllVoiceData(season_id, callback) {
             var voices = extract.voice || [];
             var total = voices.length;
             var done = 0;
-            dlog('ensureAllVoiceData() season_id=', season_id, 'total_voices=', total);
             if (!total) {
                 callback();
                 return;
             }
-            // Та же причина, что и в checkAllPremium: пачка параллельных
-            // get_episodes запросов на все озвучки разом ловит 503 от сервера.
             runLimited(voices, 2, 300, function (v, queueDone) {
                 fetchVoiceData(v.id, season_id, function () {
                     done++;
                     if (done === total) {
-                        dlog('ensureAllVoiceData() season_id=', season_id, 'ВСЕ ГОТОВО', done, '/', total);
                         callback();
                     }
                     queueDone();
@@ -1091,9 +1000,6 @@
             return null;
         }
 
-        // Только те озвучки, у которых есть серии для текущего сезона.
-        // Если данные ещё не загрузились или ни одна озвучка не совпала —
-        // показываем полный список, чтобы фильтр не оказался пустым.
         function availableVoicesForSeason(season_id) {
             if (!season_id) return extract.voice;
             var list = extract.voice.filter(function (v) {
@@ -1101,7 +1007,6 @@
                 return seasons && seasons.some(function (s) { return s.id == season_id; });
             });
             var result = list.length ? list : extract.voice;
-            dlog('availableVoicesForSeason() season_id=', season_id, 'matched=', list.length, 'из', extract.voice.length, '-> итог=', result.map(function(v){return v.id;}));
             return result;
         }
 
@@ -1112,7 +1017,6 @@
             }
 
             var season_id = currentSeasonId();
-            dlog('getEpisodes() START season_id=', season_id);
 
             ensureAllVoiceData(season_id, function () {
                 voice_list_current = availableVoicesForSeason(season_id);
@@ -1122,7 +1026,6 @@
                 var key = selected ? (selected.id + '::' + (season_id || '')) : null;
                 var data = key && extract.voice_data[key];
                 extract.episode = (data && data.episode) || [];
-                dlog('getEpisodes() DONE season_id=', season_id, 'choice.voice=', choice.voice, 'selected_voice_id=', selected && selected.id, 'episode.length=', extract.episode.length, 'voice_list_current=', voice_list_current.map(function(v){return v.id;}));
 
                 call();
             });
@@ -1220,6 +1123,7 @@
                             var block_season_id = extract.is_series ? element.media.season_id : null;
                             var block_key = premiumCacheKey(block_voice_id, block_season_id);
                             premium_cache[block_key] = true;
+                            setCachedPremium(block_voice_id, block_season_id, true);
                             error('Перевод доступен только с HDrezka Premium', true);
                             return;
                         }
