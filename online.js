@@ -823,7 +823,7 @@
                 extract.episode.forEach(function (episode) {
                     if (episode.season_id == season_id) {
                         filtred.push({
-                            title: component.formatEpisodeTitle(episode.season_id, null, episode.name) + (is_premium ? ' ⭐' : ''),
+                            title: component.formatEpisodeTitle(episode.season_id, null, episode.name) + (is_premium ? ' ⭐ Premium' : ''),
                             quality: '',
                             info: voice_clean,
                             season: parseInt(episode.season_id),
@@ -837,7 +837,7 @@
                 extract.voice.forEach(function (voice) {
                     var display_title = voice.clean_name || voice.name;
                     filtred.push({
-                        title: display_title + (voice.is_premium ? ' ⭐' : ''),
+                        title: display_title + (voice.is_premium ? ' ⭐ Premium' : ''),
                         quality: '',
                         info: '',
                         media: voice,
@@ -866,7 +866,6 @@
                 if (element.is_premium) {
                     item.addClass('premium');
                     item.find('.online__title').css('color', '#FFD700');
-                    item.find('.online__quality').append('<span style="color: #FFD700; margin-left: 5px;"> ⭐ Premium </span>');
                 }
                 
                 var hash_file = Lampa.Utils.hash(element.season ? [element.season, element.season > 10 ? ':' : '', element.episode, object.movie.original_title, filter_items.voice[choice.voice]].join('') : object.movie.original_title + element.title);
@@ -887,7 +886,7 @@
                             url: component.getDefaultQuality(element.qualitys, element.stream),
                             quality: component.renameQualityMap(element.qualitys),
                             subtitles: element.subtitles,
-                            timeline: '/ ' + element.timeline,
+                            timeline: element.timeline,
                             title: element.season ? element.title : select_title + (element.title == select_title ? '' : ' / ' + element.title)
                         };
                         Lampa.Player.play(first);
@@ -909,7 +908,7 @@
                                                 call();
                                             });
                                         },
-                                        timeline: '/ ' + elem.timeline,
+                                        timeline: elem.timeline,
                                         title: elem.title
                                     };
                                     playlist.push(cell);
