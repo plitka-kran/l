@@ -1,4 +1,4 @@
-// Online Mod (оптимизированная версия 57)
+// Online Mod (исправленная версия с загрузкой серий при смене перевода 58)
 (function () {
     'use strict';
 
@@ -95,38 +95,30 @@
         return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36';
     }
 
-    // Параллельный запуск с ограничением
+    // Запускает worker(item, done) для каждого item из items, не более
+    // `limit` штук ОДНОВРЕМЕННО, и не чаще одного нового запуска раз в
+    // `stagger` мс.
     function runLimited(items, limit, stagger, worker, onAllDone) {
         var idx = 0;
         var active = 0;
         var finished = 0;
         var total = items.length;
-        var cancelled = false;
-        
         if (!total) { onAllDone(); return; }
 
         function tick() {
-            if (cancelled) return;
             if (idx < total && active < limit) {
                 active++;
                 var item = items[idx++];
                 worker(item, function () {
-                    if (cancelled) return;
                     active--;
                     finished++;
                     if (finished === total) onAllDone();
                 });
             }
-            if (idx < total && !cancelled) {
-                setTimeout(tick, stagger);
-            }
+            if (idx < total) setTimeout(tick, stagger);
         }
 
         tick();
-        
-        return function() {
-            cancelled = true;
-        };
     }
 
     // --- Настройки ---
@@ -221,23 +213,22 @@
             var login_form = str.match(/<form id="check-form" class="check-form" method="post" action="\/ajax\/login\/">/);
             if (login_form) {
                 error_message = Lampa.Lang.translate('online_mod_authorization_required') + ' HDrezka';
-                return true;
+                return;
             }
             var error_form = str.match(/(<div class="error-code">[^<]*<div>[^<]*<\/div>[^<]*<\/div>)\s*(<div class="error-title">[^<]*<\/div>)/);
             if (error_form) {
                 error_message = ($(error_form[1]).text().trim() || '') + ':\n' + ($(error_form[2]).text().trim() || '');
-                return true;
+                return;
             }
             var verify_form = str.match(/<span>MIRROR<\/span>.*<button type="submit" onclick="\$\.cookie(\([^)]*\))/);
             if (verify_form) {
                 error_message = Lampa.Lang.translate('online_mod_unsupported_mirror') + ' HDrezka';
-                return true;
+                return;
             }
             if (startsWith(str, 'Fatal error:')) {
                 error_message = str;
-                return true;
+                return;
             }
-            return false;
         }
 
         function decode(data) {
@@ -321,10 +312,23 @@
             }
 
             var current_season_id = season_id;
-            var PREMIUM_CONCURRENCY = 3;
-            var PREMIUM_STAGGER_MS = 200;
 
-            var cancelFn = runLimited(voice_ids, PREMIUM_CONCURRENCY, PREMIUM_STAGGER_MS, function (voice_id, queueDone) {
+            // Таймаут чтобы не ждать вечно
+            var fallbackTimer = setTimeout(function() {
+                if (checked < total) {
+                    var unfinished = voice_ids.filter(function (id) {
+                        return results[id] === undefined;
+                    });
+                    checked = total;
+                    results.__timedOut = unfinished;
+                    callback(results);
+                }
+            }, Math.max(15000, total * 5000));
+
+            var PREMIUM_CONCURRENCY = 2;
+            var PREMIUM_STAGGER_MS = 300;
+
+            runLimited(voice_ids, PREMIUM_CONCURRENCY, PREMIUM_STAGGER_MS, function (voice_id, queueDone) {
                 if (cancelled || destroyed) {
                     queueDone();
                     return;
@@ -337,7 +341,10 @@
                     if (cached !== undefined) {
                         results[voice_id] = cached;
                         checked++;
-                        if (checked === total) callback(results);
+                        if (checked === total) {
+                            clearTimeout(fallbackTimer);
+                            callback(results);
+                        }
                         queueDone();
                         return;
                     }
@@ -350,7 +357,10 @@
                     }
                     results[voice_id] = isPremium;
                     checked++;
-                    if (checked === total) callback(results);
+                    if (checked === total) {
+                        clearTimeout(fallbackTimer);
+                        callback(results);
+                    }
                     queueDone();
                 };
 
@@ -382,7 +392,7 @@
 
                     var req = new Lampa.Reguest();
                     pendingRequests.push(req);
-                    req.timeout(5000);
+                    req.timeout(4000);
 
                     req.silent(url, function (json) {
                         if (cancelled || destroyed) {
@@ -412,7 +422,7 @@
                             return;
                         }
                         if (retries_left > 0) {
-                            var backoff = (3 - retries_left) * 500 + Math.floor(Math.random() * 300);
+                            var backoff = (3 - retries_left) * 600 + Math.floor(Math.random() * 400);
                             setTimeout(function () {
                                 attempt(retries_left - 1);
                             }, backoff);
@@ -434,7 +444,7 @@
 
             return function() {
                 cancelled = true;
-                if (cancelFn) cancelFn();
+                clearTimeout(fallbackTimer);
             };
         }
 
@@ -462,10 +472,7 @@
                 network.timeout(10000);
                 network.silent(url, function (str) {
                     str = (str || '').replace(/\n/g, '');
-                    if (checkErrorForm(str)) {
-                        if (callback) callback(data, false);
-                        return;
-                    }
+                    checkErrorForm(str);
                     var links = str.match(/<div class="b-content__inline_item-link">\s*<a [^>]*>[^<]*<\/a>\s*<div>[^<]*<\/div>\s*<\/div>/g);
                     var have_more = !!str.match(/<a [^>]*>\s*<span class="b-navigation__next\b/);
                     if (links && links.length) {
@@ -625,10 +632,7 @@
                 network.timeout(10000);
                 network.silent(url, function (str) {
                     str = (str || '').replace(/\n/g, '');
-                    if (checkErrorForm(str)) {
-                        if (callback) callback([], false, query);
-                        return;
-                    }
+                    checkErrorForm(str);
                     var links = str.match(/<li><a href=.*?<\/li>/g);
                     var have_more = str.indexOf('<a class="b-search__live_all"') !== -1;
                     if (links && links.length) data = data.concat(links);
@@ -688,9 +692,37 @@
             premium_cache = {};
             render_generation++;
 
-            getEpisodes(function () {
-                checkPremiumAndRender(true);
-            });
+            // ПРИНУДИТЕЛЬНО загружаем данные для выбранного перевода
+            var season_id = currentSeasonId();
+            var voices = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
+            var selected_voice = voices[choice.voice];
+            
+            if (selected_voice && extract.is_series) {
+                // Очищаем кэш для этого перевода чтобы принудительно перезагрузить
+                var key = selected_voice.id + '::' + (season_id || '');
+                delete extract.voice_data[key];
+                
+                // Загружаем данные для выбранного перевода
+                fetchVoiceData(selected_voice.id, season_id, function(data) {
+                    if (destroyed) return;
+                    extract.voice_data[key] = data;
+                    if (data.season.length) {
+                        extract.voice_season_list[selected_voice.id] = data.season;
+                    }
+                    // Обновляем список серий
+                    var selected = voice_list_current[choice.voice];
+                    var key2 = selected ? (selected.id + '::' + (season_id || '')) : null;
+                    var data2 = key2 && extract.voice_data[key2];
+                    extract.episode = (data2 && data2.episode) || [];
+                    
+                    component.loading(false);
+                    checkPremiumAndRender(true);
+                });
+            } else {
+                getEpisodes(function () {
+                    checkPremiumAndRender(true);
+                });
+            }
 
             component.saveChoice(choice);
             setTimeout(component.closeFilter, 10);
@@ -747,7 +779,9 @@
             if (voice_ids.length > 0) {
                 component.loading(true);
                 var cancelCheck = checkAllPremium(voice_ids, currentSeasonId(), function (results) {
-                    if (destroyed || my_gen !== render_generation) return;
+                    if (destroyed || my_gen !== render_generation) {
+                        return;
+                    }
                     
                     component.loading(false);
                     var sorted = sortVoicesByPremium(voices_source, results);
@@ -757,6 +791,22 @@
                     var items = filtred(results);
                     append(items);
                     if (onDone) onDone();
+
+                    // Перепроверяем таймаутнувшие
+                    if (results.__timedOut && results.__timedOut.length) {
+                        var retry_gen = my_gen;
+                        var retry_season = currentSeasonId();
+                        setTimeout(function () {
+                            if (retry_gen !== render_generation || destroyed) return;
+                            checkAllPremium(results.__timedOut, retry_season, function (retry_results) {
+                                if (retry_gen !== render_generation || destroyed) return;
+                                for (var vid in retry_results) {
+                                    if (vid === '__timedOut') continue;
+                                    if (retry_results[vid]) markPremiumDiscovered(items, vid);
+                                }
+                            }, true);
+                        }, 2500);
+                    }
                 }, force);
                 
                 if (cancelCheck) {
@@ -778,22 +828,23 @@
             var others = extract.season
                 .map(function (s) { return s.id; })
                 .filter(function (id) { return id != current; })
-                .slice(0, 8);
+                .slice(0, 12);
 
             var i = 0;
             function next() {
                 if (i >= others.length || destroyed) return;
                 var season_id = others[i++];
                 ensureAllVoiceData(season_id, function () {
+                    if (destroyed) return;
                     var voices_for_season = availableVoicesForSeason(season_id);
                     var ids = voices_for_season.map(function (v) { return v.id; });
                     checkAllPremium(ids, season_id, function () {
-                        setTimeout(next, 500);
+                        setTimeout(next, 600);
                     });
                 });
             }
 
-            setTimeout(next, 800);
+            setTimeout(next, 1000);
         }
 
         function success() {
@@ -812,8 +863,7 @@
             extract.film_id = '';
             extract.favs = '';
             str = (str || '').replace(/\n/g, '');
-            if (checkErrorForm(str)) return;
-            
+            checkErrorForm(str);
             var translation = str.match(/<h2>В переводе<\/h2>:<\/td>\s*(<td>.*?<\/td>)/);
             var cdnSeries = str.match(/\.initCDNSeriesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,/);
             var cdnMovie = str.match(/\.initCDNMoviesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,/);
@@ -918,6 +968,10 @@
                 pendingRequests.push(req);
                 req.timeout(8000);
                 req.silent(url, function (json) {
+                    if (destroyed) {
+                        callback({ season: [], episode: [] });
+                        return;
+                    }
                     var data = parseVoiceEpisodes(json, translator_id, key);
                     callback(data);
                 }, function (a, c) {
