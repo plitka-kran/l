@@ -1,4 +1,4 @@
-// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 38)
+// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 39)
 
 (function () {
     'use strict';
@@ -704,22 +704,29 @@
             var my_gen = ++render_generation;
             var voices_source = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
             var voice_ids = voices_source.map(function (v) { return v.id; });
-
+        
             if (voice_ids.length > 0) {
                 component.loading(true);
                 checkAllPremium(voice_ids, currentSeasonId(), function (results) {
-                    if (my_gen !== render_generation) return; // отменено более новым выбором фильтра
+                    if (my_gen !== render_generation) return;
                     component.loading(false);
                     var sorted = sortVoicesByPremium(voices_source, results);
                     if (extract.is_series && voice_list_current.length) voice_list_current = sorted;
                     else extract.voice = sorted;
+        
+                    // 1. Формируем список и обновляем UI фильтра
                     filter(results);
+        
+                    // 2. Явно обновляем отображение выбранных пунктов в интерфейсе Lampa
+                    component.selected(filter_items); 
+        
                     var items = filtred(results);
                     append(items);
                 }, force);
             } else {
                 component.loading(false);
                 filter({});
+                component.selected(filter_items);
                 var items = filtred({});
                 append(items);
             }
@@ -1092,7 +1099,9 @@
                 extract.season.forEach(function (season) {
                     if (season.name == season_name) season_id = season.id;
                 });
-                var voice = filter_items.voice[choice.voice];
+                var raw_voice = voice_list_current.length ? voice_list_current[choice.voice] : extract.voice[choice.voice];
+                var is_prem_voice = raw_voice ? (premium_results[raw_voice.id] || false) : false;
+                var voice = (is_prem_voice ? '⭐ ' : '') + (raw_voice ? raw_voice.name : '');
                 var voices_source = voice_list_current.length ? voice_list_current : extract.voice;
                 var voice_obj = voices_source[choice.voice];
                 var voice_id = voice_obj ? voice_obj.id : null;
