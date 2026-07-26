@@ -823,9 +823,9 @@
                 extract.episode.forEach(function (episode) {
                     if (episode.season_id == season_id) {
                         filtred.push({
-                            title: component.formatEpisodeTitle(episode.season_id, null, episode.name),
+                            title: component.formatEpisodeTitle(episode.season_id, null, episode.name) + (is_premium ? ' ⭐' : ''),
                             quality: '360p ~ 1080p',
-                            info: ' / ' + voice_clean + (is_premium ? ' ⭐' : ''),
+                            info: ' / ' + voice_clean,
                             season: parseInt(episode.season_id),
                             episode: parseInt(episode.episode_id),
                             media: episode,
@@ -837,9 +837,9 @@
                 extract.voice.forEach(function (voice) {
                     var display_title = voice.clean_name || voice.name;
                     filtred.push({
-                        title: display_title || select_title,
+                        title: (voice.clean_name || voice.name) + (voice.is_premium ? ' ⭐' : ''),
                         quality: '360p ~ 1080p',
-                        info: voice.is_premium ? ' ⭐' : '',
+                        info: voice.is_premium,
                         media: voice,
                         is_premium: voice.is_premium || false
                     });
@@ -866,7 +866,7 @@
                 if (element.is_premium) {
                     item.addClass('premium');
                     item.find('.online__title').css('color', '#FFD700');
-                    item.find('.online__quality').append('<span style="color: #FFD700; margin-left: 5px;">⭐ Premium</span>');
+                    item.find('.online__quality').css('color', '#FFD700');
                 }
                 
                 var hash_file = Lampa.Utils.hash(element.season ? [element.season, element.season > 10 ? ':' : '', element.episode, object.movie.original_title, filter_items.voice[choice.voice]].join('') : object.movie.original_title + element.title);
