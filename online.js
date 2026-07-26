@@ -1,4 +1,4 @@
-// Online Mod (без прокси 81)
+// Online Mod (без прокси) с премиум-индикацией 82
 
 (function () {
     'use strict';
@@ -526,6 +526,7 @@
             append(filtred());
         }
 
+        // ============ ОСНОВНОЕ ИЗМЕНЕНИЕ - ПАРСИНГ ПРЕМИУМ ПЕРЕВОДОВ ============
         function extractData(str) {
             extract.voice = [];
             extract.season = [];
@@ -536,14 +537,17 @@
             extract.favs = '';
             str = (str || '').replace(/\n/g, '');
             checkErrorForm(str);
+            
             var translation = str.match(/<h2>В переводе<\/h2>:<\/td>\s*(<td>.*?<\/td>)/);
             var cdnSeries = str.match(/\.initCDNSeriesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,/);
             var cdnMovie = str.match(/\.initCDNMoviesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,/);
             var devVoiceName;
+            
             if (translation) {
                 devVoiceName = $(translation[1]).text().trim();
             }
             if (!devVoiceName) devVoiceName = 'Оригинал';
+            
             var defVoice, defSeason, defEpisode;
             if (cdnSeries) {
                 extract.is_series = true;
@@ -555,27 +559,49 @@
                 extract.film_id = cdnMovie[1];
                 defVoice = { name: devVoiceName, id: cdnMovie[2], is_camrip: cdnMovie[3], is_ads: cdnMovie[4], is_director: cdnMovie[5] };
             }
+            
+            // ============ ПАРСИНГ ПЕРЕВОДОВ С ПРОВЕРКОЙ НА PREMIUM ============
             var voices = str.match(/(<ul id="translators-list".*?<\/ul>)/);
             if (voices) {
                 var select = $(voices[1]);
                 $('.b-translator__item', select).each(function () {
-                    var title = ($(this).attr('title') || $(this).text() || '').trim();
+                    var $this = $(this);
+                    var title = ($this.attr('title') || $this.text() || '').trim();
+                    
+                    // Собираем информацию о языках (флаги)
                     $('img', this).each(function () {
                         var lang = ($(this).attr('title') || $(this).attr('alt') || '').trim();
                         if (lang && title.indexOf(lang) == -1) title += ' (' + lang + ')';
                     });
+                    
+                    // ===== ПРОВЕРКА НА PREMIUM =====
+                    // Класс b-prem_translator указывает на премиум-перевод
+                    var is_premium = $this.hasClass('b-prem_translator') || 
+                                    $this.hasClass('premium') || 
+                                    $this.hasClass('premium-translator') ||
+                                    $this.attr('data-premium') === 'true';
+                    
+                    // Если премиум - добавляем звёздочку в название
+                    if (is_premium) {
+                        title += ' ⭐';
+                    }
+                    
                     extract.voice.push({
                         name: title,
-                        id: $(this).attr('data-translator_id'),
-                        is_camrip: $(this).attr('data-camrip'),
-                        is_ads: $(this).attr('data-ads'),
-                        is_director: $(this).attr('data-director')
+                        id: $this.attr('data-translator_id'),
+                        is_camrip: $this.attr('data-camrip'),
+                        is_ads: $this.attr('data-ads'),
+                        is_director: $this.attr('data-director'),
+                        is_premium: is_premium // Сохраняем флаг
                     });
                 });
             }
+            
             if (!extract.voice.length && defVoice) {
                 extract.voice.push(defVoice);
             }
+            
+            // ============ ПАРСИНГ СЕЗОНОВ И СЕРИЙ ============
             if (extract.is_series) {
                 var seasons = str.match(/(<ul id="simple-seasons-tabs".*?<\/ul>)/);
                 if (seasons) {
@@ -590,6 +616,7 @@
                 if (!extract.season.length && defSeason) {
                     extract.season.push(defSeason);
                 }
+                
                 var episodes = str.match(/(<div id="simple-episodes-tabs".*?<\/div>)/);
                 if (episodes) {
                     var _select2 = $(episodes[1]);
@@ -605,8 +632,10 @@
                     extract.episode.push(defEpisode);
                 }
             }
+            
             var favs = str.match(/<input type="hidden" id="ctrl_favs" value="([^"]*)"/);
             if (favs) extract.favs = favs[1];
+            
             var blocked = str.match(/class="b-player__restricted__block_message"/);
             if (blocked) extract.blocked = true;
         }
@@ -766,6 +795,7 @@
             });
         }
 
+        // ============ ФОРМИРОВАНИЕ СПИСКА С ПРЕМИУМ-ИНДИКАТОРОМ ============
         function filtred() {
             var filtred = [];
             if (extract.is_series) {
@@ -775,15 +805,20 @@
                     if (season.name == season_name) season_id = season.id;
                 });
                 var voice = filter_items.voice[choice.voice];
+                // Получаем данные о выбранном переводе
+                var voice_data = extract.voice[choice.voice] || {};
+                var is_premium = voice_data.is_premium || false;
+                
                 extract.episode.forEach(function (episode) {
                     if (episode.season_id == season_id) {
                         filtred.push({
                             title: component.formatEpisodeTitle(episode.season_id, null, episode.name),
                             quality: '360p ~ 1080p',
-                            info: ' / ' + voice,
+                            info: ' / ' + voice + (is_premium ? ' ⭐' : ''), // ЗВЁЗДОЧКА
                             season: parseInt(episode.season_id),
                             episode: parseInt(episode.episode_id),
-                            media: episode
+                            media: episode,
+                            is_premium: is_premium
                         });
                     }
                 });
@@ -792,14 +827,16 @@
                     filtred.push({
                         title: voice.name || select_title,
                         quality: '360p ~ 1080p',
-                        info: '',
-                        media: voice
+                        info: voice.is_premium ? ' ⭐' : '', // ЗВЁЗДОЧКА
+                        media: voice,
+                        is_premium: voice.is_premium || false
                     });
                 });
             }
             return filtred;
         }
 
+        // ============ ОТОБРАЖЕНИЕ С ПРЕМИУМ-СТИЛЯМИ ============
         function append(items) {
             component.reset();
             var viewed = Lampa.Storage.cache('online_view', 5000, []);
@@ -811,7 +848,17 @@
                 }
                 var hash = Lampa.Utils.hash(element.season ? [element.season, element.season > 10 ? ':' : '', element.episode, object.movie.original_title].join('') : object.movie.original_title);
                 var view = Lampa.Timeline.view(hash);
-                var item = Lampa.Template.get('online_mod', element);
+                
+                // Получаем HTML элемента
+                var item = $(Lampa.Template.get('online_mod', element));
+                
+                // Если премиум - добавляем класс и звёздочку
+                if (element.is_premium) {
+                    item.addClass('premium');
+                    // Добавляем бейдж премиум
+                    item.find('.online__quality').append('<span class="premium-badge" style="color:#FFD700;margin-left:8px;font-size:14px;">⭐</span>');
+                }
+                
                 var hash_file = Lampa.Utils.hash(element.season ? [element.season, element.season > 10 ? ':' : '', element.episode, object.movie.original_title, filter_items.voice[choice.voice]].join('') : object.movie.original_title + element.title);
                 element.timeline = view;
                 item.append(Lampa.Timeline.render(view));
@@ -819,6 +866,8 @@
                     item.find('.online__quality').append(Lampa.Timeline.details(view, ' / '));
                 }
                 if (viewed.indexOf(hash_file) !== -1) item.append('<div class="torrent-item__viewed">' + Lampa.Template.get('icon_star', {}, true) + '</div>');
+                
+                // Обработчик клика
                 item.on('hover:enter', function () {
                     if (element.loading) return;
                     if (object.movie.id) Lampa.Favorite.add('history', object.movie, 100);
