@@ -526,13 +526,13 @@
             append(filtred());
         }
 
-        // ============ ПАРСИНГ ПЕРЕВОДОВ С ПРОВЕРКОЙ НА PREMIUM ============
+        // ============ ПАРСИНГ ПЕРЕВОДОВ ============
         function extractData(str) {
             extract.voice = [];
             extract.season = [];
             extract.episode = [];
             extract.voice_data = {};
-            extract.season_voices = {}; // НОВОЕ: храним переводы для каждого сезона
+            extract.season_voices = {};
             extract.is_series = false;
             extract.film_id = '';
             extract.favs = '';
@@ -590,7 +590,6 @@
                         var sid = $(this).attr('data-season_id');
                         if (sid) season_ids.push(sid);
                     });
-                    // Если нет явных сезонов, значит перевод доступен для всех
                     var available_for_all = season_ids.length === 0;
                     
                     extract.voice.push({
@@ -743,7 +742,6 @@
         }
 
         function updateSeasonVoices() {
-            // Обновляем список переводов для каждого сезона на основе загруженных эпизодов
             for (var sid in extract.season_voices) {
                 extract.season_voices[sid] = [];
             }
@@ -775,16 +773,14 @@
             }
         }
 
-        // ============ ИЗМЕНЕННАЯ ФУНКЦИЯ filter ============
+        // ============ ФИЛЬТР С ПЕРЕВОДАМИ ДЛЯ ТЕКУЩЕГО СЕЗОНА ============
         function filter() {
             var current_season_id = extract.season[choice.season] ? extract.season[choice.season].id : null;
             
-            // Получаем переводы только для текущего сезона
             var season_voices = [];
             if (current_season_id && extract.season_voices[current_season_id]) {
                 season_voices = extract.season_voices[current_season_id].map(function(v) { return v.name; });
             } else {
-                // Если нет информации о сезонных переводах, показываем все
                 season_voices = extract.voice.map(function(v) { return v.name; });
             }
             
@@ -794,7 +790,6 @@
                 voice: season_voices
             };
             
-            // Корректируем выбор перевода, если он недоступен для текущего сезона
             if (!filter_items.voice[choice.voice]) {
                 choice.voice = 0;
             }
