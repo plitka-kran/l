@@ -736,16 +736,16 @@
             if (!choice.season_id && extract.season[choice.season]) {
                 choice.season_id = extract.season[choice.season].id;
             }
-
+        
             var available_voices = getAvailableVoicesForSeason(choice.season_id);
             var voice_names = available_voices.map(function (v) { return v.name; });
-
+        
             filter_items = {
                 season: extract.season.map(function (s) { return s.name; }),
                 season_id: extract.season.map(function (s) { return s.id; }),
                 voice: voice_names
             };
-
+        
             if (!filter_items.season[choice.season]) choice.season = 0;
             
             if (choice.voice_name) {
@@ -755,8 +755,17 @@
             } else if (!filter_items.voice[choice.voice]) {
                 choice.voice = 0;
             }
-
-            component.filter(filter_items, choice);
+        
+            // Вкладка "Перевод" будет добавляться только для сериалов
+            var filter_to_send = {
+                season: filter_items.season,
+                season_id: filter_items.season_id
+            };
+            if (extract.is_series) {
+                filter_to_send.voice = filter_items.voice;
+            }
+        
+            component.filter(filter_to_send, choice);
         }
 
         function getStream(element, call, error) {
