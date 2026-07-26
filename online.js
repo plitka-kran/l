@@ -167,6 +167,7 @@
             season_id: ''
         };
         var error_message = '';
+        var loading_voices = false;
 
         function checkErrorForm(str) {
             var login_form = str.match(/<form id="check-form" class="check-form" method="post" action="\/ajax\/login\/">/);
@@ -490,7 +491,6 @@
             if (a.stype == 'voice') choice.voice_name = filter_items.voice[b.index];
             if (a.stype == 'season') {
                 choice.season_id = filter_items.season_id[b.index];
-                // При смене сезона сбрасываем выбор озвучки на первую доступную
                 choice.voice = 0;
                 choice.voice_name = filter_items.voice[0] || '';
             }
@@ -642,13 +642,44 @@
             if (extract.is_series) {
                 var voice_list = extract.voice || [];
                 var total_voices = voice_list.length;
-                var loaded_voices = 0;
                 
-                // Если нет переводов - сразу вызываем callback
                 if (total_voices === 0) {
                     call();
                     return;
                 }
+                
+                // Проверяем, все ли переводы уже загружены
+                var all_loaded = true;
+                voice_list.forEach(function (voice) {
+                    if (!extract.voice_data[voice.id]) {
+                        all_loaded = false;
+                    }
+                });
+                
+                if (all_loaded) {
+                    call();
+                    return;
+                }
+                
+                if (loading_voices) {
+                    // Если уже идет загрузка, ждем
+                    var checkInterval = setInterval(function () {
+                        var all_loaded_now = true;
+                        voice_list.forEach(function (voice) {
+                            if (!extract.voice_data[voice.id]) {
+                                all_loaded_now = false;
+                            }
+                        });
+                        if (all_loaded_now) {
+                            clearInterval(checkInterval);
+                            call();
+                        }
+                    }, 100);
+                    return;
+                }
+                
+                loading_voices = true;
+                var loaded_voices = 0;
                 
                 voice_list.forEach(function (voice) {
                     var translator_id = voice.id;
@@ -656,6 +687,7 @@
                     if (extract.voice_data[translator_id]) {
                         loaded_voices++;
                         if (loaded_voices >= total_voices) {
+                            loading_voices = false;
                             call();
                         }
                         return;
@@ -673,11 +705,15 @@
                         extractEpisodes(json, translator_id);
                         loaded_voices++;
                         if (loaded_voices >= total_voices) {
+                            loading_voices = false;
                             call();
                         }
                     }, function (a, c) {
+                        // При ошибке все равно создаем пустые данные
+                        extract.voice_data[translator_id] = { season: [], episode: [] };
                         loaded_voices++;
                         if (loaded_voices >= total_voices) {
+                            loading_voices = false;
                             call();
                         }
                     }, postdata, {
@@ -859,9 +895,10 @@
                     }
                 });
                 
-                if (filtred.length === 0) {
-                    var voice = filter_items.voice[choice.voice];
-                    var voice_data = extract.voice[choice.voice] || {};
+                // Fallback если ничего не найдено
+                if (filtred.length === 0 && extract.episode.length > 0) {
+                    var voice = filter_items.voice[choice.voice] || extract.voice[0]?.name || '';
+                    var voice_data = extract.voice[choice.voice] || extract.voice[0] || {};
                     var is_premium = voice_data.is_premium || false;
                     var voice_clean = voice_data.clean_name || voice;
                     
