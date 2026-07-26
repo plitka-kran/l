@@ -1,4 +1,4 @@
-// Online Mod (без прокси) с премиум-индикацией и фильтрацией переводов по сезона 90
+// Online Mod (без прокси) с премиум-индикацией и фильтрацией переводов по сезонам v2.0
 
 (function () {
     'use strict';
@@ -167,6 +167,40 @@
             season_id: ''
         };
         var error_message = '';
+        var loading_voices = false;
+
+        // ============ ДОПОЛНИТЕЛЬНЫЕ ФУНКЦИИ ============
+        
+        // Форматирование времени
+        function formatTime(seconds) {
+            if (!seconds || seconds < 0) return '00:00';
+            var h = Math.floor(seconds / 3600);
+            var m = Math.floor((seconds % 3600) / 60);
+            var s = Math.floor(seconds % 60);
+            if (h > 0) {
+                return h + ':' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+            }
+            return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+        }
+
+        // Проверка на премиум с расширенным списком классов
+        function checkPremium($element) {
+            var premiumClasses = [
+                'b-prem_translator',
+                'premium',
+                'premium-translator',
+                'hdrezka-premium',
+                'prem_translator',
+                'b-premium'
+            ];
+            var is_premium = false;
+            premiumClasses.forEach(function(cls) {
+                if ($element.hasClass(cls)) is_premium = true;
+            });
+            if ($element.attr('data-premium') === 'true') is_premium = true;
+            if ($element.attr('data-premium') === '1') is_premium = true;
+            return is_premium;
+        }
 
         function checkErrorForm(str) {
             var login_form = str.match(/<form id="check-form" class="check-form" method="post" action="\/ajax\/login\/">/);
@@ -186,6 +220,12 @@
             }
             if (startsWith(str, 'Fatal error:')) {
                 error_message = str;
+                return;
+            }
+            // Проверка на блокировку по региону
+            var geo_block = str.match(/<div class="geo-block">/);
+            if (geo_block) {
+                error_message = 'Доступ ограничен в вашем регионе';
                 return;
             }
         }
@@ -489,11 +529,14 @@
             if (a.stype == 'season') {
                 choice.season = b.index;
                 choice.season_id = filter_items.season_id[b.index];
+                choice.voice = 0;
+                choice.voice_name = '';
             }
             if (a.stype == 'voice') {
                 var current_voices = getAvailableVoicesForSeason(choice.season_id);
                 if (current_voices[b.index]) {
                     choice.voice_name = current_voices[b.index].name;
+                    choice.voice = b.index;
                 }
             }
             component.reset();
@@ -579,13 +622,10 @@
                         if (lang && title.indexOf(lang) == -1) title += ' (' + lang + ')';
                     });
                     
-                    var is_premium = $this.hasClass('b-prem_translator') || 
-                                    $this.hasClass('premium') || 
-                                    $this.hasClass('premium-translator') ||
-                                    $this.attr('data-premium') === 'true';
+                    var is_premium = checkPremium($this);
                     
                     var display_name = title;
-                    if (is_premium) {
+                    if (is_premium && display_name.indexOf('⭐') === -1) {
                         display_name += ' ⭐';
                     }
                     
@@ -603,7 +643,7 @@
             
             if (!extract.voice.length && defVoice) {
                 var def_display = defVoice.name;
-                if (defVoice.is_premium) {
+                if (defVoice.is_premium && def_display.indexOf('⭐') === -1) {
                     def_display += ' ⭐';
                 }
                 extract.voice.push({
@@ -673,12 +713,18 @@
             if (json && json.episodes) {
                 var _select3 = $('<div>' + json.episodes + '</div>');
                 $('.b-simple_episode__item', _select3).each(function () {
-                    data.episode.push({
+                    var ep_item = {
                         name: $(this).text(),
                         translator_id: translator_id,
                         season_id: $(this).attr('data-season_id'),
                         episode_id: $(this).attr('data-episode_id')
+                    };
+                    var exists = data.episode.some(function(e) { 
+                        return e.season_id == ep_item.season_id && e.episode_id == ep_item.episode_id; 
                     });
+                    if (!exists) {
+                        data.episode.push(ep_item);
+                    }
                 });
             }
             extract.voice_data[translator_id] = data;
@@ -688,10 +734,17 @@
             if (extract.is_series && extract.voice.length) {
                 var pending = 0;
                 var total = extract.voice.length;
+                
+                var timeout = setTimeout(function() {
+                    if (pending < total) {
+                        call();
+                    }
+                }, 15000);
 
                 function checkDone() {
                     pending++;
                     if (pending >= total) {
+                        clearTimeout(timeout);
                         call();
                     }
                 }
@@ -711,6 +764,7 @@
                             extractEpisodes(json, translator_id);
                             checkDone();
                         }, function () {
+                            extract.voice_data[translator_id] = { season: [], episode: [] };
                             checkDone();
                         }, postdata, {
                             withCredentials: true,
@@ -756,12 +810,11 @@
                 choice.voice = 0;
             }
         
-            // Вкладка "Перевод" будет добавляться только для сериалов
             var filter_to_send = {
                 season: filter_items.season,
                 season_id: filter_items.season_id
             };
-            if (extract.is_series) {
+            if (extract.is_series && filter_items.voice.length > 0) {
                 filter_to_send.voice = filter_items.voice;
             }
         
@@ -780,9 +833,9 @@
                 postdata += '&action=get_stream';
             } else {
                 postdata += '&translator_id=' + encodeURIComponent(element.media.id);
-                postdata += '&is_camrip=' + encodeURIComponent(element.media.is_camrip);
-                postdata += '&is_ads=' + encodeURIComponent(element.media.is_ads);
-                postdata += '&is_director=' + encodeURIComponent(element.media.is_director);
+                postdata += '&is_camrip=' + encodeURIComponent(element.media.is_camrip || 0);
+                postdata += '&is_ads=' + encodeURIComponent(element.media.is_ads || 0);
+                postdata += '&is_director=' + encodeURIComponent(element.media.is_director || 0);
                 postdata += '&favs=' + encodeURIComponent(extract.favs);
                 postdata += '&action=get_movie';
             }
@@ -796,7 +849,7 @@
                     var items = extractItems(video);
                     if (items && items.length) {
                         file = items[0].file;
-                        var premium_content = json.premium_content || false;
+                        var premium_content = (json.premium_content === true || json.premium_content === '1');
                         var prev_file = '';
                         quality = {};
                         items.forEach(function (item) {
@@ -807,7 +860,7 @@
                             quality[item.label] = item.file;
                         });
                         if (premium_content) {
-                            error('Перевод доступен только с HDrezka Premium');
+                            error('Этот перевод доступен только с HDrezka Premium. Оформите подписку на сайте HDrezka.');
                             return;
                         }
                     }
@@ -832,17 +885,33 @@
             if (extract.is_series) {
                 var season_id = choice.season_id || (extract.season[choice.season] ? extract.season[choice.season].id : null);
                 var available_voices = getAvailableVoicesForSeason(season_id);
+                
+                if (!available_voices || available_voices.length === 0) {
+                    available_voices = extract.voice;
+                }
+                
+                if (choice.voice >= available_voices.length) {
+                    choice.voice = 0;
+                }
+                
                 var voice_data = available_voices[choice.voice] || available_voices[0] || {};
                 var translator_id = voice_data.id;
                 var is_premium = voice_data.is_premium || false;
                 var voice_clean = voice_data.clean_name || voice_data.name || '';
                 
-                var ep_list = (extract.voice_data[translator_id] && extract.voice_data[translator_id].episode) ? extract.voice_data[translator_id].episode : extract.episode;
+                var ep_list = (extract.voice_data[translator_id] && extract.voice_data[translator_id].episode) ? 
+                              extract.voice_data[translator_id].episode : 
+                              extract.episode;
+
+                if (!ep_list || ep_list.length === 0) {
+                    ep_list = extract.episode;
+                }
 
                 ep_list.forEach(function (episode) {
                     if (episode.season_id == season_id) {
+                        var premium_label = is_premium ? ' <span style="font-size: 0.7em; vertical-align: super; color: #FFD700;">⭐ Premium</span>' : '';
                         filtred.push({
-                            title: component.formatEpisodeTitle(episode.season_id, null, episode.name) + (is_premium ? ' <span style="font-size: 0.7em; vertical-align: super; color: #FFD700;">⭐ premium</span>' : ''),
+                            title: component.formatEpisodeTitle(episode.season_id, episode.episode_id, episode.name) + premium_label,
                             quality: '360p ~ 1080p',
                             info: voice_clean ? ' / ' + voice_clean : '',
                             season: parseInt(episode.season_id),
@@ -854,8 +923,9 @@
                 });
             } else {
                 extract.voice.forEach(function (voice) {
+                    var premium_label = voice.is_premium ? ' <span style="font-size: 0.7em; vertical-align: super; color: #FFD700;">⭐ Premium</span>' : '';
                     filtred.push({
-                        title: (voice.clean_name || voice.name) + (voice.is_premium ? ' <span style="font-size: 0.7em; vertical-align: super; color: #FFD700;">⭐ premium</span>' : ''),
+                        title: (voice.clean_name || voice.name) + premium_label,
                         quality: '360p ~ 1080p',
                         info: '',
                         media: voice,
@@ -874,7 +944,7 @@
             items.forEach(function (element) {
                 if (element.season) {
                     element.translate_episode_end = last_episode;
-                    element.translate_voice = filter_items.voice[choice.voice];
+                    element.translate_voice = filter_items.voice && filter_items.voice[choice.voice] ? filter_items.voice[choice.voice] : '';
                 }
                 var hash = Lampa.Utils.hash(element.season ? [element.season, element.season > 10 ? ':' : '', element.episode, object.movie.original_title].join('') : object.movie.original_title);
                 var view = Lampa.Timeline.view(hash);
@@ -887,7 +957,7 @@
                     item.find('.online__quality').css('color', '#FFD700');
                 }
                 
-                var hash_file = Lampa.Utils.hash(element.season ? [element.season, element.season > 10 ? ':' : '', element.episode, object.movie.original_title, filter_items.voice[choice.voice]].join('') : object.movie.original_title + element.title);
+                var hash_file = Lampa.Utils.hash(element.season ? [element.season, element.season > 10 ? ':' : '', element.episode, object.movie.original_title, filter_items.voice && filter_items.voice[choice.voice] ? filter_items.voice[choice.voice] : ''].join('') : object.movie.original_title + element.title);
                 element.timeline = view;
                 item.append(Lampa.Timeline.render(view));
                 if (Lampa.Timeline.details) {
@@ -1608,7 +1678,7 @@
     var online_loading = false;
 
     function logApp() {
-        console.log('Online Mod');
+        console.log('Online Mod v2.0');
         console.log('App', 'is MSX:', isMSX);
         console.log('App', 'is Tizen:', isTizen);
         console.log('App', 'is iframe:', isIFrame);
@@ -1664,7 +1734,7 @@
             online_mod_query_start: { ru: 'По запросу', uk: 'На запит', be: 'Па запыце', en: 'On request', zh: '根据要求' },
             online_mod_query_end: { ru: 'нет результатов', uk: 'немає результатів', be: 'няма вынікаў', en: 'no results', zh: '没有结果' },
             online_mod_title: { ru: 'Онлайн HDrezka', uk: 'Онлайн HDrezka', be: 'Анлайн HDrezka', en: 'Online HDrezka', zh: '在线的 HDrezka' },
-            online_mod_title_full: { ru: 'Онлайн Мод', uk: 'Онлайн Мод', be: 'Анлайн Мод', en: 'Online Mod', zh: '在线的 Mod' },
+            online_mod_title_full: { ru: 'Онлайн Мод v2.0', uk: 'Онлайн Мод v2.0', be: 'Анлайн Мод v2.0', en: 'Online Mod v2.0', zh: '在线模组 v2.0' },
             online_mod_prefer_http: { ru: 'Предпочитать поток по HTTP', uk: 'Віддавати перевагу потіку по HTTP', be: 'Аддаваць перавагу патоку па HTTP', en: 'Prefer stream over HTTP', zh: '优先于 HTTP 流式传输' },
             online_mod_full_episode_title: { ru: 'Полный формат названия серии', uk: 'Повний формат назви серії', be: 'Поўны фармат назвы серыі', en: 'Full episode title format', zh: '完整剧集标题格式' },
             online_mod_save_last_balanser: { ru: 'Сохранять историю балансеров', uk: 'Зберігати історію балансерів', be: 'Захоўваць гісторыю балансараў', en: 'Save history of balancers', zh: '保存平衡器的历史记录' },
