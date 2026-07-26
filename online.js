@@ -1,4 +1,4 @@
-// Online Mod (исправленная версия с корректной работой сезонов и премиум 67)
+// Online Mod (исправленная версия с корректной работой сезонов и премиум 68)
 (function () {
     'use strict';
 
@@ -697,7 +697,9 @@
             }
             if (a.stype == 'season') {
                 choice.season_id = filter_items.season_id[b.index];
+                // Очищаем кэш премиум для нового сезона
                 clearPremiumCacheForSeason(choice.season_id);
+                // Очищаем voice_list_current чтобы перезагрузить переводы для нового сезона
                 voice_list_current = [];
             }
             
@@ -854,6 +856,7 @@
             extract.favs = '';
             str = (str || '').replace(/\n/g, '');
             checkErrorForm(str);
+            
             var translation = str.match(/<h2>В переводе<\/h2>:<\/td>\s*(<td>.*?<\/td>)/);
             var cdnSeries = str.match(/\.initCDNSeriesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,/);
             var cdnMovie = str.match(/\.initCDNMoviesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,/);
@@ -873,6 +876,158 @@
                 extract.film_id = cdnMovie[1];
                 defVoice = { name: devVoiceName, id: cdnMovie[2], is_camrip: cdnMovie[3], is_ads: cdnMovie[4], is_director: cdnMovie[5] };
             }
+            
+            // --- ИСПРАВЛЕННЫЙ ПАРСИНГ СЕЗОНОВ ---
+            // Пробуем найти сезоны через несколько разных селекторов
+            var seasonsFound = false;
+            
+            // 1. Пробуем найти через #simple-seasons-tabs
+            var seasons = str.match(/(<ul id="simple-seasons-tabs".*?<\/ul>)/);
+            if (seasons) {
+                var _select = $(seasons[1]);
+                $('.b-simple_season__item', _select).each(function () {
+                    var id = $(this).attr('data-tab_id');
+                    var name = $(this).text().trim();
+                    if (!name || name === '') {
+                        name = 'Сезон ' + id;
+                    }
+                    extract.season.push({
+                        name: name,
+                        id: id
+                    });
+                    seasonsFound = true;
+                });
+            }
+            
+            // 2. Если не нашли, пробуем через .b-season-selector или .season-selector
+            if (!seasonsFound) {
+                var seasonSelector = str.match(/<select[^>]*class="[^"]*season-selector[^"]*"[^>]*>.*?<\/select>/is);
+                if (seasonSelector) {
+                    var selectHtml = seasonSelector[0];
+                    var options = selectHtml.match(/<option[^>]*value="([^"]*)"[^>]*>([^<]*)<\/option>/g);
+                    if (options) {
+                        options.forEach(function(opt) {
+                            var valueMatch = opt.match(/value="([^"]*)"/);
+                            var textMatch = opt.match(/>([^<]*)</);
+                            if (valueMatch && textMatch) {
+                                var id = valueMatch[1];
+                                var name = textMatch[1].trim();
+                                if (!name || name === '') {
+                                    name = 'Сезон ' + id;
+                                }
+                                extract.season.push({
+                                    name: name,
+                                    id: id
+                                });
+                                seasonsFound = true;
+                            }
+                        });
+                    }
+                }
+            }
+            
+            // 3. Пробуем найти через .b-tab-item с атрибутом data-season
+            if (!seasonsFound) {
+                var seasonTabs = str.match(/<div[^>]*class="[^"]*b-tab-item[^"]*"[^>]*data-season="([^"]*)"[^>]*>([^<]*)<\/div>/g);
+                if (seasonTabs) {
+                    seasonTabs.forEach(function(tab) {
+                        var idMatch = tab.match(/data-season="([^"]*)"/);
+                        var textMatch = tab.match(/>([^<]*)</);
+                        if (idMatch && textMatch) {
+                            var id = idMatch[1];
+                            var name = textMatch[1].trim();
+                            if (!name || name === '') {
+                                name = 'Сезон ' + id;
+                            }
+                            extract.season.push({
+                                name: name,
+                                id: id
+                            });
+                            seasonsFound = true;
+                        }
+                    });
+                }
+            }
+            
+            // 4. Пробуем найти через .b-simple_season__link
+            if (!seasonsFound) {
+                var seasonLinks = str.match(/<a[^>]*class="[^"]*b-simple_season__link[^"]*"[^>]*data-season="([^"]*)"[^>]*>([^<]*)<\/a>/g);
+                if (seasonLinks) {
+                    seasonLinks.forEach(function(link) {
+                        var idMatch = link.match(/data-season="([^"]*)"/);
+                        var textMatch = link.match(/>([^<]*)</);
+                        if (idMatch && textMatch) {
+                            var id = idMatch[1];
+                            var name = textMatch[1].trim();
+                            if (!name || name === '') {
+                                name = 'Сезон ' + id;
+                            }
+                            extract.season.push({
+                                name: name,
+                                id: id
+                            });
+                            seasonsFound = true;
+                        }
+                    });
+                }
+            }
+            
+            // Если не нашли сезоны, но это сериал, добавляем дефолтный
+            if (extract.is_series && !extract.season.length && defSeason) {
+                extract.season.push(defSeason);
+            }
+            
+            // --- ПАРСИНГ ЭПИЗОДОВ ---
+            if (extract.is_series) {
+                var episodes = str.match(/(<div id="simple-episodes-tabs".*?<\/div>)/);
+                if (episodes) {
+                    var _select2 = $(episodes[1]);
+                    $('.b-simple_episode__item', _select2).each(function () {
+                        var season_id = $(this).attr('data-season_id');
+                        var episode_id = $(this).attr('data-episode_id');
+                        var name = $(this).text().trim();
+                        if (!name || name === '') {
+                            name = 'Серия ' + episode_id;
+                        }
+                        extract.episode.push({
+                            name: name,
+                            season_id: season_id,
+                            episode_id: episode_id
+                        });
+                    });
+                }
+                
+                // Если не нашли эпизоды через стандартный селектор, пробуем альтернативные
+                if (!extract.episode.length) {
+                    var altEpisodes = str.match(/<div[^>]*class="[^"]*episode-item[^"]*"[^>]*data-season="([^"]*)"[^>]*data-episode="([^"]*)"[^>]*>([^<]*)<\/div>/g);
+                    if (altEpisodes) {
+                        altEpisodes.forEach(function(ep) {
+                            var seasonMatch = ep.match(/data-season="([^"]*)"/);
+                            var episodeMatch = ep.match(/data-episode="([^"]*)"/);
+                            var textMatch = ep.match(/>([^<]*)</);
+                            if (seasonMatch && episodeMatch) {
+                                var season_id = seasonMatch[1];
+                                var episode_id = episodeMatch[1];
+                                var name = textMatch ? textMatch[1].trim() : ('Серия ' + episode_id);
+                                if (!name || name === '') {
+                                    name = 'Серия ' + episode_id;
+                                }
+                                extract.episode.push({
+                                    name: name,
+                                    season_id: season_id,
+                                    episode_id: episode_id
+                                });
+                            }
+                        });
+                    }
+                }
+                
+                if (!extract.episode.length && defEpisode) {
+                    extract.episode.push(defEpisode);
+                }
+            }
+            
+            // --- ПАРСИНГ ГОЛОСОВ ---
             var voices = str.match(/(<ul id="translators-list".*?<\/ul>)/);
             if (voices) {
                 var select = $(voices[1]);
@@ -891,38 +1046,11 @@
                     });
                 });
             }
+            
             if (!extract.voice.length && defVoice) {
                 extract.voice.push(defVoice);
             }
-            if (extract.is_series) {
-                var seasons = str.match(/(<ul id="simple-seasons-tabs".*?<\/ul>)/);
-                if (seasons) {
-                    var _select = $(seasons[1]);
-                    $('.b-simple_season__item', _select).each(function () {
-                        extract.season.push({
-                            name: $(this).text().trim(),
-                            id: $(this).attr('data-tab_id')
-                        });
-                    });
-                }
-                if (!extract.season.length && defSeason) {
-                    extract.season.push(defSeason);
-                }
-                var episodes = str.match(/(<div id="simple-episodes-tabs".*?<\/div>)/);
-                if (episodes) {
-                    var _select2 = $(episodes[1]);
-                    $('.b-simple_episode__item', _select2).each(function () {
-                        extract.episode.push({
-                            name: $(this).text().trim(),
-                            season_id: $(this).attr('data-season_id'),
-                            episode_id: $(this).attr('data-episode_id')
-                        });
-                    });
-                }
-                if (!extract.episode.length && defEpisode) {
-                    extract.episode.push(defEpisode);
-                }
-            }
+            
             var favs = str.match(/<input type="hidden" id="ctrl_favs" value="([^"]*)"/);
             if (favs) extract.favs = favs[1];
             var blocked = str.match(/class="b-player__restricted__block_message"/);
@@ -986,61 +1114,41 @@
             attempt(1);
         }
 
-        function syncAllSeasons() {
-            if (!extract.is_series) return;
-            var season_map = {};
-            extract.season.forEach(function (s) {
-                if (s && s.id) season_map[s.id] = s.name;
-            });
-            for (var tid in extract.voice_season_list) {
-                var list = extract.voice_season_list[tid];
-                if (list && list.length) {
-                    list.forEach(function (s) {
-                        if (s && s.id && !season_map[s.id]) {
-                            season_map[s.id] = s.name;
-                        }
-                    });
-                }
-            }
-            var new_seasons = [];
-            for (var id in season_map) {
-                new_seasons.push({ id: id, name: season_map[id] });
-            }
-            new_seasons.sort(function (a, b) {
-                return parseInt(a.id) - parseInt(b.id);
-            });
-            if (new_seasons.length) {
-                extract.season = new_seasons;
-            }
-        }
-
         function parseVoiceEpisodes(json, translator_id, key) {
             var data = { season: [], episode: [] };
             if (json && json.seasons) {
                 var select = $('<ul>' + json.seasons + '</ul>');
                 $('.b-simple_season__item', select).each(function () {
+                    var id = $(this).attr('data-tab_id');
+                    var name = $(this).text().trim();
+                    if (!name || name === '') {
+                        name = 'Сезон ' + id;
+                    }
                     data.season.push({
-                        name: $(this).text().trim(),
-                        id: $(this).attr('data-tab_id')
+                        name: name,
+                        id: id
                     });
                 });
             }
             if (json && json.episodes) {
                 var _select3 = $('<div>' + json.episodes + '</div>');
                 $('.b-simple_episode__item', _select3).each(function () {
+                    var season_id = $(this).attr('data-season_id');
+                    var episode_id = $(this).attr('data-episode_id');
+                    var name = $(this).text().trim();
+                    if (!name || name === '') {
+                        name = 'Серия ' + episode_id;
+                    }
                     data.episode.push({
-                        name: $(this).text().trim(),
+                        name: name,
                         translator_id: translator_id,
-                        season_id: $(this).attr('data-season_id'),
-                        episode_id: $(this).attr('data-episode_id')
+                        season_id: season_id,
+                        episode_id: episode_id
                     });
                 });
             }
             extract.voice_data[key] = data;
-            if (data.season.length) {
-                extract.voice_season_list[translator_id] = data.season;
-                syncAllSeasons();
-            }
+            if (data.season.length) extract.voice_season_list[translator_id] = data.season;
             return data;
         }
 
@@ -1059,6 +1167,7 @@
                 return;
             }
 
+            // Проверяем, есть ли уже загруженные данные для этого сезона
             var hasData = false;
             voices.forEach(function(v) {
                 var key = v.id + '::' + (season_id || '');
@@ -1067,8 +1176,8 @@
                 }
             });
 
+            // Если данные уже есть - сразу вызываем callback
             if (hasData) {
-                syncAllSeasons();
                 callback();
                 return;
             }
@@ -1080,7 +1189,6 @@
                     queueDone();
                 });
             }, function () {
-                syncAllSeasons();
                 if (done < total) callback();
             });
         }
@@ -1152,8 +1260,6 @@
                 var is_prem = premium_results[v.id] || false;
                 return is_prem ? '⭐ ' + v.name : v.name;
             });
-
-            syncAllSeasons();
 
             filter_items = {
                 season: extract.season.map(function (s) { return s.name; }),
@@ -1269,19 +1375,34 @@
                 var voice_id = voice_obj ? voice_obj.id : null;
                 var is_prem = voice_id ? (premium_results[voice_id] || false) : false;
                 
-                extract.episode.forEach(function (episode) {
-                    if (episode.season_id == season_id) {
-                        filtred.push({
-                            title: component.formatEpisodeTitle(episode.season_id, null, episode.name),
-                            quality: '360p ~ 1080p',
-                            info: ' / ' + voice,
-                            season: parseInt(episode.season_id),
-                            episode: parseInt(episode.episode_id),
-                            media: episode,
-                            voice_id: voice_id,
-                            is_premium: is_prem
+                // Фильтруем эпизоды по выбранному сезону
+                var seasonEpisodes = extract.episode.filter(function (episode) {
+                    return episode.season_id == season_id;
+                });
+                
+                // Если нет эпизодов для этого сезона, пытаемся получить их через AJAX
+                if (!seasonEpisodes.length && voice_id) {
+                    var key = voice_id + '::' + (season_id || '');
+                    var data = extract.voice_data[key];
+                    if (data && data.episode && data.episode.length) {
+                        extract.episode = data.episode;
+                        seasonEpisodes = extract.episode.filter(function (episode) {
+                            return episode.season_id == season_id;
                         });
                     }
+                }
+                
+                seasonEpisodes.forEach(function (episode) {
+                    filtred.push({
+                        title: component.formatEpisodeTitle(episode.season_id, null, episode.name),
+                        quality: '360p ~ 1080p',
+                        info: ' / ' + voice,
+                        season: parseInt(episode.season_id),
+                        episode: parseInt(episode.episode_id),
+                        media: episode,
+                        voice_id: voice_id,
+                        is_premium: is_prem
+                    });
                 });
             } else {
                 extract.voice.forEach(function (voice) {
@@ -1455,14 +1576,37 @@
             balanser = last_bls[object.movie.id];
         }
 
-        this.proxy = function (name) { return ''; };
-        this.fixLink = function (link, referrer) { return fixLink(link, referrer); };
-        this.fixLinkProtocol = function (link, prefer_http, replace_protocol) { return fixLinkProtocol(link, prefer_http, replace_protocol); };
-        this.proxyLink = function (link, proxy, proxy_enc, enc) { return link; };
-        this.proxyStream = function (url, name) { return url; };
-        this.processSubs = function (url) { return url; };
-        this.proxyStreamSubs = function (url, name) { return this.processSubs(url); };
-        this.checkMyIp = function (onComplite) { onComplite(); };
+        this.proxy = function (name) {
+            return '';
+        };
+
+        this.fixLink = function (link, referrer) {
+            return fixLink(link, referrer);
+        };
+
+        this.fixLinkProtocol = function (link, prefer_http, replace_protocol) {
+            return fixLinkProtocol(link, prefer_http, replace_protocol);
+        };
+
+        this.proxyLink = function (link, proxy, proxy_enc, enc) {
+            return link;
+        };
+
+        this.proxyStream = function (url, name) {
+            return url;
+        };
+
+        this.processSubs = function (url) {
+            return url;
+        };
+
+        this.proxyStreamSubs = function (url, name) {
+            return this.processSubs(url);
+        };
+
+        this.checkMyIp = function (onComplite) {
+            onComplite();
+        };
 
         var last;
         var extended;
@@ -1607,6 +1751,7 @@
         };
 
         this.find = function () {
+            var _this4 = this;
             var query = object.search || object.movie.title;
             if (!query) {
                 this.emptyForQuery(query);
@@ -2026,6 +2171,7 @@
         };
 
         this.pause = function () {};
+
         this.stop = function () {};
 
         this.destroy = function () {
@@ -2039,7 +2185,9 @@
     }
 
     // --- Настройки и инициализация ---
+    var isMSX = !!(window.TVXHost || window.TVXManager);
     var isTizen = navigator.userAgent.toLowerCase().indexOf('tizen') !== -1;
+    var isIFrame = window.parent !== window;
     var isLocal = !startsWith(window.location.protocol, 'http');
     var network = new Lampa.Reguest();
     var online_loading = false;
@@ -2074,8 +2222,12 @@
         if (!Lampa.Lang) {
             var lang_data = {};
             Lampa.Lang = {
-                add: function (data) { lang_data = data; },
-                translate: function (key) { return lang_data[key] ? lang_data[key].ru : key; }
+                add: function (data) {
+                    lang_data = data;
+                },
+                translate: function (key) {
+                    return lang_data[key] ? lang_data[key].ru : key;
+                }
             };
         }
 
@@ -2084,7 +2236,7 @@
             online_mod_nolink: { ru: 'Не удалось извлечь ссылку', uk: 'Неможливо отримати посилання', be: 'Не ўдалося атрымаць спасылку', en: 'Failed to fetch link', zh: '获取链接失败' },
             online_mod_blockedlink: { ru: 'К сожалению, это видео не доступно в вашем регионе', uk: 'На жаль, це відео не доступне у вашому регіоні', be: 'Нажаль, гэта відэа не даступна ў вашым рэгіёне', en: 'Sorry, this video is not available in your region', zh: '抱歉，您所在的地区无法观看该视频' },
             online_mod_balanser: { ru: 'Балансер', uk: 'Балансер', be: 'Балансер', en: 'Balancer', zh: '平衡器' },
-            online_mod_file_helper: { ru: 'Удерживайте клавишу "ОК" для вызова контекстного меню', uk: 'Утримуйте клавішу "ОК" для виклику контекстного меню', be: 'Утрымлівайце клавишу "ОК" для выклику кантэкстнага меню', en: 'Hold the "OK" key to bring up the context menu', zh: '按住“确定”键调出上下文菜单' },
+            online_mod_file_helper: { ru: 'Удерживайте клавишу "ОК" для вызова контекстного меню', uk: 'Утримуйте клавішу "ОК" для виклику контекстного меню', be: 'Утрымлівайце клавішу "ОК" для выклику кантэкстнага меню', en: 'Hold the "OK" key to bring up the context menu', zh: '按住“确定”键调出上下文菜单' },
             online_mod_clearmark_all: { ru: 'Снять отметку у всех', uk: 'Зняти позначку у всіх', be: 'Зняць адзнаку ва ўсіх', en: 'Uncheck all', zh: '取消所有' },
             online_mod_timeclear_all: { ru: 'Сбросить тайм-код у всех', uk: 'Скинути тайм-код у всіх', be: 'Скінуць тайм-код ва ўсіх', en: 'Reset timecode for all', zh: '为所有人重置时间码' },
             online_mod_query_start: { ru: 'По запросу', uk: 'На запит', be: 'Па запыце', en: 'On request', zh: '根据要求' },
@@ -2393,7 +2545,6 @@
         initStorage();
         initLang();
         resetTemplates();
-        initSettings();
 
         Lampa.Component.add('online_mod', component);
 
@@ -2415,27 +2566,21 @@
         };
         Lampa.Manifest.plugins = manifest;
 
-        var button = "<div class=\"full-start__button selector view--online_mod\" data-subtitle=\"\">\n        <svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" width=\"512\" height=\"512\" viewBox=\"0 0 244 260\">\n        <g>\n            <path d=\"M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88L2,50.2L47.8,80L10,88z\" fill=\"white\"/>\n        </g>\n        </svg>\n        <span>" + Lampa.Lang.translate('online_mod_watch') + "</span>\n    </div>";
+        var button = "<div class=\"full-start__button selector view--online_mod\" data-subtitle=\"\">\n        <svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" xmlns:svgjs=\"http://svgjs.com/svgjs\" version=\"1.1\" width=\"512\" height=\"512\" x=\"0\" y=\"0\" viewBox=\"0 0 244 260\" style=\"enable-background:new 0 0 512 512\" xml:space=\"preserve\" class=\"\">\n        <g xmlns=\"http://www.w3.org/2000/svg\">\n            <path d=\"M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7l0,0 L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88 L2,50.2L47.8,80L10,88z\" fill=\"currentColor\"/>\n        </g></svg>\n        <span>#{online_mod_title}</span>\n        </div>";
 
         Lampa.Listener.follow('full', function (e) {
-            if (e.type === 'complite') {
-                var btn = $(button);
+            if (e.type == 'complite') {
+                var btn = $(Lampa.Lang.translate(button));
+                online_loading = false;
                 btn.on('hover:enter', function () {
                     loadOnline(e.data.movie);
                 });
-                var render = e.object.activity.render();
-                if (render.find('.view--online_mod').length === 0) {
-                    render.find('.full-start__buttons').append(btn);
-                }
+                e.object.activity.render().find('.view--torrent').after(btn);
             }
         });
+
+        initSettings();
     }
 
-    if (window.appready) {
-        startPlugin();
-    } else {
-        Lampa.Listener.follow('app', function (e) {
-            if (e.type === 'ready') startPlugin();
-        });
-    }
+    startPlugin();
 })();
