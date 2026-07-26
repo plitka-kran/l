@@ -1,4 +1,4 @@
-// Online Mod (без прокси) с премиум-индикацией 90
+// Online Mod (без прокси) с премиум-индикацией и фильтрацией переводов по сезона 90
 
 (function () {
     'use strict';
@@ -103,39 +103,6 @@
         if (url.indexOf('://') == -1) url = 'https://' + url;
         if (url.charAt(url.length - 1) === '/') url = url.substring(0, url.length - 1);
         return url;
-    }
-
-    function decodeSecret(input, password) {
-        var result = '';
-        password = (password || Lampa.Storage.get('online_mod_secret_password', '')) + '';
-        if (input && password) {
-            var hash = salt('123456789' + password);
-            while (hash.length < input.length) {
-                hash += hash;
-            }
-            var i = 0;
-            while (i < input.length) {
-                result += String.fromCharCode(input[i] ^ hash.charCodeAt(i));
-                i++;
-            }
-        }
-        return result;
-    }
-
-    function salt(input) {
-        var str = (input || '') + '';
-        var hash = 0;
-        for (var i = 0; i < str.length; i++) {
-            var c = str.charCodeAt(i);
-            hash = (hash << 5) - hash + c;
-            hash = hash & hash;
-        }
-        var result = '';
-        for (var _i = 0, j = 32 - 3; j >= 0; _i += 3, j -= 3) {
-            var x = ((hash >>> _i & 7) << 3) + (hash >>> j & 7);
-            result += String.fromCharCode(x < 26 ? 97 + x : x < 52 ? 39 + x : x - 4);
-        }
-        return result;
     }
 
     // --- Компонент Rezka2 ---
@@ -486,9 +453,16 @@
         };
 
         this.filter = function (type, a, b) {
-            choice[a.stype] = b.index;
-            if (a.stype == 'voice') choice.voice_name = filter_items.voice[b.index];
-            if (a.stype == 'season') choice.season_id = filter_items.season_id[b.index];
+            if (a.stype == 'season') {
+                choice.season = b.index;
+                choice.season_id = filter_items.season_id[b.index];
+            }
+            if (a.stype == 'voice') {
+                var current_voices = getAvailableVoicesForSeason(choice.season_id);
+                if (current_voices[b.index]) {
+                    choice.voice_name = current_voices[b.index].name;
+                }
+            }
             component.reset();
             component.loading(true);
             getEpisodes(success);
@@ -526,7 +500,7 @@
             append(filtred());
         }
 
-        // ============ ПАРСИНГ ПЕРЕВОДОВ С ПРОВЕРКОЙ НА PREMIUM ============
+        // ============ ПАРСИНГ ПЕРЕВОДОВ И СЕЗОНОВ ============
         function extractData(str) {
             extract.voice = [];
             extract.season = [];
@@ -560,7 +534,6 @@
                 defVoice = { name: devVoiceName, id: cdnMovie[2], is_camrip: cdnMovie[3], is_ads: cdnMovie[4], is_director: cdnMovie[5] };
             }
             
-            // ============ ПАРСИНГ ПЕРЕВОДОВ ============
             var voices = str.match(/(<ul id="translators-list".*?<\/ul>)/);
             if (voices) {
                 var select = $(voices[1]);
@@ -568,27 +541,24 @@
                     var $this = $(this);
                     var title = ($this.attr('title') || $this.text() || '').trim();
                     
-                    // Собираем информацию о языках (флаги)
                     $('img', this).each(function () {
                         var lang = ($(this).attr('title') || $(this).attr('alt') || '').trim();
                         if (lang && title.indexOf(lang) == -1) title += ' (' + lang + ')';
                     });
                     
-                    // ===== ПРОВЕРКА НА PREMIUM (класс b-prem_translator) =====
                     var is_premium = $this.hasClass('b-prem_translator') || 
                                     $this.hasClass('premium') || 
                                     $this.hasClass('premium-translator') ||
                                     $this.attr('data-premium') === 'true';
                     
-                    // ДОБАВЛЯЕМ ЗВЁЗДОЧКУ В НАЗВАНИЕ ДЛЯ ФИЛЬТРА
                     var display_name = title;
                     if (is_premium) {
                         display_name += ' ⭐';
                     }
                     
                     extract.voice.push({
-                        name: display_name, // Сохраняем с звёздочкой для фильтра
-                        clean_name: title,   // Сохраняем чистое название отдельно
+                        name: display_name,
+                        clean_name: title,
                         id: $this.attr('data-translator_id'),
                         is_camrip: $this.attr('data-camrip'),
                         is_ads: $this.attr('data-ads'),
@@ -611,7 +581,6 @@
                 });
             }
             
-            // ============ ПАРСИНГ СЕЗОНОВ И СЕРИЙ ============
             if (extract.is_series) {
                 var seasons = str.match(/(<ul id="simple-seasons-tabs".*?<\/ul>)/);
                 if (seasons) {
@@ -650,18 +619,50 @@
             if (blocked) extract.blocked = true;
         }
 
+        function extractEpisodes(json, translator_id) {
+            var data = { season: [], episode: [] };
+            if (json && json.seasons) {
+                var select = $('<ul>' + json.seasons + '</ul>');
+                $('.b-simple_season__item', select).each(function () {
+                    var s_item = {
+                        name: $(this).text(),
+                        id: $(this).attr('data-tab_id')
+                    };
+                    data.season.push(s_item);
+
+                    var exists = extract.season.some(function(s) { return s.id == s_item.id; });
+                    if (!exists) {
+                        extract.season.push(s_item);
+                    }
+                });
+                extract.season.sort(function(a, b) { return parseInt(a.id) - parseInt(b.id); });
+            }
+            if (json && json.episodes) {
+                var _select3 = $('<div>' + json.episodes + '</div>');
+                $('.b-simple_episode__item', _select3).each(function () {
+                    data.episode.push({
+                        name: $(this).text(),
+                        translator_id: translator_id,
+                        season_id: $(this).attr('data-season_id'),
+                        episode_id: $(this).attr('data-episode_id')
+                    });
+                });
+            }
+            extract.voice_data[translator_id] = data;
+        }
+
         function getEpisodes(call) {
             if (extract.is_series && extract.voice.length) {
                 var pending = 0;
                 var total = extract.voice.length;
-        
+
                 function checkDone() {
                     pending++;
                     if (pending >= total) {
                         call();
                     }
                 }
-        
+
                 extract.voice.forEach(function (v) {
                     var translator_id = v.id;
                     if (extract.voice_data[translator_id]) {
@@ -672,7 +673,7 @@
                         postdata += '&translator_id=' + encodeURIComponent(translator_id);
                         postdata += '&favs=' + encodeURIComponent(extract.favs);
                         postdata += '&action=get_episodes';
-        
+
                         network.silent(url, function (json) {
                             extractEpisodes(json, translator_id);
                             checkDone();
@@ -689,67 +690,39 @@
             call();
         }
 
-        function extractEpisodes(json, translator_id) {
-            var data = { season: [], episode: [] };
-            if (json && json.seasons) {
-                var select = $('<ul>' + json.seasons + '</ul>');
-                $('.b-simple_season__item', select).each(function () {
-                    data.season.push({
-                        name: $(this).text(),
-                        id: $(this).attr('data-tab_id')
-                    });
-                });
-            }
-            if (json && json.episodes) {
-                var _select3 = $('<div>' + json.episodes + '</div>');
-                $('.b-simple_episode__item', _select3).each(function () {
-                    data.episode.push({
-                        name: $(this).text(),
-                        translator_id: translator_id,
-                        season_id: $(this).attr('data-season_id'),
-                        episode_id: $(this).attr('data-episode_id')
-                    });
-                });
-            }
-            extract.voice_data[translator_id] = data;
-            extract.season = data.season;
-            extract.episode = data.episode;
-        }
-
-        function filterVoice() {
-            var voice = extract.is_series ? extract.voice.map(function (v) { return v.name; }) : [];
-            if (!voice[choice.voice]) choice.voice = 0;
-            if (choice.voice_name) {
-                var inx = voice.indexOf(choice.voice_name);
-                if (inx == -1) choice.voice = 0;
-                else if (inx !== choice.voice) {
-                    choice.voice = inx;
-                }
-            }
+        function getAvailableVoicesForSeason(season_id) {
+            if (!season_id) return extract.voice;
+            return extract.voice.filter(function (v) {
+                var v_data = extract.voice_data[v.id];
+                if (!v_data || !v_data.season || !v_data.season.length) return true;
+                return v_data.season.some(function (s) { return s.id == season_id; });
+            });
         }
 
         function filter() {
-            var selected_season_id = extract.season[choice.season] ? extract.season[choice.season].id : null;
-        
-            // Отбираем только те переводы, где присутствует выбранный сезон
-            var available_voices = extract.voice.filter(function (v) {
-                if (!selected_season_id) return true;
-                var v_data = extract.voice_data[v.id];
-                if (!v_data || !v_data.season) return true;
-                return v_data.season.some(function (s) {
-                    return s.id == selected_season_id;
-                });
-            });
-        
+            if (!choice.season_id && extract.season[choice.season]) {
+                choice.season_id = extract.season[choice.season].id;
+            }
+
+            var available_voices = getAvailableVoicesForSeason(choice.season_id);
+            var voice_names = available_voices.map(function (v) { return v.name; });
+
             filter_items = {
                 season: extract.season.map(function (s) { return s.name; }),
                 season_id: extract.season.map(function (s) { return s.id; }),
-                voice: available_voices.map(function (v) { return v.name; })
+                voice: voice_names
             };
-        
+
             if (!filter_items.season[choice.season]) choice.season = 0;
-            if (!filter_items.voice[choice.voice]) choice.voice = 0;
-        
+            
+            if (choice.voice_name) {
+                var inx = voice_names.indexOf(choice.voice_name);
+                if (inx !== -1) choice.voice = inx;
+                else choice.voice = 0;
+            } else if (!filter_items.voice[choice.voice]) {
+                choice.voice = 0;
+            }
+
             component.filter(filter_items, choice);
         }
 
@@ -815,22 +788,21 @@
         function filtred() {
             var filtred = [];
             if (extract.is_series) {
-                var season_name = filter_items.season[choice.season];
-                var season_id;
-                extract.season.forEach(function (season) {
-                    if (season.name == season_name) season_id = season.id;
-                });
-                var voice = filter_items.voice[choice.voice];
-                var voice_data = extract.voice[choice.voice] || {};
+                var season_id = choice.season_id || (extract.season[choice.season] ? extract.season[choice.season].id : null);
+                var available_voices = getAvailableVoicesForSeason(season_id);
+                var voice_data = available_voices[choice.voice] || available_voices[0] || {};
+                var translator_id = voice_data.id;
                 var is_premium = voice_data.is_premium || false;
-                var voice_clean = voice_data.clean_name || voice;
+                var voice_clean = voice_data.clean_name || voice_data.name || '';
                 
-                extract.episode.forEach(function (episode) {
+                var ep_list = (extract.voice_data[translator_id] && extract.voice_data[translator_id].episode) ? extract.voice_data[translator_id].episode : extract.episode;
+
+                ep_list.forEach(function (episode) {
                     if (episode.season_id == season_id) {
                         filtred.push({
                             title: component.formatEpisodeTitle(episode.season_id, null, episode.name) + (is_premium ? ' <span style="font-size: 0.7em; vertical-align: super; color: #FFD700;">⭐ premium</span>' : ''),
                             quality: '360p ~ 1080p',
-                            info: ' / ' + voice_clean,
+                            info: voice_clean ? ' / ' + voice_clean : '',
                             season: parseInt(episode.season_id),
                             episode: parseInt(episode.episode_id),
                             media: episode,
@@ -840,7 +812,6 @@
                 });
             } else {
                 extract.voice.forEach(function (voice) {
-                    var display_title = voice.clean_name || voice.name;
                     filtred.push({
                         title: (voice.clean_name || voice.name) + (voice.is_premium ? ' <span style="font-size: 0.7em; vertical-align: super; color: #FFD700;">⭐ premium</span>' : ''),
                         quality: '360p ~ 1080p',
@@ -1091,10 +1062,6 @@
             return str.replace(/[\s.,:;’'`!?]+/g, ' ').trim();
         };
 
-        this.kpCleanTitle = function (str) {
-            return this.cleanTitle(str).replace(/^[ \/\\]+/, '').replace(/[ \/\\]+$/, '').replace(/\+( *[+\/\\])+/g, '+').replace(/([+\/\\] *)+\+/g, '+').replace(/( *[\/\\]+ *)+/g, '+');
-        };
-
         this.normalizeTitle = function (str) {
             return this.cleanTitle(str.toLowerCase().replace(/[\-\u2010-\u2015\u2E3A\u2E3B\uFE58\uFE63\uFF0D]+/g, '-').replace(/ё/g, 'е'));
         };
@@ -1125,36 +1092,7 @@
             });
         };
 
-        this.uniqueNamesShortText = function (names, limit) {
-            var unique = [];
-            names.forEach(function (name) {
-                if (name && unique.indexOf(name) == -1) unique.push(name);
-            });
-            if (limit && unique.length > 1) {
-                var length = 0;
-                var limit_index = -1;
-                var last_index = unique.length - 1;
-                unique.forEach(function (name, index) {
-                    length += name.length;
-                    if (limit_index == -1 && length > limit - (index == last_index ? 0 : 5)) limit_index = index;
-                    length += 2;
-                });
-                if (limit_index != -1) {
-                    unique = unique.splice(0, Math.max(limit_index, 1));
-                    unique.push('...');
-                }
-            }
-            return unique.join(', ');
-        };
-
-        this.decodeHtml = function (html) {
-            var text = document.createElement("textarea");
-            text.innerHTML = html;
-            return text.value;
-        };
-
         this.find = function () {
-            var _this4 = this;
             var query = object.search || object.movie.title;
             if (!query) {
                 this.emptyForQuery(query);
@@ -1594,14 +1532,6 @@
     var network = new Lampa.Reguest();
     var online_loading = false;
 
-    function logApp() {
-        console.log('Online Mod');
-        console.log('App', 'is MSX:', isMSX);
-        console.log('App', 'is Tizen:', isTizen);
-        console.log('App', 'is iframe:', isIFrame);
-        console.log('App', 'is local:', isLocal);
-    }
-
     function initStorage() {
         Lampa.Storage.set('online_mod_proxy_rezka2', 'false');
 
@@ -1645,7 +1575,7 @@
             online_mod_nolink: { ru: 'Не удалось извлечь ссылку', uk: 'Неможливо отримати посилання', be: 'Не ўдалося атрымаць спасылку', en: 'Failed to fetch link', zh: '获取链接失败' },
             online_mod_blockedlink: { ru: 'К сожалению, это видео не доступно в вашем регионе', uk: 'На жаль, це відео не доступне у вашому регіоні', be: 'Нажаль, гэта відэа не даступна ў вашым рэгіёне', en: 'Sorry, this video is not available in your region', zh: '抱歉，您所在的地区无法观看该视频' },
             online_mod_balanser: { ru: 'Балансер', uk: 'Балансер', be: 'Балансер', en: 'Balancer', zh: '平衡器' },
-            online_mod_file_helper: { ru: 'Удерживайте клавишу "ОК" для вызова контекстного меню', uk: 'Утримуйте клавішу "ОК" для виклику контекстного меню', be: 'Утрымлівайце клавішу "ОК" для выкліку кантэкстнага меню', en: 'Hold the "OK" key to bring up the context menu', zh: '按住“确定”键调出上下文菜单' },
+            online_mod_file_helper: { ru: 'Удерживайте клавишу "ОК" для вызова контекстного меню', uk: 'Утримуйте клавішу "ОК" для виклику контекстного меню', be: 'Утрымлівайце клавішу "ОК" для выклику кантэкстнага меню', en: 'Hold the "OK" key to bring up the context menu', zh: '按住“确定”键调出上下文菜单' },
             online_mod_clearmark_all: { ru: 'Снять отметку у всех', uk: 'Зняти позначку у всіх', be: 'Зняць адзнаку ва ўсіх', en: 'Uncheck all', zh: '取消所有' },
             online_mod_timeclear_all: { ru: 'Сбросить тайм-код у всех', uk: 'Скинути тайм-код у всіх', be: 'Скінуць тайм-код ва ўсіх', en: 'Reset timecode for all', zh: '为所有人重置时间码' },
             online_mod_query_start: { ru: 'По запросу', uk: 'На запит', be: 'Па запыце', en: 'On request', zh: '根据要求' },
@@ -1659,13 +1589,9 @@
             online_mod_rezka2_mirror: { ru: 'Url HDrezka', uk: 'Url HDrezka', be: 'Url HDrezka', en: 'Url HDrezka', zh: 'Url HDrezka' },
             online_mod_rezka2_name: { ru: 'Логин или email для HDrezka', uk: 'Логін чи email для HDrezka', be: 'Лагін ці email для HDrezka', en: 'Login or email for HDrezka', zh: 'HDrezka的登录名或电子邮件' },
             online_mod_rezka2_password: { ru: 'Пароль для HDrezka', uk: 'Пароль для HDrezka', be: 'Пароль для HDrezka', en: 'Password for HDrezka', zh: 'HDrezka的密码' },
-            online_mod_rezka2_login: { ru: 'Войти в HDrezka', uk: 'Увійти до HDrezka', be: 'Увайсці ў HDrezka', en: 'Log in to HDrezka', zh: '登录HDrezka' },
-            online_mod_rezka2_logout: { ru: 'Выйти из HDrezka', uk: 'Вийти з HDrezka', be: 'Выйсці з HDrezka', en: 'Log out of HDrezka', zh: '注销HDrezka' },
             online_mod_rezka2_cookie: { ru: 'Куки для HDrezka', uk: 'Кукі для HDrezka', be: 'Кукі для HDrezka', en: 'Cookie for HDrezka', zh: 'HDrezka 的 Cookie' },
-            online_mod_rezka2_fill_cookie: { ru: 'Заполнить куки для HDrezka', uk: 'Заповнити кукі для HDrezka', be: 'Запоўніць кукі для HDrezka', en: 'Fill cookie for HDrezka', zh: '为HDrezka填充Cookie' },
-            online_mod_authorization_required: { ru: 'Требуется авторизация', uk: 'Потрібна авторизація', be: 'Патрабуецца аўтарызацыя', en: 'Authorization required', zh: '需要授权' },
+            online_mod_authorization_required: { ru: 'Требуется авторизация', uk: 'Потрібна авторизація', be: 'Патрабуецца аўтарызацыя', en: 'Authorization required', zh: ' need authorization' },
             online_mod_unsupported_mirror: { ru: 'Неподдерживаемое зеркало', uk: 'Непідтримуване дзеркало', be: 'Непадтрымоўванае люстэрка', en: 'Unsupported mirror', zh: '不支持的镜子' },
-            online_mod_secret_password: { ru: 'Секретный пароль', uk: 'Секретний пароль', be: 'Сакрэтны пароль', en: 'Secret password', zh: '秘密密码' },
             online_mod_seasons_count: { ru: 'Сезонов', uk: 'Сезонів', be: 'Сезонаў', en: 'Seasons', zh: '季' },
             online_mod_episodes_count: { ru: 'Эпизодов', uk: 'Епізодів', be: 'Эпізодаў', en: 'Episodes', zh: '集' },
             online_mod_show_more: { ru: 'Показать ещё', uk: 'Показати ще', be: 'Паказаць яшчэ', en: 'Show more', zh: '展示更多' },
@@ -1696,226 +1622,7 @@
         });
     }
 
-    function addSettingsOnlineMod() {
-        if (Lampa.Settings.main && Lampa.Settings.main() && !Lampa.Settings.main().render().find('[data-component="online_mod"]').length) {
-            var field = $(Lampa.Lang.translate("<div class=\"settings-folder selector\" data-component=\"online_mod\">\n            <div class=\"settings-folder__icon\">\n                <svg height=\"260\" viewBox=\"0 0 244 260\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n                <path d=\"M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7l0,0 L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88 L2,50.2L47.8,80L10,88z\" fill=\"white\"/>\n                </svg>\n            </div>\n            <div class=\"settings-folder__name\">#{online_mod_title_full}</div>\n        </div>"));
-            Lampa.Settings.main().render().find('[data-component="more"]').after(field);
-            Lampa.Settings.main().update();
-        }
-    }
-
-    function initSettings() {
-        var template = "<div>";
-
-        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_prefer_http\" data-type=\"toggle\">\n            <div class=\"settings-param__name\">#{online_mod_prefer_http}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
-        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_full_episode_title\" data-type=\"toggle\">\n            <div class=\"settings-param__name\">#{online_mod_full_episode_title}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
-        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_save_last_balanser\" data-type=\"toggle\">\n            <div class=\"settings-param__name\">#{online_mod_save_last_balanser}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>\n        <div class=\"settings-param selector\" data-name=\"online_mod_clear_last_balanser\" data-static=\"true\">\n            <div class=\"settings-param__name\">#{online_mod_clear_last_balanser}</div>\n            <div class=\"settings-param__status\"></div>\n        </div>";
-        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_mirror\" data-type=\"input\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_mirror}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
-        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_name\" data-type=\"input\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_name}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_password\" data-type=\"input\" data-string=\"true\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_password}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
-
-        if (Lampa.Platform.is('android')) {
-            Lampa.Storage.set("online_mod_rezka2_status", 'false');
-        } else {
-            template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_login\" data-static=\"true\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_login}</div>\n            <div class=\"settings-param__status\"></div>\n        </div>\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_logout\" data-static=\"true\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_logout}</div>\n            <div class=\"settings-param__status\"></div>\n        </div>";
-        }
-
-        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_cookie\" data-type=\"input\" data-string=\"true\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_cookie}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>\n        <div class=\"settings-param selector\" data-name=\"online_mod_rezka2_fill_cookie\" data-static=\"true\">\n            <div class=\"settings-param__name\">#{online_mod_rezka2_fill_cookie}</div>\n            <div class=\"settings-param__status\"></div>\n        </div>";
-        template += "\n        <div class=\"settings-param selector\" data-name=\"online_mod_secret_password\" data-type=\"input\" data-string=\"true\" placeholder=\"#{settings_cub_not_specified}\">\n            <div class=\"settings-param__name\">#{online_mod_secret_password}</div>\n            <div class=\"settings-param__value\"></div>\n        </div>";
-        template += "\n    </div>";
-
-        Lampa.Template.add('settings_online_mod', template);
-
-        if (window.appready) addSettingsOnlineMod();
-        else {
-            Lampa.Listener.follow('app', function (e) {
-                if (e.type == 'ready') addSettingsOnlineMod();
-            });
-        }
-
-        Lampa.Settings.listener.follow('open', function (e) {
-            if (e.name == 'online_mod') {
-                var clear_last_balanser = e.body.find('[data-name="online_mod_clear_last_balanser"]');
-                clear_last_balanser.unbind('hover:enter').on('hover:enter', function () {
-                    Lampa.Storage.set('online_mod_last_balanser', {});
-                    $('.settings-param__status', clear_last_balanser).removeClass('active error wait').addClass('active');
-                });
-
-                var rezka2_login = e.body.find('[data-name="online_mod_rezka2_login"]');
-                rezka2_login.unbind('hover:enter').on('hover:enter', function () {
-                    var rezka2_login_status = $('.settings-param__status', rezka2_login).removeClass('active error wait').addClass('wait');
-                    rezka2Login(function () {
-                        rezka2_login_status.removeClass('active error wait').addClass('active');
-                    }, function () {
-                        rezka2_login_status.removeClass('active error wait').addClass('error');
-                    });
-                });
-
-                var rezka2_logout = e.body.find('[data-name="online_mod_rezka2_logout"]');
-                rezka2_logout.unbind('hover:enter').on('hover:enter', function () {
-                    var rezka2_logout_status = $('.settings-param__status', rezka2_logout).removeClass('active error wait').addClass('wait');
-                    rezka2Logout(function () {
-                        rezka2_logout_status.removeClass('active error wait').addClass('active');
-                    }, function () {
-                        rezka2_logout_status.removeClass('active error wait').addClass('error');
-                    });
-                });
-
-                var rezka2_fill_cookie = e.body.find('[data-name="online_mod_rezka2_fill_cookie"]');
-                rezka2_fill_cookie.unbind('hover:enter').on('hover:enter', function () {
-                    var rezka2_fill_cookie_status = $('.settings-param__status', rezka2_fill_cookie).removeClass('active error wait').addClass('wait');
-                    rezka2FillCookie(function () {
-                        rezka2_fill_cookie_status.removeClass('active error wait').addClass('active');
-                        Lampa.Params.update(e.body.find('[data-name="online_mod_rezka2_cookie"]'), [], e.body);
-                    }, function () {
-                        rezka2_fill_cookie_status.removeClass('active error wait').addClass('error');
-                        Lampa.Params.update(e.body.find('[data-name="online_mod_rezka2_cookie"]'), [], e.body);
-                    });
-                });
-            }
-        });
-    }
-
-    // --- Rezka2 авторизация ---
-    function rezka2Login(success, error) {
-        var host = rezka2Mirror();
-        var url = host + '/ajax/login/';
-        var postdata = 'login_name=' + encodeURIComponent(Lampa.Storage.get('online_mod_rezka2_name', ''));
-        postdata += '&login_password=' + encodeURIComponent(Lampa.Storage.get('online_mod_rezka2_password', ''));
-        postdata += '&login_not_save=0';
-        network.clear();
-        network.timeout(8000);
-        network.silent(url, function (json) {
-            if (json && (json.success || json.message == 'Уже авторизован на сайте. Необходимо обновить страницу!')) {
-                Lampa.Storage.set('online_mod_rezka2_status', 'true');
-                network.clear();
-                network.timeout(8000);
-                network.silent(host + '/', function (str) {
-                    str = (str || '').replace(/\n/g, '');
-                    var error_form = str.match(/(<div class="error-code">[^<]*<div>[^<]*<\/div>[^<]*<\/div>)\s*(<div class="error-title">[^<]*<\/div>)/);
-                    if (error_form) {
-                        Lampa.Noty.show(error_form[0]);
-                        if (error) error();
-                        return;
-                    }
-                    var verify_form = str.match(/<span>MIRROR<\/span>.*<button type="submit" onclick="\$\.cookie(\([^)]*\))/);
-                    if (verify_form) {
-                        Lampa.Noty.show(Lampa.Lang.translate('online_mod_unsupported_mirror') + ' HDrezka');
-                        rezka2Logout(error, error);
-                        return;
-                    }
-                    if (success) success();
-                }, function (a, c) {
-                    if (success) success();
-                }, false, {
-                    dataType: 'text',
-                    withCredentials: true
-                });
-            } else {
-                Lampa.Storage.set('online_mod_rezka2_status', 'false');
-                if (json && json.message) Lampa.Noty.show(json.message);
-                if (error) error();
-            }
-        }, function (a, c) {
-            Lampa.Noty.show(network.errorDecode(a, c));
-            if (error) error();
-        }, postdata, {
-            withCredentials: true
-        });
-    }
-
-    function rezka2Logout(success, error) {
-        var url = rezka2Mirror() + '/logout/';
-        network.clear();
-        network.timeout(8000);
-        network.silent(url, function (str) {
-            Lampa.Storage.set('online_mod_rezka2_status', 'false');
-            if (success) success();
-        }, function (a, c) {
-            Lampa.Storage.set('online_mod_rezka2_status', 'false');
-            Lampa.Noty.show(network.errorDecode(a, c));
-            if (error) error();
-        }, false, {
-            dataType: 'text',
-            withCredentials: true
-        });
-    }
-
-    function rezka2FillCookie(success, error) {
-        var host = rezka2Mirror();
-        var url = host + '/ajax/login/';
-        var postdata = 'login_name=' + encodeURIComponent(Lampa.Storage.get('online_mod_rezka2_name', ''));
-        postdata += '&login_password=' + encodeURIComponent(Lampa.Storage.get('online_mod_rezka2_password', ''));
-        postdata += '&login_not_save=0';
-        network.clear();
-        network.timeout(8000);
-        network.silent(url, function (json) {
-            var cookie = '';
-            var values = {};
-            var sid = '';
-            if (!json.success) {
-                if (json.message) Lampa.Noty.show(json.message);
-                if (error) error();
-                return;
-            }
-            var cookieHeaders = json.headers && json.headers['set-cookie'] || null;
-            if (cookieHeaders && cookieHeaders.forEach) {
-                cookieHeaders.forEach(function (param) {
-                    var parts = param.split(';')[0].split('=');
-                    if (parts[0]) {
-                        if (parts[1] === 'deleted') delete values[parts[0]];
-                        else values[parts[0]] = parts[1] || '';
-                    }
-                });
-                sid = values['PHPSESSID'];
-                delete values['PHPSESSID'];
-                var cookies = [];
-                for (var name in values) {
-                    cookies.push(name + '=' + values[name]);
-                }
-                cookie = cookies.join('; ');
-            }
-            if (cookie) {
-                Lampa.Storage.set('online_mod_rezka2_cookie', cookie);
-                if (cookie.indexOf('PHPSESSID=') == -1) cookie = 'PHPSESSID=' + (sid || randomId2(26)) + (cookie ? '; ' + cookie : '');
-                network.clear();
-                network.timeout(8000);
-                network.silent(host + '/', function (str) {
-                    var body = (str || '').replace(/\n/g, '');
-                    var error_form = body.match(/(<div class="error-code">[^<]*<div>[^<]*<\/div>[^<]*<\/div>)\s*(<div class="error-title">[^<]*<\/div>)/);
-                    if (error_form) {
-                        Lampa.Noty.show(error_form[0]);
-                        if (error) error();
-                        return;
-                    }
-                    var verify_form = body.match(/<span>MIRROR<\/span>.*<button type="submit" onclick="\$\.cookie(\([^)]*\))/);
-                    if (verify_form) {
-                        Lampa.Storage.set('online_mod_rezka2_cookie', '');
-                        Lampa.Noty.show(Lampa.Lang.translate('online_mod_unsupported_mirror') + ' HDrezka');
-                        if (error) error();
-                        return;
-                    }
-                    if (success) success();
-                }, function (a, c) {
-                    if (success) success();
-                }, false, {
-                    dataType: 'text',
-                    withCredentials: true,
-                    headers: { Cookie: cookie }
-                });
-            } else {
-                if (error) error();
-            }
-        }, function (a, c) {
-            Lampa.Noty.show(network.errorDecode(a, c));
-            if (error) error();
-        }, postdata, {
-            withCredentials: true
-        });
-    }
-
-    // --- Запуск ---
     function startPlugin() {
-        logApp();
         initStorage();
         initLang();
         resetTemplates();
@@ -1940,7 +1647,7 @@
         };
         Lampa.Manifest.plugins = manifest;
 
-        var button = "<div class=\"full-start__button selector view--online_mod\" data-subtitle=\"\">\n        <svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" xmlns:svgjs=\"http://svgjs.com/svgjs\" version=\"1.1\" width=\"512\" height=\"512\" x=\"0\" y=\"0\" viewBox=\"0 0 244 260\" style=\"enable-background:new 0 0 512 512\" xml:space=\"preserve\" class=\"\">\n        <g xmlns=\"http://www.w3.org/2000/svg\">\n            <path d=\"M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7l0,0 L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88 L2,50.2L47.8,80L10,88z\" fill=\"currentColor\"/>\n        </g></svg>\n        <span>#{online_mod_title}</span>\n        </div>";
+        var button = "<div class=\"full-start__button selector view--online_mod\" data-subtitle=\"\">\n        <svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" width=\"512\" height=\"512\" viewBox=\"0 0 244 260\" xml:space=\"preserve\"><g><path d=\"M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7l0,0 L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88 L2,50.2L47.8,80L10,88z\" fill=\"currentColor\"/></g></svg>\n        <span>#{online_mod_title}</span>\n        </div>";
 
         Lampa.Listener.follow('full', function (e) {
             if (e.type == 'complite') {
@@ -1952,8 +1659,6 @@
                 e.object.activity.render().find('.view--torrent').after(btn);
             }
         });
-
-        initSettings();
     }
 
     startPlugin();
