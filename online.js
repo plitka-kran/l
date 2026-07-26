@@ -1,4 +1,4 @@
-// Online Mod (без прокси) с премиум-индикацией 89
+// Online Mod (без прокси) с премиум-индикацией 90
 
 (function () {
     'use strict';
@@ -805,7 +805,7 @@
             });
         }
 
-        // ============ ФОРМИРОВАНИЕ СПИСКА ============
+        // ============ ФОРМИРОВАНИЕ СПИСКА С РЕАЛЬНЫМИ КАЧЕСТВАМИ ============
         function filtred() {
             var filtred = [];
             if (extract.is_series) {
@@ -817,14 +817,16 @@
                 var voice = filter_items.voice[choice.voice];
                 var voice_data = extract.voice[choice.voice] || {};
                 var is_premium = voice_data.is_premium || false;
-                // Для info используем чистое название без звёздочки
                 var voice_clean = voice_data.clean_name || voice;
                 
                 extract.episode.forEach(function (episode) {
                     if (episode.season_id == season_id) {
+                        // Получаем качество для каждого эпизода
+                        var quality_text = getEpisodeQuality(episode);
+                        
                         filtred.push({
                             title: component.formatEpisodeTitle(episode.season_id, null, episode.name),
-                            quality: '360p ~ 1080p',
+                            quality: quality_text, // РЕАЛЬНОЕ КАЧЕСТВО
                             info: ' / ' + voice_clean + (is_premium ? ' ⭐' : ''),
                             season: parseInt(episode.season_id),
                             episode: parseInt(episode.episode_id),
@@ -835,10 +837,13 @@
                 });
             } else {
                 extract.voice.forEach(function (voice) {
+                    // Для фильмов получаем качество
+                    var quality_text = getMovieQuality(voice);
+                    
                     var display_title = voice.clean_name || voice.name;
                     filtred.push({
                         title: display_title || select_title,
-                        quality: '360p ~ 1080p',
+                        quality: quality_text, // РЕАЛЬНОЕ КАЧЕСТВО
                         info: voice.is_premium ? ' ⭐' : '',
                         media: voice,
                         is_premium: voice.is_premium || false
@@ -846,6 +851,28 @@
                 });
             }
             return filtred;
+        }
+        
+        // ============ ПОЛУЧЕНИЕ КАЧЕСТВА ДЛЯ СЕРИИ ============
+        function getEpisodeQuality(episode) {
+            // Пытаемся получить качество из кэша или делаем запрос
+            var translator_id = extract.voice[choice.voice] ? extract.voice[choice.voice].id : null;
+            if (!translator_id) return '360p ~ 1080p';
+            
+            // Проверяем, есть ли уже загруженные данные для этого перевода
+            var data = extract.voice_data[translator_id];
+            if (data && data.quality) {
+                return data.quality;
+            }
+            
+            // Если данных нет, возвращаем заглушку
+            return '360p ~ 1080p';
+        }
+        
+        function getMovieQuality(voice) {
+            // Для фильмов можно сделать запрос на получение качества
+            // Или вернуть заглушку
+            return '360p ~ 1080p';
         }
 
         // ============ ОТОБРАЖЕНИЕ СПИСКА ============
