@@ -1,4 +1,4 @@
-// Online Mod (исправленная версия с корректным отображением сезонов в фильтре 66)
+// Online Mod (исправленная версия с корректной работой сезонов и премиум 67)
 (function () {
     'use strict';
 
@@ -195,8 +195,6 @@
         var destroyed = false;
         var pendingRequests = [];
         var isFiltering = false;
-        var savedSeasons = [];
-        var seasonsLoaded = false;
 
         function cancelPendingRequests() {
             pendingRequests.forEach(function(req) {
@@ -683,7 +681,6 @@
             };
             premium_cache = {};
             voice_list_current = [];
-            seasonsLoaded = false;
             component.loading(true);
             getEpisodes(success);
             component.saveChoice(choice);
@@ -903,7 +900,7 @@
                     var _select = $(seasons[1]);
                     $('.b-simple_season__item', _select).each(function () {
                         extract.season.push({
-                            name: $(this).text(),
+                            name: $(this).text().trim(),
                             id: $(this).attr('data-tab_id')
                         });
                     });
@@ -911,16 +908,12 @@
                 if (!extract.season.length && defSeason) {
                     extract.season.push(defSeason);
                 }
-                // Сохраняем список сезонов
-                savedSeasons = extract.season.slice();
-                seasonsLoaded = true;
-                
                 var episodes = str.match(/(<div id="simple-episodes-tabs".*?<\/div>)/);
                 if (episodes) {
                     var _select2 = $(episodes[1]);
                     $('.b-simple_episode__item', _select2).each(function () {
                         extract.episode.push({
-                            name: $(this).text(),
+                            name: $(this).text().trim(),
                             season_id: $(this).attr('data-season_id'),
                             episode_id: $(this).attr('data-episode_id')
                         });
@@ -993,13 +986,41 @@
             attempt(1);
         }
 
+        function syncAllSeasons() {
+            if (!extract.is_series) return;
+            var season_map = {};
+            extract.season.forEach(function (s) {
+                if (s && s.id) season_map[s.id] = s.name;
+            });
+            for (var tid in extract.voice_season_list) {
+                var list = extract.voice_season_list[tid];
+                if (list && list.length) {
+                    list.forEach(function (s) {
+                        if (s && s.id && !season_map[s.id]) {
+                            season_map[s.id] = s.name;
+                        }
+                    });
+                }
+            }
+            var new_seasons = [];
+            for (var id in season_map) {
+                new_seasons.push({ id: id, name: season_map[id] });
+            }
+            new_seasons.sort(function (a, b) {
+                return parseInt(a.id) - parseInt(b.id);
+            });
+            if (new_seasons.length) {
+                extract.season = new_seasons;
+            }
+        }
+
         function parseVoiceEpisodes(json, translator_id, key) {
             var data = { season: [], episode: [] };
             if (json && json.seasons) {
                 var select = $('<ul>' + json.seasons + '</ul>');
                 $('.b-simple_season__item', select).each(function () {
                     data.season.push({
-                        name: $(this).text(),
+                        name: $(this).text().trim(),
                         id: $(this).attr('data-tab_id')
                     });
                 });
@@ -1008,7 +1029,7 @@
                 var _select3 = $('<div>' + json.episodes + '</div>');
                 $('.b-simple_episode__item', _select3).each(function () {
                     data.episode.push({
-                        name: $(this).text(),
+                        name: $(this).text().trim(),
                         translator_id: translator_id,
                         season_id: $(this).attr('data-season_id'),
                         episode_id: $(this).attr('data-episode_id')
@@ -1016,7 +1037,10 @@
                 });
             }
             extract.voice_data[key] = data;
-            if (data.season.length) extract.voice_season_list[translator_id] = data.season;
+            if (data.season.length) {
+                extract.voice_season_list[translator_id] = data.season;
+                syncAllSeasons();
+            }
             return data;
         }
 
@@ -1035,7 +1059,6 @@
                 return;
             }
 
-            // Проверяем, есть ли уже загруженные данные для этого сезона
             var hasData = false;
             voices.forEach(function(v) {
                 var key = v.id + '::' + (season_id || '');
@@ -1044,8 +1067,8 @@
                 }
             });
 
-            // Если данные уже есть - сразу вызываем callback
             if (hasData) {
+                syncAllSeasons();
                 callback();
                 return;
             }
@@ -1057,6 +1080,7 @@
                     queueDone();
                 });
             }, function () {
+                syncAllSeasons();
                 if (done < total) callback();
             });
         }
@@ -1129,17 +1153,11 @@
                 return is_prem ? '⭐ ' + v.name : v.name;
             });
 
-            // Используем сохраненный список сезонов, если он есть
-            var seasons = (savedSeasons && savedSeasons.length) ? savedSeasons : extract.season;
-            
-            // Если все еще пусто - создаем из extract.season
-            if (!seasons || !seasons.length) {
-                seasons = extract.season || [];
-            }
-            
+            syncAllSeasons();
+
             filter_items = {
-                season: seasons.map(function (s) { return s.name; }),
-                season_id: seasons.map(function (s) { return s.id; }),
+                season: extract.season.map(function (s) { return s.name; }),
+                season_id: extract.season.map(function (s) { return s.id; }),
                 voice: voice_list
             };
             
@@ -1155,18 +1173,8 @@
             }
             if (choice.season_id) {
                 var _inx = filter_items.season_id.indexOf(choice.season_id);
-                if (_inx == -1) {
-                    // Если не нашли - пробуем по имени
-                    var season_name = filter_items.season[choice.season];
-                    var foundIdx = filter_items.season.indexOf(season_name);
-                    if (foundIdx !== -1) {
-                        choice.season_id = filter_items.season_id[foundIdx];
-                        choice.season = foundIdx;
-                    } else {
-                        choice.season = 0;
-                        choice.season_id = filter_items.season_id[0];
-                    }
-                } else if (_inx !== choice.season) {
+                if (_inx == -1) choice.season = 0;
+                else if (_inx !== choice.season) {
                     choice.season = _inx;
                 }
             }
@@ -1252,18 +1260,9 @@
             if (extract.is_series) {
                 var season_name = filter_items.season[choice.season];
                 var season_id;
-                // Используем сохраненный список сезонов
-                var seasons = (savedSeasons && savedSeasons.length) ? savedSeasons : extract.season;
-                if (!seasons || !seasons.length) {
-                    seasons = extract.season || [];
-                }
-                seasons.forEach(function (season) {
+                extract.season.forEach(function (season) {
                     if (season.name == season_name) season_id = season.id;
                 });
-                // Если не нашли по имени - пробуем по индексу
-                if (!season_id && filter_items.season_id && filter_items.season_id[choice.season]) {
-                    season_id = filter_items.season_id[choice.season];
-                }
                 var voice = filter_items.voice[choice.voice];
                 var voices_source = voice_list_current.length ? voice_list_current : extract.voice;
                 var voice_obj = voices_source[choice.voice];
@@ -1456,37 +1455,14 @@
             balanser = last_bls[object.movie.id];
         }
 
-        this.proxy = function (name) {
-            return '';
-        };
-
-        this.fixLink = function (link, referrer) {
-            return fixLink(link, referrer);
-        };
-
-        this.fixLinkProtocol = function (link, prefer_http, replace_protocol) {
-            return fixLinkProtocol(link, prefer_http, replace_protocol);
-        };
-
-        this.proxyLink = function (link, proxy, proxy_enc, enc) {
-            return link;
-        };
-
-        this.proxyStream = function (url, name) {
-            return url;
-        };
-
-        this.processSubs = function (url) {
-            return url;
-        };
-
-        this.proxyStreamSubs = function (url, name) {
-            return this.processSubs(url);
-        };
-
-        this.checkMyIp = function (onComplite) {
-            onComplite();
-        };
+        this.proxy = function (name) { return ''; };
+        this.fixLink = function (link, referrer) { return fixLink(link, referrer); };
+        this.fixLinkProtocol = function (link, prefer_http, replace_protocol) { return fixLinkProtocol(link, prefer_http, replace_protocol); };
+        this.proxyLink = function (link, proxy, proxy_enc, enc) { return link; };
+        this.proxyStream = function (url, name) { return url; };
+        this.processSubs = function (url) { return url; };
+        this.proxyStreamSubs = function (url, name) { return this.processSubs(url); };
+        this.checkMyIp = function (onComplite) { onComplite(); };
 
         var last;
         var extended;
@@ -1631,7 +1607,6 @@
         };
 
         this.find = function () {
-            var _this4 = this;
             var query = object.search || object.movie.title;
             if (!query) {
                 this.emptyForQuery(query);
@@ -2051,7 +2026,6 @@
         };
 
         this.pause = function () {};
-
         this.stop = function () {};
 
         this.destroy = function () {
@@ -2065,9 +2039,7 @@
     }
 
     // --- Настройки и инициализация ---
-    var isMSX = !!(window.TVXHost || window.TVXManager);
     var isTizen = navigator.userAgent.toLowerCase().indexOf('tizen') !== -1;
-    var isIFrame = window.parent !== window;
     var isLocal = !startsWith(window.location.protocol, 'http');
     var network = new Lampa.Reguest();
     var online_loading = false;
@@ -2102,12 +2074,8 @@
         if (!Lampa.Lang) {
             var lang_data = {};
             Lampa.Lang = {
-                add: function (data) {
-                    lang_data = data;
-                },
-                translate: function (key) {
-                    return lang_data[key] ? lang_data[key].ru : key;
-                }
+                add: function (data) { lang_data = data; },
+                translate: function (key) { return lang_data[key] ? lang_data[key].ru : key; }
             };
         }
 
@@ -2116,7 +2084,7 @@
             online_mod_nolink: { ru: 'Не удалось извлечь ссылку', uk: 'Неможливо отримати посилання', be: 'Не ўдалося атрымаць спасылку', en: 'Failed to fetch link', zh: '获取链接失败' },
             online_mod_blockedlink: { ru: 'К сожалению, это видео не доступно в вашем регионе', uk: 'На жаль, це відео не доступне у вашому регіоні', be: 'Нажаль, гэта відэа не даступна ў вашым рэгіёне', en: 'Sorry, this video is not available in your region', zh: '抱歉，您所在的地区无法观看该视频' },
             online_mod_balanser: { ru: 'Балансер', uk: 'Балансер', be: 'Балансер', en: 'Balancer', zh: '平衡器' },
-            online_mod_file_helper: { ru: 'Удерживайте клавишу "ОК" для вызова контекстного меню', uk: 'Утримуйте клавішу "ОК" для виклику контекстного меню', be: 'Утрымлівайце клавішу "ОК" для выклику кантэкстнага меню', en: 'Hold the "OK" key to bring up the context menu', zh: '按住“确定”键调出上下文菜单' },
+            online_mod_file_helper: { ru: 'Удерживайте клавишу "ОК" для вызова контекстного меню', uk: 'Утримуйте клавішу "ОК" для виклику контекстного меню', be: 'Утрымлівайце клавишу "ОК" для выклику кантэкстнага меню', en: 'Hold the "OK" key to bring up the context menu', zh: '按住“确定”键调出上下文菜单' },
             online_mod_clearmark_all: { ru: 'Снять отметку у всех', uk: 'Зняти позначку у всіх', be: 'Зняць адзнаку ва ўсіх', en: 'Uncheck all', zh: '取消所有' },
             online_mod_timeclear_all: { ru: 'Сбросить тайм-код у всех', uk: 'Скинути тайм-код у всіх', be: 'Скінуць тайм-код ва ўсіх', en: 'Reset timecode for all', zh: '为所有人重置时间码' },
             online_mod_query_start: { ru: 'По запросу', uk: 'На запит', be: 'Па запыце', en: 'On request', zh: '根据要求' },
@@ -2422,10 +2390,10 @@
 
     // --- Запуск ---
     function startPlugin() {
-        logApp();
         initStorage();
         initLang();
         resetTemplates();
+        initSettings();
 
         Lampa.Component.add('online_mod', component);
 
@@ -2447,21 +2415,27 @@
         };
         Lampa.Manifest.plugins = manifest;
 
-        var button = "<div class=\"full-start__button selector view--online_mod\" data-subtitle=\"\">\n        <svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" xmlns:svgjs=\"http://svgjs.com/svgjs\" version=\"1.1\" width=\"512\" height=\"512\" x=\"0\" y=\"0\" viewBox=\"0 0 244 260\" style=\"enable-background:new 0 0 512 512\" xml:space=\"preserve\" class=\"\">\n        <g xmlns=\"http://www.w3.org/2000/svg\">\n            <path d=\"M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7l0,0 L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88 L2,50.2L47.8,80L10,88z\" fill=\"currentColor\"/>\n        </g></svg>\n        <span>#{online_mod_title}</span>\n        </div>";
+        var button = "<div class=\"full-start__button selector view--online_mod\" data-subtitle=\"\">\n        <svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" width=\"512\" height=\"512\" viewBox=\"0 0 244 260\">\n        <g>\n            <path d=\"M242,88v170H10V88h41l-38,38h37.1l38-38h38.4l-38,38h38.4l38-38h38.3l-38,38H204L242,88L242,88z M228.9,2l8,37.7L191.2,10L228.9,2z M160.6,56l-45.8-29.7l38-8.1l45.8,29.7L160.6,56z M84.5,72.1L38.8,42.4l38-8.1l45.8,29.7L84.5,72.1z M10,88L2,50.2L47.8,80L10,88z\" fill=\"white\"/>\n        </g>\n        </svg>\n        <span>" + Lampa.Lang.translate('online_mod_watch') + "</span>\n    </div>";
 
         Lampa.Listener.follow('full', function (e) {
-            if (e.type == 'complite') {
-                var btn = $(Lampa.Lang.translate(button));
-                online_loading = false;
+            if (e.type === 'complite') {
+                var btn = $(button);
                 btn.on('hover:enter', function () {
                     loadOnline(e.data.movie);
                 });
-                e.object.activity.render().find('.view--torrent').after(btn);
+                var render = e.object.activity.render();
+                if (render.find('.view--online_mod').length === 0) {
+                    render.find('.full-start__buttons').append(btn);
+                }
             }
         });
-
-        initSettings();
     }
 
-    startPlugin();
+    if (window.appready) {
+        startPlugin();
+    } else {
+        Lampa.Listener.follow('app', function (e) {
+            if (e.type === 'ready') startPlugin();
+        });
+    }
 })();
