@@ -1,4 +1,4 @@
-// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 40)
+// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 41)
 
 (function () {
     'use strict';
@@ -833,6 +833,38 @@
                 if (!extract.season.length && defSeason) {
                     extract.season.push(defSeason);
                 }
+                
+                // --- ИСПРАВЛЕНИЕ: Определяем текущий сезон из URL ---
+                // Если есть сохраненный choice.season_id, используем его
+                // Иначе пытаемся определить из URL страницы
+                var current_season_from_url = null;
+                var season_match = str.match(/\/season-(\d+)/i);
+                if (season_match) {
+                    current_season_from_url = season_match[1];
+                }
+                
+                // Если в choice уже есть season_id, проверяем его корректность
+                if (choice.season_id) {
+                    var exists = extract.season.some(function(s) { return s.id == choice.season_id; });
+                    if (!exists) {
+                        choice.season_id = current_season_from_url || (extract.season.length ? extract.season[0].id : '');
+                    }
+                } else {
+                    choice.season_id = current_season_from_url || (extract.season.length ? extract.season[0].id : '');
+                }
+                
+                // Устанавливаем правильный индекс сезона
+                if (choice.season_id) {
+                    var idx = extract.season.findIndex(function(s) { return s.id == choice.season_id; });
+                    if (idx !== -1) {
+                        choice.season = idx;
+                    } else {
+                        choice.season = 0;
+                        choice.season_id = extract.season.length ? extract.season[0].id : '';
+                    }
+                }
+                // --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+                
                 var episodes = str.match(/(<div id="simple-episodes-tabs".*?<\/div>)/);
                 if (episodes) {
                     var _select2 = $(episodes[1]);
