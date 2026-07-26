@@ -1,4 +1,4 @@
-// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 37)
+// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 38)
 
 (function () {
     'use strict';
@@ -279,7 +279,7 @@
             return '1';
         }
 
-        function checkAllPremium(voice_ids, callback, force) {
+        function checkAllPremium(voice_ids, season_id, callback, force) {
             var total = voice_ids.length;
             var checked = 0;
             var results = {};
@@ -301,7 +301,7 @@
                 }
             }, 15000);
 
-            var current_season_id = extract.is_series ? (choice.season_id || (extract.season && extract.season[choice.season] ? extract.season[choice.season].id : (extract.season && extract.season.length > 0 ? extract.season[0].id : 1))) : null;
+            var current_season_id = season_id;
 
             voice_ids.forEach(function(voice_id) {
                 var cache_key = premiumCacheKey(voice_id, current_season_id);
@@ -707,7 +707,7 @@
 
             if (voice_ids.length > 0) {
                 component.loading(true);
-                checkAllPremium(voice_ids, function (results) {
+                checkAllPremium(voice_ids, currentSeasonId(), function (results) {
                     if (my_gen !== render_generation) return; // отменено более новым выбором фильтра
                     component.loading(false);
                     var sorted = sortVoicesByPremium(voices_source, results);
@@ -725,9 +725,42 @@
             }
         }
 
+        // Тихая фоновая подгрузка остальных сезонов сразу при открытии сериала:
+        // список серий + премиум-статус переводов. Не блокирует интерфейс и не
+        // мешает текущему рендеру — запускается с задержкой и с паузами между
+        // сезонами. Благодаря этому переключение на другой сезон происходит
+        // почти мгновенно (данные уже в кэше), а не только после явного клика.
+        function prefetchOtherSeasonsInBackground() {
+            if (!extract.is_series || !extract.season || extract.season.length < 2) return;
+
+            var current = currentSeasonId();
+            var others = extract.season
+                .map(function (s) { return s.id; })
+                .filter(function (id) { return id != current; });
+
+            var MAX_SEASONS_TO_PREFETCH = 12; // защита от очень длинных сериалов — не долбим сервер бесконечно
+            others = others.slice(0, MAX_SEASONS_TO_PREFETCH);
+
+            var i = 0;
+            function next() {
+                if (i >= others.length) return;
+                var season_id = others[i++];
+                ensureAllVoiceData(season_id, function () {
+                    var voices_for_season = availableVoicesForSeason(season_id);
+                    var ids = voices_for_season.map(function (v) { return v.id; });
+                    checkAllPremium(ids, season_id, function () {
+                        setTimeout(next, 600); // пауза между сезонами
+                    });
+                });
+            }
+
+            setTimeout(next, 2000); // не мешаем отрисовке текущего сезона
+        }
+
         function success() {
             component.loading(false);
             checkPremiumAndRender();
+            prefetchOtherSeasonsInBackground();
         }
 
         function extractData(str) {
