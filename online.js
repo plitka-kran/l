@@ -1,4 +1,4 @@
-// Online Mod (исправленная версия с загрузкой серий при смене перевода 58)
+// Online Mod (исправленная версия с корректной загрузкой серий при выборе перевода 59)
 (function () {
     'use strict';
 
@@ -95,9 +95,6 @@
         return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36';
     }
 
-    // Запускает worker(item, done) для каждого item из items, не более
-    // `limit` штук ОДНОВРЕМЕННО, и не чаще одного нового запуска раз в
-    // `stagger` мс.
     function runLimited(items, limit, stagger, worker, onAllDone) {
         var idx = 0;
         var active = 0;
@@ -197,6 +194,7 @@
         var render_generation = 0;
         var destroyed = false;
         var pendingRequests = [];
+        var isFiltering = false;
 
         function cancelPendingRequests() {
             pendingRequests.forEach(function(req) {
@@ -313,7 +311,6 @@
 
             var current_season_id = season_id;
 
-            // Таймаут чтобы не ждать вечно
             var fallbackTimer = setTimeout(function() {
                 if (checked < total) {
                     var unfinished = voice_ids.filter(function (id) {
@@ -680,6 +677,9 @@
         };
 
         this.filter = function (type, a, b) {
+            if (isFiltering) return;
+            isFiltering = true;
+            
             choice[a.stype] = b.index;
             if (a.stype == 'voice') {
                 var raw_name = filter_items.voice[b.index] || '';
@@ -692,35 +692,50 @@
             premium_cache = {};
             render_generation++;
 
-            // ПРИНУДИТЕЛЬНО загружаем данные для выбранного перевода
             var season_id = currentSeasonId();
             var voices = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
             var selected_voice = voices[choice.voice];
             
             if (selected_voice && extract.is_series) {
-                // Очищаем кэш для этого перевода чтобы принудительно перезагрузить
                 var key = selected_voice.id + '::' + (season_id || '');
+                // Очищаем кэш для этого перевода
                 delete extract.voice_data[key];
                 
                 // Загружаем данные для выбранного перевода
                 fetchVoiceData(selected_voice.id, season_id, function(data) {
-                    if (destroyed) return;
+                    if (destroyed) {
+                        isFiltering = false;
+                        return;
+                    }
+                    
                     extract.voice_data[key] = data;
                     if (data.season.length) {
                         extract.voice_season_list[selected_voice.id] = data.season;
                     }
-                    // Обновляем список серий
+                    
+                    // Обновляем список доступных переводов для этого сезона
+                    voice_list_current = availableVoicesForSeason(season_id);
+                    filterVoice();
+                    
+                    // Обновляем список серий для выбранного перевода
                     var selected = voice_list_current[choice.voice];
                     var key2 = selected ? (selected.id + '::' + (season_id || '')) : null;
                     var data2 = key2 && extract.voice_data[key2];
                     extract.episode = (data2 && data2.episode) || [];
                     
-                    component.loading(false);
-                    checkPremiumAndRender(true);
+                    component.saveChoice(choice);
+                    
+                    // Проверяем премиум и рендерим
+                    checkPremiumAndRender(true, function() {
+                        isFiltering = false;
+                        component.loading(false);
+                    });
                 });
             } else {
                 getEpisodes(function () {
-                    checkPremiumAndRender(true);
+                    checkPremiumAndRender(true, function() {
+                        isFiltering = false;
+                    });
                 });
             }
 
@@ -770,7 +785,10 @@
         }
 
         function checkPremiumAndRender(force, onDone) {
-            if (destroyed) return;
+            if (destroyed) {
+                if (onDone) onDone();
+                return;
+            }
             
             var my_gen = ++render_generation;
             var voices_source = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
@@ -780,6 +798,7 @@
                 component.loading(true);
                 var cancelCheck = checkAllPremium(voice_ids, currentSeasonId(), function (results) {
                     if (destroyed || my_gen !== render_generation) {
+                        if (onDone) onDone();
                         return;
                     }
                     
@@ -792,7 +811,6 @@
                     append(items);
                     if (onDone) onDone();
 
-                    // Перепроверяем таймаутнувшие
                     if (results.__timedOut && results.__timedOut.length) {
                         var retry_gen = my_gen;
                         var retry_season = currentSeasonId();
