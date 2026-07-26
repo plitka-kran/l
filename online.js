@@ -1,4 +1,4 @@
-// Online Mod (оптимизированная версия с сохранением корректной работы 71)
+// Online Mod (исправленная версия с корректным отображением сезонов в фильтре 72)
 (function () {
     'use strict';
 
@@ -194,6 +194,9 @@
         var render_generation = 0;
         var destroyed = false;
         var pendingRequests = [];
+        var isFiltering = false;
+        var savedSeasons = [];
+        var seasonsLoaded = false;
 
         function cancelPendingRequests() {
             pendingRequests.forEach(function(req) {
@@ -204,6 +207,15 @@
 
         function premiumCacheKey(voice_id, season_id) {
             return (extract.film_id || '') + '_' + voice_id + '_' + (season_id || '0');
+        }
+
+        function clearPremiumCacheForSeason(season_id) {
+            var keys = Object.keys(premium_cache);
+            keys.forEach(function(key) {
+                if (key.indexOf('_' + season_id) !== -1 || key.endsWith('_' + season_id)) {
+                    delete premium_cache[key];
+                }
+            });
         }
 
         function checkErrorForm(str) {
@@ -670,26 +682,36 @@
                 season_id: ''
             };
             premium_cache = {};
+            voice_list_current = [];
+            seasonsLoaded = false;
             component.loading(true);
             getEpisodes(success);
             component.saveChoice(choice);
         };
 
         this.filter = function (type, a, b) {
+            if (isFiltering) return;
+            isFiltering = true;
+            
             choice[a.stype] = b.index;
             if (a.stype == 'voice') {
                 var raw_name = filter_items.voice[b.index] || '';
                 choice.voice_name = raw_name.replace(/^⭐\s*/, '');
             }
-            if (a.stype == 'season') choice.season_id = filter_items.season_id[b.index];
+            if (a.stype == 'season') {
+                choice.season_id = filter_items.season_id[b.index];
+                clearPremiumCacheForSeason(choice.season_id);
+                voice_list_current = [];
+            }
             
             component.reset();
             component.loading(true);
-            premium_cache = {};
             render_generation++;
 
             getEpisodes(function () {
-                checkPremiumAndRender(true);
+                checkPremiumAndRender(true, function() {
+                    isFiltering = false;
+                });
             });
 
             component.saveChoice(choice);
@@ -738,7 +760,10 @@
         }
 
         function checkPremiumAndRender(force, onDone) {
-            if (destroyed) return;
+            if (destroyed) {
+                if (onDone) onDone();
+                return;
+            }
             
             var my_gen = ++render_generation;
             var voices_source = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
@@ -748,6 +773,7 @@
                 component.loading(true);
                 var cancelCheck = checkAllPremium(voice_ids, currentSeasonId(), function (results) {
                     if (destroyed || my_gen !== render_generation) {
+                        if (onDone) onDone();
                         return;
                     }
                     
@@ -795,7 +821,7 @@
             var others = extract.season
                 .map(function (s) { return s.id; })
                 .filter(function (id) { return id != current; })
-                .slice(0, 12);
+                .slice(0, 8);
 
             var i = 0;
             function next() {
@@ -811,7 +837,7 @@
                 });
             }
 
-            setTimeout(next, 800);
+            setTimeout(next, 500);
         }
 
         function success() {
@@ -885,6 +911,10 @@
                 if (!extract.season.length && defSeason) {
                     extract.season.push(defSeason);
                 }
+                // Сохраняем список сезонов
+                savedSeasons = extract.season.slice();
+                seasonsLoaded = true;
+                
                 var episodes = str.match(/(<div id="simple-episodes-tabs".*?<\/div>)/);
                 if (episodes) {
                     var _select2 = $(episodes[1]);
@@ -1005,6 +1035,21 @@
                 return;
             }
 
+            // Проверяем, есть ли уже загруженные данные для этого сезона
+            var hasData = false;
+            voices.forEach(function(v) {
+                var key = v.id + '::' + (season_id || '');
+                if (extract.voice_data[key]) {
+                    hasData = true;
+                }
+            });
+
+            // Если данные уже есть - сразу вызываем callback
+            if (hasData) {
+                callback();
+                return;
+            }
+
             runLimited(voices, 3, 200, function (v, queueDone) {
                 fetchVoiceData(v.id, season_id, function () {
                     done++;
@@ -1084,9 +1129,17 @@
                 return is_prem ? '⭐ ' + v.name : v.name;
             });
 
+            // Используем сохраненный список сезонов, если он есть
+            var seasons = (savedSeasons && savedSeasons.length) ? savedSeasons : extract.season;
+            
+            // Если все еще пусто - создаем из extract.season
+            if (!seasons || !seasons.length) {
+                seasons = extract.season || [];
+            }
+            
             filter_items = {
-                season: extract.season.map(function (s) { return s.name; }),
-                season_id: extract.season.map(function (s) { return s.id; }),
+                season: seasons.map(function (s) { return s.name; }),
+                season_id: seasons.map(function (s) { return s.id; }),
                 voice: voice_list
             };
             
@@ -1102,8 +1155,18 @@
             }
             if (choice.season_id) {
                 var _inx = filter_items.season_id.indexOf(choice.season_id);
-                if (_inx == -1) choice.season = 0;
-                else if (_inx !== choice.season) {
+                if (_inx == -1) {
+                    // Если не нашли - пробуем по имени
+                    var season_name = filter_items.season[choice.season];
+                    var foundIdx = filter_items.season.indexOf(season_name);
+                    if (foundIdx !== -1) {
+                        choice.season_id = filter_items.season_id[foundIdx];
+                        choice.season = foundIdx;
+                    } else {
+                        choice.season = 0;
+                        choice.season_id = filter_items.season_id[0];
+                    }
+                } else if (_inx !== choice.season) {
                     choice.season = _inx;
                 }
             }
@@ -1189,9 +1252,18 @@
             if (extract.is_series) {
                 var season_name = filter_items.season[choice.season];
                 var season_id;
-                extract.season.forEach(function (season) {
+                // Используем сохраненный список сезонов
+                var seasons = (savedSeasons && savedSeasons.length) ? savedSeasons : extract.season;
+                if (!seasons || !seasons.length) {
+                    seasons = extract.season || [];
+                }
+                seasons.forEach(function (season) {
                     if (season.name == season_name) season_id = season.id;
                 });
+                // Если не нашли по имени - пробуем по индексу
+                if (!season_id && filter_items.season_id && filter_items.season_id[choice.season]) {
+                    season_id = filter_items.season_id[choice.season];
+                }
                 var voice = filter_items.voice[choice.voice];
                 var voices_source = voice_list_current.length ? voice_list_current : extract.voice;
                 var voice_obj = voices_source[choice.voice];
