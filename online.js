@@ -839,7 +839,7 @@
                     filtred.push({
                         title: (voice.clean_name || voice.name) + (voice.is_premium ? ' ⭐' : ''),
                         quality: '360p ~ 1080p',
-                        info: voice.is_premium,
+                        info: voice.is_premium || false,
                         media: voice,
                         is_premium: voice.is_premium || false
                     });
