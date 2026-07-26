@@ -1,4 +1,4 @@
-// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 46)
+// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 47)
 
 (function () {
     'use strict';
@@ -96,13 +96,18 @@
         return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36';
     }
 
-    // Запускает worker(item, done) для каждого item из items, но не более
-    // `limit` штук ОДНОВРЕМЕННО, с небольшой паузой `stagger` мс перед
-    // стартом каждого нового запроса в очереди. Нужно, чтобы не слать
-    // на сервер пачку из 8-10 параллельных ajax-запросов разом — HDrezka
-    // (или его CDN/анти-флуд) в ответ на такую пачку валит большинство
-    // запросов с HTTP 503, и это не лечится повторными попытками "в лоб",
-    // т.к. повтор тоже летит в общей пачке.
+    // Запускает worker(item, done) для каждого item из items, не более
+    // `limit` штук ОДНОВРЕМЕННО, и не чаще одного нового запуска раз в
+    // `stagger` мс. Нужно, чтобы не слать на сервер пачку параллельных
+    // ajax-запросов разом — HDrezka (или её CDN/анти-флуд) в ответ на такую
+    // пачку валит большинство запросов с HTTP 503, и это не лечится
+    // повторными попытками "в лоб", т.к. повтор тоже летит в общей пачке.
+    //
+    // ВАЖНО: раньше первые `limit` запусков стартовали синхронно, залпом,
+    // без паузы между ними (баг) — из-за этого даже при limit=2 два запроса
+    // всё равно улетали практически одновременно. Теперь запуск нового
+    // элемента происходит СТРОГО не чаще раза в `stagger` мс, вне
+    // зависимости от того, сколько слотов параллелизма свободно.
     function runLimited(items, limit, stagger, worker, onAllDone) {
         var idx = 0;
         var active = 0;
@@ -110,22 +115,20 @@
         var total = items.length;
         if (!total) { onAllDone(); return; }
 
-        function next() {
-            if (idx >= total || active >= limit) return;
-            active++;
-            var item = items[idx++];
-            worker(item, function () {
-                active--;
-                finished++;
-                if (finished === total) onAllDone();
-                else next();
-            });
-            // Следующий разрешённый слот открываем с небольшой задержкой,
-            // чтобы даже "параллельные" запросы не улетали единым пакетом.
-            setTimeout(next, stagger);
+        function tick() {
+            if (idx < total && active < limit) {
+                active++;
+                var item = items[idx++];
+                worker(item, function () {
+                    active--;
+                    finished++;
+                    if (finished === total) onAllDone();
+                });
+            }
+            if (idx < total) setTimeout(tick, stagger);
         }
 
-        for (var i = 0; i < limit; i++) next();
+        tick();
     }
 
     // --- ВРЕМЕННОЕ ОТЛАДОЧНОЕ ЛОГИРОВАНИЕ (плавающее окно поверх интерфейса) ---
@@ -270,6 +273,14 @@
         // если пользователь быстро переключает сезон/озвучку, старый (более
         // ранний) сетевой ответ не должен перетереть уже отрисованный новый выбор.
 
+        var destroyed = false; // Компонент закрыт (destroy()), но фоновые
+        // запросы (checkAllPremium/fetchVoiceData через свои собственные
+        // Lampa.Reguest — их не отменяет network.clear() в destroy()) могут
+        // ещё лететь и вернуться ПОСЛЕ этого. Их коллбеки должны проверять
+        // этот флаг перед обращением к extract, иначе — падение с
+        // "Cannot read properties of null (reading 'voice_data')" и т.п.,
+        // т.к. extract к этому моменту уже обнулён в destroy().
+
         function premiumCacheKey(voice_id, season_id) {
             return (extract.film_id || '') + '_' + voice_id + '_' + (season_id || '0');
         }
@@ -413,7 +424,7 @@
             // логами: 8 из 9 запросов = 503 мгновенно). Поэтому теперь запросы
             // идут очередью не более чем по PREMIUM_CONCURRENCY штук одновременно.
             var PREMIUM_CONCURRENCY = 2;
-            var PREMIUM_STAGGER_MS = 350;
+            var PREMIUM_STAGGER_MS = 300;
 
             runLimited(voice_ids, PREMIUM_CONCURRENCY, PREMIUM_STAGGER_MS, function (voice_id, queueDone) {
                 var cache_key = premiumCacheKey(voice_id, current_season_id);
@@ -1122,7 +1133,7 @@
             }
             // Та же причина, что и в checkAllPremium: пачка параллельных
             // get_episodes запросов на все озвучки разом ловит 503 от сервера.
-            runLimited(voices, 2, 350, function (v, queueDone) {
+            runLimited(voices, 2, 300, function (v, queueDone) {
                 fetchVoiceData(v.id, season_id, function () {
                     done++;
                     if (done === total) {
