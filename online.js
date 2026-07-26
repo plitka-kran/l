@@ -873,7 +873,7 @@
                 element.timeline = view;
                 item.append(Lampa.Timeline.render(view));
                 if (Lampa.Timeline.details) {
-                    item.find('.online__quality').append(Lampa.Timeline.details(view, ' / '));
+                    item.find('.online__quality').append(Lampa.Timeline.details(view, ' '));
                 }
                 if (viewed.indexOf(hash_file) !== -1) item.append('<div class="torrent-item__viewed">' + Lampa.Template.get('icon_star', {}, true) + '</div>');
                 
