@@ -1,4 +1,4 @@
-// Online Mod v2.2 - Исправлена фильтрация переводов и сохранение выбора
+// Online Mod (без прокси) с премиум-индикацией и фильтрацией переводов по сезона
 
 (function () {
     'use strict';
@@ -167,26 +167,6 @@
             season_id: ''
         };
         var error_message = '';
-        var all_voices_loaded = false;
-        var voice_cache = {};
-
-        function checkPremium($element) {
-            var premiumClasses = [
-                'b-prem_translator',
-                'premium',
-                'premium-translator',
-                'hdrezka-premium',
-                'prem_translator',
-                'b-premium'
-            ];
-            var is_premium = false;
-            premiumClasses.forEach(function(cls) {
-                if ($element.hasClass(cls)) is_premium = true;
-            });
-            if ($element.attr('data-premium') === 'true') is_premium = true;
-            if ($element.attr('data-premium') === '1') is_premium = true;
-            return is_premium;
-        }
 
         function checkErrorForm(str) {
             var login_form = str.match(/<form id="check-form" class="check-form" method="post" action="\/ajax\/login\/">/);
@@ -206,11 +186,6 @@
             }
             if (startsWith(str, 'Fatal error:')) {
                 error_message = str;
-                return;
-            }
-            var geo_block = str.match(/<div class="geo-block">/);
-            if (geo_block) {
-                error_message = 'Доступ ограничен в вашем регионе';
                 return;
             }
         }
@@ -505,7 +480,6 @@
                 voice_name: '',
                 season_id: ''
             };
-            all_voices_loaded = false;
             component.loading(true);
             getEpisodes(success);
             component.saveChoice(choice);
@@ -513,54 +487,19 @@
 
         this.filter = function (type, a, b) {
             if (a.stype == 'season') {
-                var old_season_id = choice.season_id;
                 choice.season = b.index;
                 choice.season_id = filter_items.season_id[b.index];
-                
-                // Если переключились на другой сезон, пытаемся сохранить выбор озвучки
-                if (old_season_id && choice.season_id !== old_season_id) {
-                    var old_voice_name = choice.voice_name;
-                    var available_voices = getAvailableVoicesForSeason(choice.season_id);
-                    var found = false;
-                    
-                    // Ищем такой же перевод в новом сезоне
-                    if (old_voice_name) {
-                        available_voices.forEach(function(v, idx) {
-                            if (v.clean_name === old_voice_name || v.name === old_voice_name) {
-                                choice.voice = idx;
-                                choice.voice_name = v.name;
-                                found = true;
-                            }
-                        });
-                    }
-                    
-                    // Если не нашли - выбираем первый доступный
-                    if (!found && available_voices.length > 0) {
-                        choice.voice = 0;
-                        choice.voice_name = available_voices[0].name;
-                    } else if (!found) {
-                        choice.voice = 0;
-                        choice.voice_name = '';
-                    }
-                }
             }
-            
             if (a.stype == 'voice') {
                 var current_voices = getAvailableVoicesForSeason(choice.season_id);
                 if (current_voices[b.index]) {
                     choice.voice_name = current_voices[b.index].name;
-                    choice.voice = b.index;
                 }
             }
-            
             component.reset();
             component.loading(true);
-            getEpisodesForSeason(choice.season_id, function() {
-                filter();
-                append(filtred());
-                component.loading(false);
-                component.saveChoice(choice);
-            });
+            getEpisodes(success);
+            component.saveChoice(choice);
             setTimeout(component.closeFilter, 10);
         };
 
@@ -589,7 +528,6 @@
         }
 
         function success() {
-            all_voices_loaded = true;
             component.loading(false);
             filter();
             append(filtred());
@@ -641,10 +579,13 @@
                         if (lang && title.indexOf(lang) == -1) title += ' (' + lang + ')';
                     });
                     
-                    var is_premium = checkPremium($this);
+                    var is_premium = $this.hasClass('b-prem_translator') || 
+                                    $this.hasClass('premium') || 
+                                    $this.hasClass('premium-translator') ||
+                                    $this.attr('data-premium') === 'true';
                     
                     var display_name = title;
-                    if (is_premium && display_name.indexOf('⭐') === -1) {
+                    if (is_premium) {
                         display_name += ' ⭐';
                     }
                     
@@ -662,7 +603,7 @@
             
             if (!extract.voice.length && defVoice) {
                 var def_display = defVoice.name;
-                if (defVoice.is_premium && def_display.indexOf('⭐') === -1) {
+                if (defVoice.is_premium) {
                     def_display += ' ⭐';
                 }
                 extract.voice.push({
@@ -732,99 +673,63 @@
             if (json && json.episodes) {
                 var _select3 = $('<div>' + json.episodes + '</div>');
                 $('.b-simple_episode__item', _select3).each(function () {
-                    var ep_item = {
+                    data.episode.push({
                         name: $(this).text(),
                         translator_id: translator_id,
                         season_id: $(this).attr('data-season_id'),
                         episode_id: $(this).attr('data-episode_id')
-                    };
-                    var exists = data.episode.some(function(e) { 
-                        return e.season_id == ep_item.season_id && e.episode_id == ep_item.episode_id; 
                     });
-                    if (!exists) {
-                        data.episode.push(ep_item);
-                    }
                 });
             }
             extract.voice_data[translator_id] = data;
-            
-            // Обновляем кеш
-            voice_cache[translator_id] = data;
-        }
-
-        // ============ ЗАГРУЗКА ЭПИЗОДОВ ============
-        function getEpisodesForSeason(season_id, callback) {
-            if (!extract.is_series || !extract.voice.length) {
-                if (callback) callback();
-                return;
-            }
-
-            var pending = 0;
-            var total = extract.voice.length;
-            var timeout = setTimeout(function() {
-                if (pending < total) {
-                    if (callback) callback();
-                }
-            }, 15000);
-
-            function checkDone() {
-                pending++;
-                if (pending >= total) {
-                    clearTimeout(timeout);
-                    all_voices_loaded = true;
-                    if (callback) callback();
-                }
-            }
-
-            extract.voice.forEach(function (v) {
-                var translator_id = v.id;
-                if (voice_cache[translator_id] || (extract.voice_data[translator_id] && extract.voice_data[translator_id].episode && extract.voice_data[translator_id].episode.length > 0)) {
-                    checkDone();
-                    return;
-                }
-
-                var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
-                var postdata = 'id=' + encodeURIComponent(extract.film_id);
-                postdata += '&translator_id=' + encodeURIComponent(translator_id);
-                postdata += '&favs=' + encodeURIComponent(extract.favs);
-                postdata += '&action=get_episodes';
-
-                network.silent(url, function (json) {
-                    extractEpisodes(json, translator_id);
-                    checkDone();
-                }, function () {
-                    extract.voice_data[translator_id] = { season: [], episode: [] };
-                    voice_cache[translator_id] = { season: [], episode: [] };
-                    checkDone();
-                }, postdata, {
-                    withCredentials: true,
-                    headers: headers
-                });
-            });
         }
 
         function getEpisodes(call) {
-            getEpisodesForSeason(choice.season_id, call);
+            if (extract.is_series && extract.voice.length) {
+                var pending = 0;
+                var total = extract.voice.length;
+
+                function checkDone() {
+                    pending++;
+                    if (pending >= total) {
+                        call();
+                    }
+                }
+
+                extract.voice.forEach(function (v) {
+                    var translator_id = v.id;
+                    if (extract.voice_data[translator_id]) {
+                        checkDone();
+                    } else {
+                        var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
+                        var postdata = 'id=' + encodeURIComponent(extract.film_id);
+                        postdata += '&translator_id=' + encodeURIComponent(translator_id);
+                        postdata += '&favs=' + encodeURIComponent(extract.favs);
+                        postdata += '&action=get_episodes';
+
+                        network.silent(url, function (json) {
+                            extractEpisodes(json, translator_id);
+                            checkDone();
+                        }, function () {
+                            checkDone();
+                        }, postdata, {
+                            withCredentials: true,
+                            headers: headers
+                        });
+                    }
+                });
+                return;
+            }
+            call();
         }
 
         function getAvailableVoicesForSeason(season_id) {
             if (!season_id) return extract.voice;
-            
-            // Если все переводы загружены - фильтруем
-            if (all_voices_loaded) {
-                return extract.voice.filter(function (v) {
-                    var v_data = voice_cache[v.id] || extract.voice_data[v.id];
-                    if (!v_data || !v_data.season || !v_data.season.length) {
-                        return false;
-                    }
-                    return v_data.season.some(function (s) { 
-                        return s.id == season_id; 
-                    });
-                });
-            }
-            
-            // Если не все загружены - показываем все переводы
-            return extract.voice;
+            return extract.voice.filter(function (v) {
+                var v_data = extract.voice_data[v.id];
+                if (!v_data || !v_data.season || !v_data.season.length) return true;
+                return v_data.season.some(function (s) { return s.id == season_id; });
+            });
         }
 
         function filter() {
@@ -843,36 +748,20 @@
         
             if (!filter_items.season[choice.season]) choice.season = 0;
             
-            // Проверяем, есть ли выбранный перевод в доступных
             if (choice.voice_name) {
                 var inx = voice_names.indexOf(choice.voice_name);
-                if (inx !== -1) {
-                    choice.voice = inx;
-                } else {
-                    // Если нет - ищем по чистому названию
-                    var found = false;
-                    available_voices.forEach(function(v, idx) {
-                        if (v.clean_name === choice.voice_name) {
-                            choice.voice = idx;
-                            choice.voice_name = v.name;
-                            found = true;
-                        }
-                    });
-                    if (!found) {
-                        choice.voice = 0;
-                        choice.voice_name = voice_names[0] || '';
-                    }
-                }
+                if (inx !== -1) choice.voice = inx;
+                else choice.voice = 0;
             } else if (!filter_items.voice[choice.voice]) {
                 choice.voice = 0;
-                choice.voice_name = voice_names[0] || '';
             }
         
+            // Вкладка "Перевод" будет добавляться только для сериалов
             var filter_to_send = {
                 season: filter_items.season,
                 season_id: filter_items.season_id
             };
-            if (extract.is_series && filter_items.voice.length > 0) {
+            if (extract.is_series) {
                 filter_to_send.voice = filter_items.voice;
             }
         
@@ -880,31 +769,7 @@
         }
 
         function getStream(element, call, error) {
-            if (element.stream) {
-                call(element);
-                return;
-            }
-            
-            // Если нет данных для этого перевода - пытаемся загрузить
-            if (!extract.voice_data[element.media.translator_id]) {
-                var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
-                var postdata = 'id=' + encodeURIComponent(extract.film_id);
-                postdata += '&translator_id=' + encodeURIComponent(element.media.translator_id);
-                postdata += '&favs=' + encodeURIComponent(extract.favs);
-                postdata += '&action=get_episodes';
-
-                network.silent(url, function (json) {
-                    extractEpisodes(json, element.media.translator_id);
-                    getStream(element, call, error);
-                }, function () {
-                    error('Не удалось загрузить данные для этого перевода');
-                }, postdata, {
-                    withCredentials: true,
-                    headers: headers
-                });
-                return;
-            }
-
+            if (element.stream) return call(element);
             var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
             var postdata = 'id=' + encodeURIComponent(extract.film_id);
             if (extract.is_series) {
@@ -915,9 +780,9 @@
                 postdata += '&action=get_stream';
             } else {
                 postdata += '&translator_id=' + encodeURIComponent(element.media.id);
-                postdata += '&is_camrip=' + encodeURIComponent(element.media.is_camrip || 0);
-                postdata += '&is_ads=' + encodeURIComponent(element.media.is_ads || 0);
-                postdata += '&is_director=' + encodeURIComponent(element.media.is_director || 0);
+                postdata += '&is_camrip=' + encodeURIComponent(element.media.is_camrip);
+                postdata += '&is_ads=' + encodeURIComponent(element.media.is_ads);
+                postdata += '&is_director=' + encodeURIComponent(element.media.is_director);
                 postdata += '&favs=' + encodeURIComponent(extract.favs);
                 postdata += '&action=get_movie';
             }
@@ -931,7 +796,7 @@
                     var items = extractItems(video);
                     if (items && items.length) {
                         file = items[0].file;
-                        var premium_content = (json.premium_content === true || json.premium_content === '1');
+                        var premium_content = json.premium_content || false;
                         var prev_file = '';
                         quality = {};
                         items.forEach(function (item) {
@@ -942,7 +807,7 @@
                             quality[item.label] = item.file;
                         });
                         if (premium_content) {
-                            error('Этот перевод доступен только с HDrezka Premium. Оформите подписку на сайте HDrezka.');
+                            error('Перевод доступен только с HDrezka Premium');
                             return;
                         }
                     }
@@ -951,14 +816,10 @@
                         element.qualitys = quality;
                         element.subtitles = parseSubtitles(json.subtitle);
                         call(element);
-                    } else {
-                        error('Не удалось получить ссылку на видео');
-                    }
-                } else {
-                    error('Нет данных для воспроизведения');
-                }
+                    } else error();
+                } else error();
             }, function (a, c) {
-                error('Ошибка загрузки: ' + (c || 'неизвестная ошибка'));
+                error();
             }, postdata, {
                 withCredentials: true,
                 headers: headers
@@ -971,64 +832,17 @@
             if (extract.is_series) {
                 var season_id = choice.season_id || (extract.season[choice.season] ? extract.season[choice.season].id : null);
                 var available_voices = getAvailableVoicesForSeason(season_id);
-                
-                if (!available_voices || available_voices.length === 0) {
-                    available_voices = extract.voice;
-                }
-                
-                if (choice.voice >= available_voices.length) {
-                    choice.voice = 0;
-                }
-                
                 var voice_data = available_voices[choice.voice] || available_voices[0] || {};
                 var translator_id = voice_data.id;
                 var is_premium = voice_data.is_premium || false;
                 var voice_clean = voice_data.clean_name || voice_data.name || '';
                 
-                // Получаем эпизоды для выбранного перевода
-                var ep_list = [];
-                if (extract.voice_data[translator_id] && extract.voice_data[translator_id].episode) {
-                    ep_list = extract.voice_data[translator_id].episode;
-                }
-                
-                // Если нет данных для перевода - используем общий список
-                if (!ep_list || ep_list.length === 0) {
-                    ep_list = extract.episode;
-                }
+                var ep_list = (extract.voice_data[translator_id] && extract.voice_data[translator_id].episode) ? extract.voice_data[translator_id].episode : extract.episode;
 
-                // Фильтруем эпизоды по выбранному сезону
-                var filtered_episodes = ep_list.filter(function(ep) {
-                    return ep.season_id == season_id;
-                });
-
-                // Если нет эпизодов для этого сезона - пробуем другие переводы
-                if (filtered_episodes.length === 0 && available_voices.length > 0) {
-                    // Ищем первый перевод, у которого есть эпизоды для этого сезона
-                    for (var i = 0; i < available_voices.length; i++) {
-                        var v = available_voices[i];
-                        var v_data = extract.voice_data[v.id];
-                        if (v_data && v_data.episode) {
-                            var eps = v_data.episode.filter(function(ep) {
-                                return ep.season_id == season_id;
-                            });
-                            if (eps.length > 0) {
-                                filtered_episodes = eps;
-                                voice_clean = v.clean_name || v.name || '';
-                                is_premium = v.is_premium || false;
-                                translator_id = v.id;
-                                choice.voice = i;
-                                choice.voice_name = v.name;
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                filtered_episodes.forEach(function (episode) {
+                ep_list.forEach(function (episode) {
                     if (episode.season_id == season_id) {
-                        var premium_label = is_premium ? ' <span style="font-size: 0.7em; vertical-align: super; color: #FFD700;">⭐ Premium</span>' : '';
                         filtred.push({
-                            title: component.formatEpisodeTitle(episode.season_id, episode.episode_id, episode.name) + premium_label,
+                            title: component.formatEpisodeTitle(episode.season_id, null, episode.name) + (is_premium ? ' <span style="font-size: 0.7em; vertical-align: super; color: #FFD700;">⭐ premium</span>' : ''),
                             quality: '360p ~ 1080p',
                             info: voice_clean ? ' / ' + voice_clean : '',
                             season: parseInt(episode.season_id),
@@ -1040,9 +854,8 @@
                 });
             } else {
                 extract.voice.forEach(function (voice) {
-                    var premium_label = voice.is_premium ? ' <span style="font-size: 0.7em; vertical-align: super; color: #FFD700;">⭐ Premium</span>' : '';
                     filtred.push({
-                        title: (voice.clean_name || voice.name) + premium_label,
+                        title: (voice.clean_name || voice.name) + (voice.is_premium ? ' <span style="font-size: 0.7em; vertical-align: super; color: #FFD700;">⭐ premium</span>' : ''),
                         quality: '360p ~ 1080p',
                         info: '',
                         media: voice,
@@ -1061,7 +874,7 @@
             items.forEach(function (element) {
                 if (element.season) {
                     element.translate_episode_end = last_episode;
-                    element.translate_voice = filter_items.voice && filter_items.voice[choice.voice] ? filter_items.voice[choice.voice] : '';
+                    element.translate_voice = filter_items.voice[choice.voice];
                 }
                 var hash = Lampa.Utils.hash(element.season ? [element.season, element.season > 10 ? ':' : '', element.episode, object.movie.original_title].join('') : object.movie.original_title);
                 var view = Lampa.Timeline.view(hash);
@@ -1074,7 +887,7 @@
                     item.find('.online__quality').css('color', '#FFD700');
                 }
                 
-                var hash_file = Lampa.Utils.hash(element.season ? [element.season, element.season > 10 ? ':' : '', element.episode, object.movie.original_title, filter_items.voice && filter_items.voice[choice.voice] ? filter_items.voice[choice.voice] : ''].join('') : object.movie.original_title + element.title);
+                var hash_file = Lampa.Utils.hash(element.season ? [element.season, element.season > 10 ? ':' : '', element.episode, object.movie.original_title, filter_items.voice[choice.voice]].join('') : object.movie.original_title + element.title);
                 element.timeline = view;
                 item.append(Lampa.Timeline.render(view));
                 if (Lampa.Timeline.details) {
@@ -1795,7 +1608,7 @@
     var online_loading = false;
 
     function logApp() {
-        console.log('Online Mod v2.2');
+        console.log('Online Mod');
         console.log('App', 'is MSX:', isMSX);
         console.log('App', 'is Tizen:', isTizen);
         console.log('App', 'is iframe:', isIFrame);
@@ -1851,7 +1664,7 @@
             online_mod_query_start: { ru: 'По запросу', uk: 'На запит', be: 'Па запыце', en: 'On request', zh: '根据要求' },
             online_mod_query_end: { ru: 'нет результатов', uk: 'немає результатів', be: 'няма вынікаў', en: 'no results', zh: '没有结果' },
             online_mod_title: { ru: 'Онлайн HDrezka', uk: 'Онлайн HDrezka', be: 'Анлайн HDrezka', en: 'Online HDrezka', zh: '在线的 HDrezka' },
-            online_mod_title_full: { ru: 'Онлайн Мод', uk: 'Онлайн Мод', be: 'Анлайн Мод', en: 'Online Mod', zh: '在线模组' },
+            online_mod_title_full: { ru: 'Онлайн Мод', uk: 'Онлайн Мод', be: 'Анлайн Мод', en: 'Online Mod', zh: '在线的 Mod' },
             online_mod_prefer_http: { ru: 'Предпочитать поток по HTTP', uk: 'Віддавати перевагу потіку по HTTP', be: 'Аддаваць перавагу патоку па HTTP', en: 'Prefer stream over HTTP', zh: '优先于 HTTP 流式传输' },
             online_mod_full_episode_title: { ru: 'Полный формат названия серии', uk: 'Повний формат назви серії', be: 'Поўны фармат назвы серыі', en: 'Full episode title format', zh: '完整剧集标题格式' },
             online_mod_save_last_balanser: { ru: 'Сохранять историю балансеров', uk: 'Зберігати історію балансерів', be: 'Захоўваць гісторыю балансараў', en: 'Save history of balancers', zh: '保存平衡器的历史记录' },
