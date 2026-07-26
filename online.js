@@ -1,4 +1,4 @@
-// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 32)
+// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 33)
 
 (function () {
     'use strict';
@@ -339,26 +339,8 @@
                         return;
                     }
                 }
-                
-                var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
-                var postdata = 'id=' + encodeURIComponent(extract.film_id);
-                postdata += '&translator_id=' + encodeURIComponent(voice_id);
-                postdata += '&favs=' + encodeURIComponent(extract.favs);
-                
-                if (extract.is_series) {
-                    postdata += '&season=' + encodeURIComponent(current_season_id);
-                    postdata += '&episode=' + encodeURIComponent(getProbeEpisodeId(voice_id, current_season_id));
-                    postdata += '&action=get_stream';
-                } else {
-                    postdata += '&action=get_movie';
-                }
-                
-                var req = new Lampa.Reguest();
-                req.timeout(4500);
-                
-                var done = function(isPremium) {
-                    premium_cache[cache_key] = isPremium;
-                    setPersistedPremium(cache_key, isPremium);
+
+                var finish = function(isPremium) {
                     results[voice_id] = isPremium;
                     checked++;
                     if (checked === total) {
@@ -367,30 +349,69 @@
                     }
                 };
 
-                req.silent(url, function (json) {
-                    var isPremium = false;
-                    if (json && json.url) {
-                        var video = decode(json.url);
-                        var items = extractItems(video);
-                        if (items && items.length) {
-                            var premium_content = json.premium_content || false;
-                            var prev_file = '';
-                            items.forEach(function (item) {
-                                if (item.label !== '1080p Ultra') {
-                                    if (prev_file !== '' && prev_file !== item.file) premium_content = false;
-                                    prev_file = item.file;
-                                }
-                            });
-                            isPremium = premium_content;
-                        }
+                // Подтверждённый ответ сервера — можно смело кэшировать (в т.ч. надолго).
+                var confirmed = function(isPremium) {
+                    premium_cache[cache_key] = isPremium;
+                    setPersistedPremium(cache_key, isPremium);
+                    finish(isPremium);
+                };
+
+                var attempt = function(retries_left) {
+                    var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
+                    var postdata = 'id=' + encodeURIComponent(extract.film_id);
+                    postdata += '&translator_id=' + encodeURIComponent(voice_id);
+                    postdata += '&favs=' + encodeURIComponent(extract.favs);
+
+                    if (extract.is_series) {
+                        postdata += '&season=' + encodeURIComponent(current_season_id);
+                        postdata += '&episode=' + encodeURIComponent(getProbeEpisodeId(voice_id, current_season_id));
+                        postdata += '&action=get_stream';
+                    } else {
+                        postdata += '&action=get_movie';
                     }
-                    done(isPremium);
-                }, function () {
-                    done(false);
-                }, postdata, {
-                    withCredentials: true,
-                    headers: headers
-                });
+
+                    var req = new Lampa.Reguest();
+                    req.timeout(4500);
+
+                    req.silent(url, function (json) {
+                        var isPremium = false;
+                        if (json && json.url) {
+                            var video = decode(json.url);
+                            var items = extractItems(video);
+                            if (items && items.length) {
+                                var premium_content = json.premium_content || false;
+                                var prev_file = '';
+                                items.forEach(function (item) {
+                                    if (item.label !== '1080p Ultra') {
+                                        if (prev_file !== '' && prev_file !== item.file) premium_content = false;
+                                        prev_file = item.file;
+                                    }
+                                });
+                                isPremium = premium_content;
+                            }
+                        }
+                        // Сервер ответил (пусть и без video-ссылок) — это подтверждённый результат.
+                        confirmed(isPremium);
+                    }, function () {
+                        // Сетевая ошибка/таймаут — это НЕ подтверждённый ответ "бесплатно",
+                        // а просто "не удалось проверить". Раньше такой сбой сразу кэшировался
+                        // как premium:false на 12 часов, из-за чего плохо ответивший запрос
+                        // мог навсегда "спрятать" реальный премиум. Поэтому сначала пробуем
+                        // ещё раз (до 2 повторов), и только если так и не смогли получить
+                        // ответ — считаем "не премиум" ТОЛЬКО для текущей отрисовки,
+                        // не сохраняя это как достоверный факт в кэш.
+                        if (retries_left > 0) {
+                            attempt(retries_left - 1);
+                        } else {
+                            finish(false);
+                        }
+                    }, postdata, {
+                        withCredentials: true,
+                        headers: headers
+                    });
+                };
+
+                attempt(2);
             });
         }
 
