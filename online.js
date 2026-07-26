@@ -1,4 +1,4 @@
-// Online Mod (исправленная версия с корректным отображением сезонов 65)
+// Online Mod (исправленная версия с корректным отображением сезонов в фильтре 66)
 (function () {
     'use strict';
 
@@ -196,6 +196,7 @@
         var pendingRequests = [];
         var isFiltering = false;
         var savedSeasons = [];
+        var seasonsLoaded = false;
 
         function cancelPendingRequests() {
             pendingRequests.forEach(function(req) {
@@ -682,7 +683,7 @@
             };
             premium_cache = {};
             voice_list_current = [];
-            savedSeasons = [];
+            seasonsLoaded = false;
             component.loading(true);
             getEpisodes(success);
             component.saveChoice(choice);
@@ -699,9 +700,7 @@
             }
             if (a.stype == 'season') {
                 choice.season_id = filter_items.season_id[b.index];
-                // Очищаем кэш премиум для нового сезона
                 clearPremiumCacheForSeason(choice.season_id);
-                // Очищаем voice_list_current чтобы перезагрузить переводы для нового сезона
                 voice_list_current = [];
             }
             
@@ -914,6 +913,7 @@
                 }
                 // Сохраняем список сезонов
                 savedSeasons = extract.season.slice();
+                seasonsLoaded = true;
                 
                 var episodes = str.match(/(<div id="simple-episodes-tabs".*?<\/div>)/);
                 if (episodes) {
@@ -1130,7 +1130,12 @@
             });
 
             // Используем сохраненный список сезонов, если он есть
-            var seasons = savedSeasons.length ? savedSeasons : extract.season;
+            var seasons = (savedSeasons && savedSeasons.length) ? savedSeasons : extract.season;
+            
+            // Если все еще пусто - создаем из extract.season
+            if (!seasons || !seasons.length) {
+                seasons = extract.season || [];
+            }
             
             filter_items = {
                 season: seasons.map(function (s) { return s.name; }),
@@ -1150,8 +1155,18 @@
             }
             if (choice.season_id) {
                 var _inx = filter_items.season_id.indexOf(choice.season_id);
-                if (_inx == -1) choice.season = 0;
-                else if (_inx !== choice.season) {
+                if (_inx == -1) {
+                    // Если не нашли - пробуем по имени
+                    var season_name = filter_items.season[choice.season];
+                    var foundIdx = filter_items.season.indexOf(season_name);
+                    if (foundIdx !== -1) {
+                        choice.season_id = filter_items.season_id[foundIdx];
+                        choice.season = foundIdx;
+                    } else {
+                        choice.season = 0;
+                        choice.season_id = filter_items.season_id[0];
+                    }
+                } else if (_inx !== choice.season) {
                     choice.season = _inx;
                 }
             }
@@ -1238,10 +1253,17 @@
                 var season_name = filter_items.season[choice.season];
                 var season_id;
                 // Используем сохраненный список сезонов
-                var seasons = savedSeasons.length ? savedSeasons : extract.season;
+                var seasons = (savedSeasons && savedSeasons.length) ? savedSeasons : extract.season;
+                if (!seasons || !seasons.length) {
+                    seasons = extract.season || [];
+                }
                 seasons.forEach(function (season) {
                     if (season.name == season_name) season_id = season.id;
                 });
+                // Если не нашли по имени - пробуем по индексу
+                if (!season_id && filter_items.season_id && filter_items.season_id[choice.season]) {
+                    season_id = filter_items.season_id[choice.season];
+                }
                 var voice = filter_items.voice[choice.voice];
                 var voices_source = voice_list_current.length ? voice_list_current : extract.voice;
                 var voice_obj = voices_source[choice.voice];
@@ -2400,6 +2422,7 @@
 
     // --- Запуск ---
     function startPlugin() {
+        logApp();
         initStorage();
         initLang();
         resetTemplates();
