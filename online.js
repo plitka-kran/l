@@ -582,9 +582,9 @@
                                     $this.attr('data-premium') === 'true';
                     
                     // Если премиум - добавляем звёздочку в название
-                    if (is_premium) {
-                        title += ' ⭐';
-                    }
+                  //  if (is_premium) {
+                   //     title += ' ⭐';
+                   // }
                     
                     extract.voice.push({
                         name: title,
