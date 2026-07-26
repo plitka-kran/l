@@ -1,4 +1,4 @@
-// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 35)
+// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 36)
 
 (function () {
     'use strict';
@@ -268,21 +268,15 @@
             return subtitles.length ? subtitles : false;
         }
 
-        // Проверка премиум-статуса для всех озвучек
-        // Возвращает id последнего доступного эпизода конкретной озвучки в
-        // конкретном сезоне. На HDrezka премиум чаще всего закрывает не весь
-        // сезон целиком, а только последние (самые свежие) серии — поэтому
-        // проверка по 1-й серии могла давать ложное "бесплатно". Проверяем
-        // последнюю серию сезona: если премиум есть хоть где-то в сезоне, он
-        // с большей вероятностью обнаружится там.
-        function getProbeEpisodeId(voice_id, season_id) {
-            var data = extract.voice_data && extract.voice_data[voice_id];
-            var episodes = data && data.episode ? data.episode.filter(function (e) {
-                return !season_id || e.season_id == season_id;
-            }) : [];
-            if (!episodes.length) return '1';
-            var last = episodes[episodes.length - 1];
-            return last.episode_id || '1';
+        // Проверка премиум-статуса для всех озвучек.
+        // Пробуем 1-ю серию сезона как индикатор премиум-статуса озвучки —
+        // это самый надёжный вариант (не зависит от того, успели ли подгрузиться
+        // данные по конкретным эпизодам этого сезона для этой озвучки).
+        // Если в сезоне премиум только у ПОЗДНИХ серий, а не с начала — это всё
+        // равно поймается "на лету" при реальном клике на серию: см.
+        // markPremiumDiscovered() и её вызов в обработчике ошибки getStream().
+        function getProbeEpisodeId() {
+            return '1';
         }
 
         function checkAllPremium(voice_ids, callback, force) {
@@ -349,7 +343,7 @@
 
                     if (extract.is_series) {
                         postdata += '&season=' + encodeURIComponent(current_season_id);
-                        postdata += '&episode=' + encodeURIComponent(getProbeEpisodeId(voice_id, current_season_id));
+                        postdata += '&episode=' + encodeURIComponent(getProbeEpisodeId());
                         postdata += '&action=get_stream';
                     } else {
                         postdata += '&action=get_movie';
