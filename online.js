@@ -1,4 +1,4 @@
-// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 47)
+// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 48)
 
 (function () {
     'use strict';
@@ -96,18 +96,6 @@
         return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36';
     }
 
-    // Запускает worker(item, done) для каждого item из items, не более
-    // `limit` штук ОДНОВРЕМЕННО, и не чаще одного нового запуска раз в
-    // `stagger` мс. Нужно, чтобы не слать на сервер пачку параллельных
-    // ajax-запросов разом — HDrezka (или её CDN/анти-флуд) в ответ на такую
-    // пачку валит большинство запросов с HTTP 503, и это не лечится
-    // повторными попытками "в лоб", т.к. повтор тоже летит в общей пачке.
-    //
-    // ВАЖНО: раньше первые `limit` запусков стартовали синхронно, залпом,
-    // без паузы между ними (баг) — из-за этого даже при limit=2 два запроса
-    // всё равно улетали практически одновременно. Теперь запуск нового
-    // элемента происходит СТРОГО не чаще раза в `stagger` мс, вне
-    // зависимости от того, сколько слотов параллелизма свободно.
     function runLimited(items, limit, stagger, worker, onAllDone) {
         var idx = 0;
         var active = 0;
@@ -129,67 +117,6 @@
         }
 
         tick();
-    }
-
-    // --- ВРЕМЕННОЕ ОТЛАДОЧНОЕ ЛОГИРОВАНИЕ (плавающее окно поверх интерфейса) ---
-    // Убрать этот блок и все вызовы dlog(...) после того, как баг найден и исправлен.
-    var DBG_MAX_LINES = 300;
-    var dbg_panel = null;
-    var dbg_body = null;
-    var dbg_hidden = false;
-
-    function dbgCreatePanel() {
-        if (dbg_panel && dbg_panel.closest('html').length) return dbg_panel;
-        dbg_panel = $(
-            '<div id="online_mod_debug_panel" style="position:fixed;left:0;right:0;bottom:0;' +
-            'max-height:42%;z-index:999999;background:rgba(0,0,0,0.88);color:#0f0;' +
-            'font-family:monospace;font-size:12px;line-height:1.35;box-sizing:border-box;">' +
-            '<div id="online_mod_debug_head" style="display:flex;justify-content:space-between;' +
-            'align-items:center;background:#111;color:#fff;padding:4px 8px;">' +
-            '<span>Online Mod DEBUG LOG</span>' +
-            '<span><span id="online_mod_debug_clear" style="margin-right:14px;color:#ff0;">[очистить]</span>' +
-            '<span id="online_mod_debug_toggle" style="color:#ff0;">[скрыть]</span></span>' +
-            '</div>' +
-            '<div id="online_mod_debug_body" style="max-height:calc(42vh - 26px);overflow-y:auto;' +
-            'padding:4px 8px;white-space:pre-wrap;word-break:break-word;"></div>' +
-            '</div>'
-        );
-        $('body').append(dbg_panel);
-        dbg_body = dbg_panel.find('#online_mod_debug_body');
-        dbg_panel.find('#online_mod_debug_clear').on('click touchstart', function (e) {
-            e.stopPropagation();
-            dbg_body.empty();
-        });
-        dbg_panel.find('#online_mod_debug_toggle').on('click touchstart', function (e) {
-            e.stopPropagation();
-            dbg_hidden = !dbg_hidden;
-            dbg_body.toggle(!dbg_hidden);
-            $(this).text(dbg_hidden ? '[показать]' : '[скрыть]');
-        });
-        return dbg_panel;
-    }
-
-    function dbgFormat(a) {
-        if (a === undefined) return 'undefined';
-        if (a === null) return 'null';
-        if (typeof a === 'object') {
-            try { return JSON.stringify(a); } catch (e) { return String(a); }
-        }
-        return String(a);
-    }
-
-    function dlog() {
-        var args = Array.prototype.slice.call(arguments);
-        var msg = args.map(dbgFormat).join(' ');
-        var time = new Date().toTimeString().slice(0, 8) + '.' + (new Date().getMilliseconds() + '').padStart(3, '0');
-        try { console.log('[OnlineMod]', time, msg); } catch (e) {}
-        try {
-            dbgCreatePanel();
-            dbg_body.append('<div>' + time + ' — ' + msg.replace(/</g, '&lt;') + '</div>');
-            dbg_body.scrollTop(dbg_body[0].scrollHeight);
-            var lines = dbg_body.children();
-            if (lines.length > DBG_MAX_LINES) lines.slice(0, lines.length - DBG_MAX_LINES).remove();
-        } catch (e) {}
     }
 
     // --- Настройки ---
@@ -256,7 +183,7 @@
         }
         var embed = ref;
         var filter_items = {};
-        var voice_list_current = []; // Озвучки, доступные для ТЕКУЩЕГО выбранного сезона
+        var voice_list_current = [];
         var choice = {
             season: 0,
             voice: 0,
@@ -264,22 +191,9 @@
             season_id: ''
         };
         var error_message = '';
-        var premium_cache = {}; // Кеш премиум-статуса — живёт только в рамках текущего
-        // открытия карточки (этот экземпляр пересоздаётся заново при выходе в меню
-        // и повторном заходе), поэтому свежий статус всегда перепроверяется, а не
-        // "залипает" на старом значении. Ключ учитывает сезон, т.к. на HDrezka
-        // премиум-статус озвучки может отличаться от сезона к сезону.
-        var render_generation = 0; // Счётчик "поколений" рендера — защита от гонки:
-        // если пользователь быстро переключает сезон/озвучку, старый (более
-        // ранний) сетевой ответ не должен перетереть уже отрисованный новый выбор.
-
-        var destroyed = false; // Компонент закрыт (destroy()), но фоновые
-        // запросы (checkAllPremium/fetchVoiceData через свои собственные
-        // Lampa.Reguest — их не отменяет network.clear() в destroy()) могут
-        // ещё лететь и вернуться ПОСЛЕ этого. Их коллбеки должны проверять
-        // этот флаг перед обращением к extract, иначе — падение с
-        // "Cannot read properties of null (reading 'voice_data')" и т.п.,
-        // т.к. extract к этому моменту уже обнулён в destroy().
+        var premium_cache = {};
+        var render_generation = 0;
+        var destroyed = false;
 
         function premiumCacheKey(voice_id, season_id) {
             return (extract.film_id || '') + '_' + voice_id + '_' + (season_id || '0');
@@ -372,13 +286,6 @@
             return subtitles.length ? subtitles : false;
         }
 
-        // Проверка премиум-статуса для всех озвучек.
-        // Пробуем 1-ю серию сезона как индикатор премиум-статуса озвучки —
-        // это самый надёжный вариант (не зависит от того, успели ли подгрузиться
-        // данные по конкретным эпизодам этого сезона для этой озвучки).
-        // Если в сезоне премиум только у ПОЗДНИХ серий, а не с начала — это всё
-        // равно поймается "на лету" при реальном клике на серию: см.
-        // markPremiumDiscovered() и её вызов в обработчике ошибки getStream().
         function getProbeEpisodeId() {
             return '1';
         }
@@ -388,57 +295,36 @@
             var checked = 0;
             var results = {};
 
-            dlog('checkAllPremium() START total=', total, 'season_id=', season_id, 'force=', !!force, 'voice_ids=', voice_ids);
-
             if (total === 0) {
-                dlog('checkAllPremium() total=0, callback сразу');
                 callback(results);
                 return;
             }
             
-            // Таймаут должен быть больше, чем худший случай "запрос + 2 повтора"
-            // (см. attempt() ниже), иначе он сработает ДО того, как повторная
-            // попытка успеет завершиться — и переводы, которые просто чуть
-            // дольше отвечали, будут ошибочно посчитаны "не премиум" именно
-            // при первом автоматическом открытии (пока соединение не "прогрето").
             var fallbackTimer = setTimeout(function() {
                 if (checked < total) {
                     var unfinished = voice_ids.filter(function (id) {
                         return results[id] === undefined;
                     });
-                    dlog('checkAllPremium() FALLBACK TIMER сработал! checked=', checked, '/', total, 'unfinished=', unfinished);
                     checked = total;
-                    // Помечаем, кто не успел ответить, чтобы можно было
-                    // тихо перепроверить именно их позже — не кэшируя
-                    // false как достоверный факт (см. finish() выше).
                     results.__timedOut = unfinished;
                     callback(results);
                 }
-            }, Math.max(20000, total * 6000));
+            }, Math.max(15000, total * 5000));
 
             var current_season_id = season_id;
-
-            // ВАЖНО: раньше все voice_ids запускались через forEach одновременно —
-            // пачка из 8-10 параллельных запросов на ajax/get_cdn_series почти
-            // всегда ловит HTTP 503 от анти-флуд защиты HDrezka (подтверждено
-            // логами: 8 из 9 запросов = 503 мгновенно). Поэтому теперь запросы
-            // идут очередью не более чем по PREMIUM_CONCURRENCY штук одновременно.
             var PREMIUM_CONCURRENCY = 2;
-            var PREMIUM_STAGGER_MS = 300;
+            var PREMIUM_STAGGER_MS = 250;
 
             runLimited(voice_ids, PREMIUM_CONCURRENCY, PREMIUM_STAGGER_MS, function (voice_id, queueDone) {
                 var cache_key = premiumCacheKey(voice_id, current_season_id);
 
                 if (!force) {
                     var cached = premium_cache[cache_key];
-
                     if (cached !== undefined) {
-                        dlog('checkAllPremium() voice=', voice_id, 'ИЗ КЭША, isPremium=', cached, 'key=', cache_key);
                         results[voice_id] = cached;
                         checked++;
                         if (checked === total) {
                             clearTimeout(fallbackTimer);
-                            dlog('checkAllPremium() DONE (все из кэша) results=', results);
                             callback(results);
                         }
                         queueDone();
@@ -447,24 +333,27 @@
                 }
 
                 var finish = function(isPremium) {
-                    dlog('checkAllPremium() voice=', voice_id, 'FINISH isPremium=', isPremium, 'checked=', checked + 1, '/', total);
                     results[voice_id] = isPremium;
                     checked++;
                     if (checked === total) {
                         clearTimeout(fallbackTimer);
-                        dlog('checkAllPremium() DONE results=', results);
                         callback(results);
                     }
                     queueDone();
                 };
 
-                // Подтверждённый ответ сервера — кэшируем в памяти на время текущего открытия.
                 var confirmed = function(isPremium) {
                     premium_cache[cache_key] = isPremium;
                     finish(isPremium);
                 };
 
                 var attempt = function(retries_left) {
+                    // Защита от destroyed
+                    if (destroyed) {
+                        finish(false);
+                        return;
+                    }
+
                     var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
                     var postdata = 'id=' + encodeURIComponent(extract.film_id);
                     postdata += '&translator_id=' + encodeURIComponent(voice_id);
@@ -478,11 +367,14 @@
                         postdata += '&action=get_movie';
                     }
 
-                    dlog('checkAllPremium() voice=', voice_id, 'ЗАПРОС season=', current_season_id, 'retries_left=', retries_left);
                     var req = new Lampa.Reguest();
-                    req.timeout(4000);
+                    req.timeout(3000);
 
                     req.silent(url, function (json) {
+                        if (destroyed) {
+                            finish(false);
+                            return;
+                        }
                         var isPremium = false;
                         if (json && json.url) {
                             var video = decode(json.url);
@@ -498,29 +390,15 @@
                                 });
                                 isPremium = premium_content;
                             }
-                            dlog('checkAllPremium() voice=', voice_id, 'ОТВЕТ ОК, items=', items.length, 'isPremium=', isPremium, 'premium_content_raw=', json.premium_content);
-                        } else {
-                            dlog('checkAllPremium() voice=', voice_id, 'ОТВЕТ БЕЗ json.url! json=', json);
                         }
-                        // Сервер ответил (пусть и без video-ссылок) — это подтверждённый результат.
                         confirmed(isPremium);
                     }, function (a, c) {
-                        // Сетевая ошибка/таймаут — это НЕ подтверждённый ответ "бесплатно",
-                        // а просто "не удалось проверить". Раньше такой сбой сразу кэшировался
-                        // как premium:false на 12 часов, из-за чего плохо ответивший запрос
-                        // мог навсегда "спрятать" реальный премиум. Поэтому сначала пробуем
-                        // ещё раз (до 2 повторов), и только если так и не смогли получить
-                        // ответ — считаем "не премиум" ТОЛЬКО для текущей отрисовки,
-                        // не сохраняя это как достоверный факт в кэш.
-                        //
-                        // ВАЖНО: при 503 (rate-limit) повтор БЕЗ паузы почти гарантированно
-                        // словит тот же 503 снова — поэтому перед повтором ждём небольшой
-                        // бекоф (растущий с каждой попыткой + немного случайности, чтобы
-                        // повторы разных переводов не сбивались в новую пачку разом).
-                        dlog('checkAllPremium() voice=', voice_id, 'ОШИБКА/ТАЙМАУТ retries_left=', retries_left, 'status=', a && a.status, 'err=', c);
+                        if (destroyed) {
+                            finish(false);
+                            return;
+                        }
                         if (retries_left > 0) {
-                            var backoff = (3 - retries_left) * 600 + Math.floor(Math.random() * 400);
-                            dlog('checkAllPremium() voice=', voice_id, 'жду', backoff, 'мс перед повтором (backoff)');
+                            var backoff = (3 - retries_left) * 500 + Math.floor(Math.random() * 300);
                             setTimeout(function () {
                                 attempt(retries_left - 1);
                             }, backoff);
@@ -533,12 +411,10 @@
                     });
                 };
 
-                attempt(2);
+                attempt(1);
             }, function () {
-                // Очередь полностью разобрана. Обычно к этому моменту callback(results)
-                // уже вызван через checked===total выше — это просто safety-net.
                 if (checked < total) {
-                    dlog('checkAllPremium() runLimited ЗАВЕРШЁН, но checked=', checked, '<', total, '- расхождение счётчиков!');
+                    // safety-net
                 }
             });
         }
@@ -564,7 +440,7 @@
             var query_more = function (query, page, data, callback) {
                 var url = more_url + '&q=' + encodeURIComponent(query) + '&page=' + encodeURIComponent(page);
                 network.clear();
-                network.timeout(10000);
+                network.timeout(8000);
                 network.silent(url, function (str) {
                     str = (str || '').replace(/\n/g, '');
                     checkErrorForm(str);
@@ -724,7 +600,7 @@
             var query_search = function (query, data, callback) {
                 var postdata = 'q=' + encodeURIComponent(query);
                 network.clear();
-                network.timeout(10000);
+                network.timeout(8000);
                 network.silent(url, function (str) {
                     str = (str || '').replace(/\n/g, '');
                     checkErrorForm(str);
@@ -775,7 +651,6 @@
         };
 
         this.filter = function (type, a, b) {
-            dlog('rezka2.filter() stype=', a.stype, 'index=', b.index, 'title=', b.title);
             choice[a.stype] = b.index;
             if (a.stype == 'voice') {
                 var raw_name = filter_items.voice[b.index] || '';
@@ -786,18 +661,8 @@
             component.reset();
             component.loading(true);
 
-            // Кеш премиум-статуса сбрасывается при ИЗМЕНЕНИИ ЛЮБОГО параметра
-            // фильтра (сезон, озвучка, источник и т.п.) — this.filter вызывается
-            // на каждое такое взаимодействие (см. filter.onSelect в component()),
-            // поэтому проверка премиума здесь универсальна, а не завязана на сезон.
-            // force=true: игнорируем и оперативный, и постоянный кэш — пользователь
-            // явно переключает фильтр, значит ждёт актуальный результат, а не
-            // старое (возможно, ошибочное) значение из хранилища.
             premium_cache = {};
-            dlog('rezka2.filter() -> premium_cache cleared, choice=', choice);
-
             getEpisodes(function () {
-                dlog('rezka2.filter() -> getEpisodes done, calling checkPremiumAndRender(force=true)');
                 checkPremiumAndRender(true);
             });
 
@@ -806,24 +671,22 @@
         };
 
         this.destroy = function () {
+            destroyed = true;
             network.clear();
             extract = null;
         };
 
         function getPage(url) {
             url = fixLink(url, ref);
-            dlog('getPage() url=', url);
             network.clear();
-            network.timeout(10000);
+            network.timeout(8000);
             network.silent(url, function (str) {
                 extractData(str);
-                dlog('getPage() extractData готово, film_id=', extract.film_id, 'is_series=', extract.is_series, 'choice=', choice);
-                if (extract.film_id) {
+                if (extract && extract.film_id) {
                     getEpisodes(success);
                 } else if (error_message) component.empty(error_message);
                 else component.emptyForQuery(select_title);
             }, function (a, c) {
-                dlog('getPage() ОШИБКА', a && a.status, c);
                 component.empty(network.errorDecode(a, c));
             }, false, {
                 dataType: 'text',
@@ -832,10 +695,6 @@
             });
         }
 
-        // Сортировка списка озвучек по премиум-статусу согласно настройке
-        // "online_mod_premium_sort". Сортируем сам массив-источник (а не только
-        // отображаемые подписи), чтобы filter() и filtred() всегда видели
-        // одинаковый порядок и индекс choice.voice не «расходился» между ними.
         function sortVoicesByPremium(list, premium_results) {
             var mode = Lampa.Storage.get('online_mod_premium_sort', 'default');
             if (mode !== 'premium_first' && mode !== 'premium_last') return list;
@@ -845,62 +704,44 @@
                 var pa = premium_results[a.v.id] ? 1 : 0;
                 var pb = premium_results[b.v.id] ? 1 : 0;
                 if (pa !== pb) return mode === 'premium_first' ? (pb - pa) : (pa - pb);
-                return a.i - b.i; // стабильная сортировка для равных
+                return a.i - b.i;
             });
             return indexed.map(function (o) { return o.v; });
         }
 
-        // Универсальная проверка премиум-статуса + рендер списка.
-        // Вызывается при ЛЮБОМ изменении фильтра (сезон, озвучка, источник и т.д.),
-        // а не только при смене сезона — иначе кеш премиум-статуса может
-        // «протухнуть», и переключение любого другого параметра фильтра
-        // отдаст премиум-контент без активной подписки.
         function checkPremiumAndRender(force, onDone) {
             var my_gen = ++render_generation;
-            var voices_source = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
+            var voices_source = extract && extract.is_series && voice_list_current.length ? voice_list_current : (extract ? extract.voice : []);
             var voice_ids = voices_source.map(function (v) { return v.id; });
-
-            dlog('checkPremiumAndRender() gen=', my_gen, 'force=', !!force, 'season_id=', currentSeasonId(), 'voice_ids=', voice_ids, 'voice_list_current.length=', voice_list_current.length, 'extract.voice.length=', extract.voice.length);
 
             if (voice_ids.length > 0) {
                 component.loading(true);
                 checkAllPremium(voice_ids, currentSeasonId(), function (results) {
-                    if (my_gen !== render_generation) {
-                        dlog('checkPremiumAndRender() gen=', my_gen, 'ОТМЕНЕНО, текущий render_generation=', render_generation, '- результат ИГНОРИРУЕТСЯ, ничего не отрисовано!');
-                        return; // отменено более новым выбором фильтра
+                    if (my_gen !== render_generation || !extract) {
+                        return;
                     }
-                    dlog('checkPremiumAndRender() gen=', my_gen, 'РЕНДЕРИМ results=', results);
                     component.loading(false);
                     var sorted = sortVoicesByPremium(voices_source, results);
                     if (extract.is_series && voice_list_current.length) voice_list_current = sorted;
                     else extract.voice = sorted;
                     filter(results);
                     var items = filtred(results);
-                    dlog('checkPremiumAndRender() gen=', my_gen, 'append() items=', items.length, 'is_premium_flags=', items.map(function(i){return i.is_premium;}));
                     append(items);
                     if (onDone) onDone();
 
-                    // Часть переводов могла не успеть ответить за отведённое
-                    // время (см. fallbackTimer в checkAllPremium) — типично
-                    // при первом открытии ещё не посещённого сезона, когда
-                    // одновременно с проверкой премиума ещё и грузится список
-                    // серий. Такой результат не кэшируется как достоверный,
-                    // поэтому тихо перепроверяем именно их в фоне и, если
-                    // окажется премиум — обновляем уже отрисованные элементы
-                    // без необходимости вручную повторно щёлкать по сезону.
                     if (results.__timedOut && results.__timedOut.length) {
                         var retry_gen = my_gen;
                         var retry_season = currentSeasonId();
                         setTimeout(function () {
-                            if (retry_gen !== render_generation) return; // сезон/озвучка уже сменились
+                            if (retry_gen !== render_generation || !extract) return;
                             checkAllPremium(results.__timedOut, retry_season, function (retry_results) {
-                                if (retry_gen !== render_generation) return;
+                                if (retry_gen !== render_generation || !extract) return;
                                 for (var vid in retry_results) {
                                     if (vid === '__timedOut') continue;
                                     if (retry_results[vid]) markPremiumDiscovered(items, vid);
                                 }
                             }, true);
-                        }, 2500);
+                        }, 2000);
                     }
                 }, force);
             } else {
@@ -912,57 +753,57 @@
             }
         }
 
-        // Тихая фоновая подгрузка остальных сезонов сразу при открытии сериала:
-        // список серий + премиум-статус переводов. Не блокирует интерфейс.
-        // Запускается ТОЛЬКО ПОСЛЕ того, как проверка и отрисовка ТЕКУЩЕГО
-        // сезона уже полностью завершилась (см. вызов из success() ниже) —
-        // а не через фиксированную паузу. Иначе, если проверка текущего сезона
-        // почему-то не укладывалась в эту паузу, фоновые запросы стартовали
-        // ПАРАЛЛЕЛЬНО с ней и отбирали у неё сеть/ответ сервера, из-за чего
-        // видимый (текущий) сезон иногда оставался без звёздочек при первом
-        // открытии — и помогал только повторный клик, когда фон уже утихал.
         function prefetchOtherSeasonsInBackground() {
-            if (!extract.is_series || !extract.season || extract.season.length < 2) return;
+            if (!extract || !extract.is_series || !extract.season || extract.season.length < 2) return;
 
             var current = currentSeasonId();
             var others = extract.season
                 .map(function (s) { return s.id; })
                 .filter(function (id) { return id != current; });
 
-            var MAX_SEASONS_TO_PREFETCH = 12; // защита от очень длинных сериалов — не долбим сервер бесконечно
+            var MAX_SEASONS_TO_PREFETCH = 8;
             others = others.slice(0, MAX_SEASONS_TO_PREFETCH);
 
             var i = 0;
             function next() {
-                if (i >= others.length) return;
+                if (i >= others.length || !extract) return;
                 var season_id = others[i++];
                 ensureAllVoiceData(season_id, function () {
+                    if (!extract) return;
                     var voices_for_season = availableVoicesForSeason(season_id);
                     var ids = voices_for_season.map(function (v) { return v.id; });
                     checkAllPremium(ids, season_id, function () {
-                        setTimeout(next, 600); // пауза между сезонами
+                        setTimeout(next, 500);
                     });
                 });
             }
 
-            setTimeout(next, 1000); // небольшая пауза "на всякий случай", основной сезон уже отрисован
+            setTimeout(next, 800);
         }
 
         function success() {
-            dlog('success() choice=', choice, 'currentSeasonId=', currentSeasonId());
             component.loading(false);
             checkPremiumAndRender(false, prefetchOtherSeasonsInBackground);
         }
 
         function extractData(str) {
-            extract.voice = [];
-            extract.season = [];
-            extract.episode = [];
-            extract.voice_data = {};
-            extract.voice_season_list = {};
-            extract.is_series = false;
-            extract.film_id = '';
-            extract.favs = '';
+            if (!str) {
+                extract = { voice: [], season: [], episode: [], voice_data: {}, voice_season_list: {}, is_series: false, film_id: '', favs: '' };
+                return;
+            }
+            
+            var newExtract = {
+                voice: [],
+                season: [],
+                episode: [],
+                voice_data: {},
+                voice_season_list: {},
+                is_series: false,
+                film_id: '',
+                favs: '',
+                blocked: false
+            };
+            
             str = (str || '').replace(/\n/g, '');
             checkErrorForm(str);
             var translation = str.match(/<h2>В переводе<\/h2>:<\/td>\s*(<td>.*?<\/td>)/);
@@ -975,13 +816,13 @@
             if (!devVoiceName) devVoiceName = 'Оригинал';
             var defVoice, defSeason, defEpisode;
             if (cdnSeries) {
-                extract.is_series = true;
-                extract.film_id = cdnSeries[1];
+                newExtract.is_series = true;
+                newExtract.film_id = cdnSeries[1];
                 defVoice = { name: devVoiceName, id: cdnSeries[2] };
                 defSeason = { name: 'Сезон ' + cdnSeries[3], id: cdnSeries[3] };
                 defEpisode = { name: 'Серия ' + cdnSeries[4], season_id: cdnSeries[3], episode_id: cdnSeries[4] };
             } else if (cdnMovie) {
-                extract.film_id = cdnMovie[1];
+                newExtract.film_id = cdnMovie[1];
                 defVoice = { name: devVoiceName, id: cdnMovie[2], is_camrip: cdnMovie[3], is_ads: cdnMovie[4], is_director: cdnMovie[5] };
             }
             var voices = str.match(/(<ul id="translators-list".*?<\/ul>)/);
@@ -993,7 +834,7 @@
                         var lang = ($(this).attr('title') || $(this).attr('alt') || '').trim();
                         if (lang && title.indexOf(lang) == -1) title += ' (' + lang + ')';
                     });
-                    extract.voice.push({
+                    newExtract.voice.push({
                         name: title,
                         id: $(this).attr('data-translator_id'),
                         is_camrip: $(this).attr('data-camrip'),
@@ -1002,53 +843,53 @@
                     });
                 });
             }
-            if (!extract.voice.length && defVoice) {
-                extract.voice.push(defVoice);
+            if (!newExtract.voice.length && defVoice) {
+                newExtract.voice.push(defVoice);
             }
-            if (extract.is_series) {
+            if (newExtract.is_series) {
                 var seasons = str.match(/(<ul id="simple-seasons-tabs".*?<\/ul>)/);
                 if (seasons) {
                     var _select = $(seasons[1]);
                     $('.b-simple_season__item', _select).each(function () {
-                        extract.season.push({
+                        newExtract.season.push({
                             name: $(this).text(),
                             id: $(this).attr('data-tab_id')
                         });
                     });
                 }
-                if (!extract.season.length && defSeason) {
-                    extract.season.push(defSeason);
+                if (!newExtract.season.length && defSeason) {
+                    newExtract.season.push(defSeason);
                 }
                 var episodes = str.match(/(<div id="simple-episodes-tabs".*?<\/div>)/);
                 if (episodes) {
                     var _select2 = $(episodes[1]);
                     $('.b-simple_episode__item', _select2).each(function () {
-                        extract.episode.push({
+                        newExtract.episode.push({
                             name: $(this).text(),
                             season_id: $(this).attr('data-season_id'),
                             episode_id: $(this).attr('data-episode_id')
                         });
                     });
                 }
-                if (!extract.episode.length && defEpisode) {
-                    extract.episode.push(defEpisode);
+                if (!newExtract.episode.length && defEpisode) {
+                    newExtract.episode.push(defEpisode);
                 }
             }
             var favs = str.match(/<input type="hidden" id="ctrl_favs" value="([^"]*)"/);
-            if (favs) extract.favs = favs[1];
+            if (favs) newExtract.favs = favs[1];
             var blocked = str.match(/class="b-player__restricted__block_message"/);
-            if (blocked) extract.blocked = true;
+            if (blocked) newExtract.blocked = true;
+            
+            extract = newExtract;
         }
 
-        // Загружает (с кешированием) список серий ОДНОЙ озвучки для КОНКРЕТНОГО
-        // сезона. Раньше кэш был только по id озвучки (без сезона) — из-за
-        // этого первый же загруженный сезон "прилипал" навсегда, и при
-        // переключении на другой сезон подставлялся тот же (неверный) список
-        // серий, отфильтрованный список получался пустым ("ничего нет").
         function fetchVoiceData(translator_id, season_id, callback) {
+            if (!extract) {
+                callback({ season: [], episode: [] });
+                return;
+            }
             var key = translator_id + '::' + (season_id || '');
             if (extract.voice_data[key]) {
-                dlog('fetchVoiceData() key=', key, 'ИЗ КЭША, episode.length=', extract.voice_data[key].episode.length);
                 callback(extract.voice_data[key]);
                 return;
             }
@@ -1060,23 +901,27 @@
 
             var attempt = function (retries_left) {
                 var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
-                dlog('fetchVoiceData() key=', key, 'ЗАПРОС... retries_left=', retries_left);
                 var req = new Lampa.Reguest();
-                req.timeout(10000);
+                req.timeout(8000);
                 req.silent(url, function (json) {
+                    if (!extract) {
+                        callback({ season: [], episode: [] });
+                        return;
+                    }
                     var data = parseVoiceEpisodes(json, translator_id, key);
-                    dlog('fetchVoiceData() key=', key, 'ОТВЕТ ОК, episode.length=', data.episode.length, 'season.length=', data.season.length);
                     callback(data);
                 }, function (a, c) {
-                    dlog('fetchVoiceData() key=', key, 'ОШИБКА/ТАЙМАУТ status=', a && a.status, 'err=', c, 'retries_left=', retries_left);
                     if (retries_left > 0) {
-                        var backoff = (2 - retries_left) * 700 + Math.floor(Math.random() * 400);
+                        var backoff = (2 - retries_left) * 500 + Math.floor(Math.random() * 300);
                         setTimeout(function () { attempt(retries_left - 1); }, backoff);
                     } else {
-                        dlog('fetchVoiceData() key=', key, '-> закэшируется ПУСТОЙ результат навсегда до reset()!');
-                        var empty = { season: [], episode: [] };
-                        extract.voice_data[key] = empty;
-                        callback(empty);
+                        if (extract) {
+                            var empty = { season: [], episode: [] };
+                            extract.voice_data[key] = empty;
+                            callback(empty);
+                        } else {
+                            callback({ season: [], episode: [] });
+                        }
                     }
                 }, postdata, {
                     withCredentials: true,
@@ -1109,35 +954,29 @@
                     });
                 });
             }
-            extract.voice_data[key] = data;
-            // Список доступных сезонов у переводчика не зависит от того, какой
-            // конкретно сезон мы запросили — сохраняем его отдельно, чтобы
-            // availableVoicesForSeason() мог проверить любую озвучку на
-            // покрытие сезона, даже если серии именно для него ещё не грузили.
-            if (data.season.length) extract.voice_season_list[translator_id] = data.season;
+            if (extract) {
+                extract.voice_data[key] = data;
+                if (data.season.length) extract.voice_season_list[translator_id] = data.season;
+            }
             return data;
         }
 
-        // Догружает данные по сезонам/сериям для ВСЕХ озвучек (не только выбранной
-        // в данный момент) для КОНКРЕТНОГО сезона, чтобы можно было понять, какие
-        // озвучки реально покрывают текущий сезон, и не показывать в фильтре те,
-        // что его не покрывают.
         function ensureAllVoiceData(season_id, callback) {
+            if (!extract) {
+                callback();
+                return;
+            }
             var voices = extract.voice || [];
             var total = voices.length;
             var done = 0;
-            dlog('ensureAllVoiceData() season_id=', season_id, 'total_voices=', total);
             if (!total) {
                 callback();
                 return;
             }
-            // Та же причина, что и в checkAllPremium: пачка параллельных
-            // get_episodes запросов на все озвучки разом ловит 503 от сервера.
-            runLimited(voices, 2, 300, function (v, queueDone) {
+            runLimited(voices, 2, 250, function (v, queueDone) {
                 fetchVoiceData(v.id, season_id, function () {
                     done++;
                     if (done === total) {
-                        dlog('ensureAllVoiceData() season_id=', season_id, 'ВСЕ ГОТОВО', done, '/', total);
                         callback();
                     }
                     queueDone();
@@ -1146,36 +985,40 @@
         }
 
         function currentSeasonId() {
+            if (!extract) return null;
             if (choice.season_id) return choice.season_id;
             if (extract.season && extract.season[choice.season]) return extract.season[choice.season].id;
             if (extract.season && extract.season.length) return extract.season[0].id;
             return null;
         }
 
-        // Только те озвучки, у которых есть серии для текущего сезона.
-        // Если данные ещё не загрузились или ни одна озвучка не совпала —
-        // показываем полный список, чтобы фильтр не оказался пустым.
         function availableVoicesForSeason(season_id) {
+            if (!extract) return [];
             if (!season_id) return extract.voice;
             var list = extract.voice.filter(function (v) {
                 var seasons = extract.voice_season_list[v.id];
                 return seasons && seasons.some(function (s) { return s.id == season_id; });
             });
-            var result = list.length ? list : extract.voice;
-            dlog('availableVoicesForSeason() season_id=', season_id, 'matched=', list.length, 'из', extract.voice.length, '-> итог=', result.map(function(v){return v.id;}));
-            return result;
+            return list.length ? list : extract.voice;
         }
 
         function getEpisodes(call) {
-            if (!extract.is_series) {
+            if (!extract || !extract.is_series) {
                 call();
                 return;
             }
 
             var season_id = currentSeasonId();
-            dlog('getEpisodes() START season_id=', season_id);
+            if (!season_id) {
+                call();
+                return;
+            }
 
             ensureAllVoiceData(season_id, function () {
+                if (!extract) {
+                    call();
+                    return;
+                }
                 voice_list_current = availableVoicesForSeason(season_id);
                 filterVoice();
 
@@ -1183,13 +1026,12 @@
                 var key = selected ? (selected.id + '::' + (season_id || '')) : null;
                 var data = key && extract.voice_data[key];
                 extract.episode = (data && data.episode) || [];
-                dlog('getEpisodes() DONE season_id=', season_id, 'choice.voice=', choice.voice, 'selected_voice_id=', selected && selected.id, 'episode.length=', extract.episode.length, 'voice_list_current=', voice_list_current.map(function(v){return v.id;}));
-
                 call();
             });
         }
 
         function filterVoice() {
+            if (!extract) return;
             var list = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
             var voice = list.map(function (v) { return v.name; });
             if (!voice[choice.voice]) choice.voice = 0;
@@ -1203,6 +1045,7 @@
         }
 
         function filter(premium_results) {
+            if (!extract) return;
             premium_results = premium_results || {};
 
             var voices_source = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
@@ -1239,6 +1082,10 @@
         }
 
         function getStream(element, call, error) {
+            if (!extract) {
+                error();
+                return;
+            }
             if (element.stream) return call(element);
             var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
             var postdata = 'id=' + encodeURIComponent(extract.film_id);
@@ -1257,8 +1104,12 @@
                 postdata += '&action=get_movie';
             }
             network.clear();
-            network.timeout(10000);
+            network.timeout(8000);
             network.silent(url, function (json) {
+                if (!extract) {
+                    error();
+                    return;
+                }
                 if (json && json.url) {
                     var video = decode(json.url),
                         file = '',
@@ -1301,6 +1152,7 @@
         }
 
         function filtred(premium_results) {
+            if (!extract) return [];
             premium_results = premium_results || {};
             var filtred = [];
             if (extract.is_series) {
@@ -2112,14 +1964,6 @@
     var network = new Lampa.Reguest();
     var online_loading = false;
 
-    function logApp() {
-        console.log('Online Mod');
-        console.log('App', 'is MSX:', isMSX);
-        console.log('App', 'is Tizen:', isTizen);
-        console.log('App', 'is iframe:', isIFrame);
-        console.log('App', 'is local:', isLocal);
-    }
-
     function initStorage() {
         Lampa.Storage.set('online_mod_proxy_rezka2', 'false');
 
@@ -2330,7 +2174,6 @@
         });
     }
 
-    // --- Rezka2 авторизация ---
     function rezka2Login(success, error) {
         var host = rezka2Mirror();
         var url = host + '/ajax/login/';
@@ -2468,9 +2311,7 @@
         });
     }
 
-    // --- Запуск ---
     function startPlugin() {
-        logApp();
         initStorage();
         initLang();
         resetTemplates();
