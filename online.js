@@ -1,4 +1,4 @@
-// Online Mod (исправленная версия с корректным отображением сезонов в фильтре 75)
+// Online Mod (оптимизированная версия 76)
 (function () {
     'use strict';
 
@@ -95,27 +95,38 @@
         return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36';
     }
 
+    // Параллельный запуск с ограничением
     function runLimited(items, limit, stagger, worker, onAllDone) {
         var idx = 0;
         var active = 0;
         var finished = 0;
         var total = items.length;
+        var cancelled = false;
+        
         if (!total) { onAllDone(); return; }
 
         function tick() {
+            if (cancelled) return;
             if (idx < total && active < limit) {
                 active++;
                 var item = items[idx++];
                 worker(item, function () {
+                    if (cancelled) return;
                     active--;
                     finished++;
                     if (finished === total) onAllDone();
                 });
             }
-            if (idx < total) setTimeout(tick, stagger);
+            if (idx < total && !cancelled) {
+                setTimeout(tick, stagger);
+            }
         }
 
         tick();
+        
+        return function() {
+            cancelled = true;
+        };
     }
 
     // --- Настройки ---
@@ -194,9 +205,6 @@
         var render_generation = 0;
         var destroyed = false;
         var pendingRequests = [];
-        var isFiltering = false;
-        var savedSeasons = [];
-        var seasonsLoaded = false;
 
         function cancelPendingRequests() {
             pendingRequests.forEach(function(req) {
@@ -209,35 +217,27 @@
             return (extract.film_id || '') + '_' + voice_id + '_' + (season_id || '0');
         }
 
-        function clearPremiumCacheForSeason(season_id) {
-            var keys = Object.keys(premium_cache);
-            keys.forEach(function(key) {
-                if (key.indexOf('_' + season_id) !== -1 || key.endsWith('_' + season_id)) {
-                    delete premium_cache[key];
-                }
-            });
-        }
-
         function checkErrorForm(str) {
             var login_form = str.match(/<form id="check-form" class="check-form" method="post" action="\/ajax\/login\/">/);
             if (login_form) {
                 error_message = Lampa.Lang.translate('online_mod_authorization_required') + ' HDrezka';
-                return;
+                return true;
             }
             var error_form = str.match(/(<div class="error-code">[^<]*<div>[^<]*<\/div>[^<]*<\/div>)\s*(<div class="error-title">[^<]*<\/div>)/);
             if (error_form) {
                 error_message = ($(error_form[1]).text().trim() || '') + ':\n' + ($(error_form[2]).text().trim() || '');
-                return;
+                return true;
             }
             var verify_form = str.match(/<span>MIRROR<\/span>.*<button type="submit" onclick="\$\.cookie(\([^)]*\))/);
             if (verify_form) {
                 error_message = Lampa.Lang.translate('online_mod_unsupported_mirror') + ' HDrezka';
-                return;
+                return true;
             }
             if (startsWith(str, 'Fatal error:')) {
                 error_message = str;
-                return;
+                return true;
             }
+            return false;
         }
 
         function decode(data) {
@@ -321,22 +321,10 @@
             }
 
             var current_season_id = season_id;
-
-            var fallbackTimer = setTimeout(function() {
-                if (checked < total) {
-                    var unfinished = voice_ids.filter(function (id) {
-                        return results[id] === undefined;
-                    });
-                    checked = total;
-                    results.__timedOut = unfinished;
-                    callback(results);
-                }
-            }, Math.max(12000, total * 4000));
-
             var PREMIUM_CONCURRENCY = 3;
             var PREMIUM_STAGGER_MS = 200;
 
-            runLimited(voice_ids, PREMIUM_CONCURRENCY, PREMIUM_STAGGER_MS, function (voice_id, queueDone) {
+            var cancelFn = runLimited(voice_ids, PREMIUM_CONCURRENCY, PREMIUM_STAGGER_MS, function (voice_id, queueDone) {
                 if (cancelled || destroyed) {
                     queueDone();
                     return;
@@ -349,10 +337,7 @@
                     if (cached !== undefined) {
                         results[voice_id] = cached;
                         checked++;
-                        if (checked === total) {
-                            clearTimeout(fallbackTimer);
-                            callback(results);
-                        }
+                        if (checked === total) callback(results);
                         queueDone();
                         return;
                     }
@@ -365,10 +350,7 @@
                     }
                     results[voice_id] = isPremium;
                     checked++;
-                    if (checked === total) {
-                        clearTimeout(fallbackTimer);
-                        callback(results);
-                    }
+                    if (checked === total) callback(results);
                     queueDone();
                 };
 
@@ -400,7 +382,7 @@
 
                     var req = new Lampa.Reguest();
                     pendingRequests.push(req);
-                    req.timeout(4000);
+                    req.timeout(5000);
 
                     req.silent(url, function (json) {
                         if (cancelled || destroyed) {
@@ -452,7 +434,7 @@
 
             return function() {
                 cancelled = true;
-                clearTimeout(fallbackTimer);
+                if (cancelFn) cancelFn();
             };
         }
 
@@ -477,10 +459,13 @@
             var query_more = function (query, page, data, callback) {
                 var url = more_url + '&q=' + encodeURIComponent(query) + '&page=' + encodeURIComponent(page);
                 network.clear();
-                network.timeout(8000);
+                network.timeout(10000);
                 network.silent(url, function (str) {
                     str = (str || '').replace(/\n/g, '');
-                    checkErrorForm(str);
+                    if (checkErrorForm(str)) {
+                        if (callback) callback(data, false);
+                        return;
+                    }
                     var links = str.match(/<div class="b-content__inline_item-link">\s*<a [^>]*>[^<]*<\/a>\s*<div>[^<]*<\/div>\s*<\/div>/g);
                     var have_more = !!str.match(/<a [^>]*>\s*<span class="b-navigation__next\b/);
                     if (links && links.length) {
@@ -637,10 +622,13 @@
             var query_search = function (query, data, callback) {
                 var postdata = 'q=' + encodeURIComponent(query);
                 network.clear();
-                network.timeout(8000);
+                network.timeout(10000);
                 network.silent(url, function (str) {
                     str = (str || '').replace(/\n/g, '');
-                    checkErrorForm(str);
+                    if (checkErrorForm(str)) {
+                        if (callback) callback([], false, query);
+                        return;
+                    }
                     var links = str.match(/<li><a href=.*?<\/li>/g);
                     var have_more = str.indexOf('<a class="b-search__live_all"') !== -1;
                     if (links && links.length) data = data.concat(links);
@@ -682,36 +670,26 @@
                 season_id: ''
             };
             premium_cache = {};
-            voice_list_current = [];
-            seasonsLoaded = false;
             component.loading(true);
             getEpisodes(success);
             component.saveChoice(choice);
         };
 
         this.filter = function (type, a, b) {
-            if (isFiltering) return;
-            isFiltering = true;
-            
             choice[a.stype] = b.index;
             if (a.stype == 'voice') {
                 var raw_name = filter_items.voice[b.index] || '';
                 choice.voice_name = raw_name.replace(/^⭐\s*/, '');
             }
-            if (a.stype == 'season') {
-                choice.season_id = filter_items.season_id[b.index];
-                clearPremiumCacheForSeason(choice.season_id);
-                voice_list_current = [];
-            }
+            if (a.stype == 'season') choice.season_id = filter_items.season_id[b.index];
             
             component.reset();
             component.loading(true);
+            premium_cache = {};
             render_generation++;
 
             getEpisodes(function () {
-                checkPremiumAndRender(true, function() {
-                    isFiltering = false;
-                });
+                checkPremiumAndRender(true);
             });
 
             component.saveChoice(choice);
@@ -729,7 +707,7 @@
         function getPage(url) {
             url = fixLink(url, ref);
             network.clear();
-            network.timeout(8000);
+            network.timeout(10000);
             network.silent(url, function (str) {
                 extractData(str);
                 if (extract.film_id) {
@@ -760,10 +738,7 @@
         }
 
         function checkPremiumAndRender(force, onDone) {
-            if (destroyed) {
-                if (onDone) onDone();
-                return;
-            }
+            if (destroyed) return;
             
             var my_gen = ++render_generation;
             var voices_source = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
@@ -772,10 +747,7 @@
             if (voice_ids.length > 0) {
                 component.loading(true);
                 var cancelCheck = checkAllPremium(voice_ids, currentSeasonId(), function (results) {
-                    if (destroyed || my_gen !== render_generation) {
-                        if (onDone) onDone();
-                        return;
-                    }
+                    if (destroyed || my_gen !== render_generation) return;
                     
                     component.loading(false);
                     var sorted = sortVoicesByPremium(voices_source, results);
@@ -785,21 +757,6 @@
                     var items = filtred(results);
                     append(items);
                     if (onDone) onDone();
-
-                    if (results.__timedOut && results.__timedOut.length) {
-                        var retry_gen = my_gen;
-                        var retry_season = currentSeasonId();
-                        setTimeout(function () {
-                            if (retry_gen !== render_generation || destroyed) return;
-                            checkAllPremium(results.__timedOut, retry_season, function (retry_results) {
-                                if (retry_gen !== render_generation || destroyed) return;
-                                for (var vid in retry_results) {
-                                    if (vid === '__timedOut') continue;
-                                    if (retry_results[vid]) markPremiumDiscovered(items, vid);
-                                }
-                            }, true);
-                        }, 2000);
-                    }
                 }, force);
                 
                 if (cancelCheck) {
@@ -828,7 +785,6 @@
                 if (i >= others.length || destroyed) return;
                 var season_id = others[i++];
                 ensureAllVoiceData(season_id, function () {
-                    if (destroyed) return;
                     var voices_for_season = availableVoicesForSeason(season_id);
                     var ids = voices_for_season.map(function (v) { return v.id; });
                     checkAllPremium(ids, season_id, function () {
@@ -837,7 +793,7 @@
                 });
             }
 
-            setTimeout(next, 500);
+            setTimeout(next, 800);
         }
 
         function success() {
@@ -856,7 +812,8 @@
             extract.film_id = '';
             extract.favs = '';
             str = (str || '').replace(/\n/g, '');
-            checkErrorForm(str);
+            if (checkErrorForm(str)) return;
+            
             var translation = str.match(/<h2>В переводе<\/h2>:<\/td>\s*(<td>.*?<\/td>)/);
             var cdnSeries = str.match(/\.initCDNSeriesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,/);
             var cdnMovie = str.match(/\.initCDNMoviesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,/);
@@ -911,10 +868,6 @@
                 if (!extract.season.length && defSeason) {
                     extract.season.push(defSeason);
                 }
-                // Сохраняем список сезонов
-                savedSeasons = extract.season.slice();
-                seasonsLoaded = true;
-                
                 var episodes = str.match(/(<div id="simple-episodes-tabs".*?<\/div>)/);
                 if (episodes) {
                     var _select2 = $(episodes[1]);
@@ -963,12 +916,8 @@
                 var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
                 var req = new Lampa.Reguest();
                 pendingRequests.push(req);
-                req.timeout(6000);
+                req.timeout(8000);
                 req.silent(url, function (json) {
-                    if (destroyed) {
-                        callback({ season: [], episode: [] });
-                        return;
-                    }
                     var data = parseVoiceEpisodes(json, translator_id, key);
                     callback(data);
                 }, function (a, c) {
@@ -977,7 +926,7 @@
                         return;
                     }
                     if (retries_left > 0) {
-                        var backoff = (2 - retries_left) * 500 + Math.floor(Math.random() * 300);
+                        var backoff = (2 - retries_left) * 600 + Math.floor(Math.random() * 300);
                         setTimeout(function () { attempt(retries_left - 1); }, backoff);
                     } else {
                         var empty = { season: [], episode: [] };
@@ -1031,21 +980,6 @@
             var done = 0;
             
             if (!total) {
-                callback();
-                return;
-            }
-
-            // Проверяем, есть ли уже загруженные данные для этого сезона
-            var hasData = false;
-            voices.forEach(function(v) {
-                var key = v.id + '::' + (season_id || '');
-                if (extract.voice_data[key]) {
-                    hasData = true;
-                }
-            });
-
-            // Если данные уже есть - сразу вызываем callback
-            if (hasData) {
                 callback();
                 return;
             }
@@ -1129,17 +1063,9 @@
                 return is_prem ? '⭐ ' + v.name : v.name;
             });
 
-            // Используем сохраненный список сезонов, если он есть
-            var seasons = (savedSeasons && savedSeasons.length) ? savedSeasons : extract.season;
-            
-            // Если все еще пусто - создаем из extract.season
-            if (!seasons || !seasons.length) {
-                seasons = extract.season || [];
-            }
-            
             filter_items = {
-                season: seasons.map(function (s) { return s.name; }),
-                season_id: seasons.map(function (s) { return s.id; }),
+                season: extract.season.map(function (s) { return s.name; }),
+                season_id: extract.season.map(function (s) { return s.id; }),
                 voice: voice_list
             };
             
@@ -1155,18 +1081,8 @@
             }
             if (choice.season_id) {
                 var _inx = filter_items.season_id.indexOf(choice.season_id);
-                if (_inx == -1) {
-                    // Если не нашли - пробуем по имени
-                    var season_name = filter_items.season[choice.season];
-                    var foundIdx = filter_items.season.indexOf(season_name);
-                    if (foundIdx !== -1) {
-                        choice.season_id = filter_items.season_id[foundIdx];
-                        choice.season = foundIdx;
-                    } else {
-                        choice.season = 0;
-                        choice.season_id = filter_items.season_id[0];
-                    }
-                } else if (_inx !== choice.season) {
+                if (_inx == -1) choice.season = 0;
+                else if (_inx !== choice.season) {
                     choice.season = _inx;
                 }
             }
@@ -1199,7 +1115,7 @@
             
             var req = new Lampa.Reguest();
             pendingRequests.push(req);
-            req.timeout(8000);
+            req.timeout(10000);
             req.silent(url, function (json) {
                 if (destroyed) {
                     error('Компонент уничтожен');
@@ -1252,18 +1168,9 @@
             if (extract.is_series) {
                 var season_name = filter_items.season[choice.season];
                 var season_id;
-                // Используем сохраненный список сезонов
-                var seasons = (savedSeasons && savedSeasons.length) ? savedSeasons : extract.season;
-                if (!seasons || !seasons.length) {
-                    seasons = extract.season || [];
-                }
-                seasons.forEach(function (season) {
+                extract.season.forEach(function (season) {
                     if (season.name == season_name) season_id = season.id;
                 });
-                // Если не нашли по имени - пробуем по индексу
-                if (!season_id && filter_items.season_id && filter_items.season_id[choice.season]) {
-                    season_id = filter_items.season_id[choice.season];
-                }
                 var voice = filter_items.voice[choice.voice];
                 var voices_source = voice_list_current.length ? voice_list_current : extract.voice;
                 var voice_obj = voices_source[choice.voice];
@@ -2072,6 +1979,14 @@
     var network = new Lampa.Reguest();
     var online_loading = false;
 
+    function logApp() {
+        console.log('Online Mod');
+        console.log('App', 'is MSX:', isMSX);
+        console.log('App', 'is Tizen:', isTizen);
+        console.log('App', 'is iframe:', isIFrame);
+        console.log('App', 'is local:', isLocal);
+    }
+
     function initStorage() {
         Lampa.Storage.set('online_mod_proxy_rezka2', 'false');
 
@@ -2422,6 +2337,7 @@
 
     // --- Запуск ---
     function startPlugin() {
+        logApp();
         initStorage();
         initLang();
         resetTemplates();
