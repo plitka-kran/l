@@ -825,7 +825,7 @@
                         filtred.push({
                             title: component.formatEpisodeTitle(episode.season_id, null, episode.name) + (is_premium ? ' ⭐' : ''),
                             quality: '',
-                            info: ' / ' + voice_clean,
+                            info: voice_clean,
                             season: parseInt(episode.season_id),
                             episode: parseInt(episode.episode_id),
                             media: episode,
@@ -873,8 +873,7 @@
                 element.timeline = view;
                 item.append(Lampa.Timeline.render(view));
                 if (Lampa.Timeline.details) {
-                    var separator = element.is_premium ? ' / ' : ' ';
-                    item.find('.online__quality').append(Lampa.Timeline.details(view, separator));
+                    item.find('.online__quality').append(Lampa.Timeline.details(view));
                 }
                 if (viewed.indexOf(hash_file) !== -1) item.append('<div class="torrent-item__viewed">' + Lampa.Template.get('icon_star', {}, true) + '</div>');
                 
@@ -888,7 +887,7 @@
                             url: component.getDefaultQuality(element.qualitys, element.stream),
                             quality: component.renameQualityMap(element.qualitys),
                             subtitles: element.subtitles,
-                            timeline: element.timeline,
+                            timeline: '/ ' + element.timeline,
                             title: element.season ? element.title : select_title + (element.title == select_title ? '' : ' / ' + element.title)
                         };
                         Lampa.Player.play(first);
@@ -910,7 +909,7 @@
                                                 call();
                                             });
                                         },
-                                        timeline: elem.timeline,
+                                        timeline: '/ ' + elem.timeline,
                                         title: elem.title
                                     };
                                     playlist.push(cell);
