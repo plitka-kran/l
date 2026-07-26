@@ -1,4 +1,4 @@
-// Online Mod (без прокси) с премиум-индикацией 82
+// Online Mod (без прокси) с премиум-индикацией 84
 
 (function () {
     'use strict';
@@ -583,7 +583,7 @@
                     
                     // Если премиум - добавляем звёздочку в название
                     if (is_premium) {
-                        title += ' ';
+                        title += ' ⭐';
                     }
                     
                     extract.voice.push({
@@ -814,7 +814,7 @@
                         filtred.push({
                             title: component.formatEpisodeTitle(episode.season_id, null, episode.name),
                             quality: '360p ~ 1080p',
-                            info: ' / ' + voice + (is_premium ? ' ' : ''), // ЗВЁЗДОЧКА
+                            info: ' / ' + voice + (is_premium ? ' ⭐' : ''), // ЗВЁЗДОЧКА
                             season: parseInt(episode.season_id),
                             episode: parseInt(episode.episode_id),
                             media: episode,
@@ -827,7 +827,7 @@
                     filtred.push({
                         title: voice.name || select_title,
                         quality: '360p ~ 1080p',
-                        info: voice.is_premium ? ' ' : '', // ЗВЁЗДОЧКА
+                        info: voice.is_premium ? ' ⭐' : '', // ЗВЁЗДОЧКА
                         media: voice,
                         is_premium: voice.is_premium || false
                     });
@@ -856,7 +856,7 @@
                 if (element.is_premium) {
                     item.addClass('premium');
                     // Добавляем бейдж премиум
-                    item.find('.online__quality').append('<span class="premium-badge"> ⭐</span>');
+                    item.find('.online__quality').append('<span class="premium-badge" style="color:#FFD700;margin-left:8px;font-size:14px;">⭐</span>');
                 }
                 
                 var hash_file = Lampa.Utils.hash(element.season ? [element.season, element.season > 10 ? ':' : '', element.episode, object.movie.original_title, filter_items.voice[choice.voice]].join('') : object.movie.original_title + element.title);
