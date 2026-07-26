@@ -1,4 +1,4 @@
-// Online Mod (исправленная версия с корректной работой сезонов и премиум 64)
+// Online Mod (исправленная версия с корректным отображением сезонов 65)
 (function () {
     'use strict';
 
@@ -195,6 +195,7 @@
         var destroyed = false;
         var pendingRequests = [];
         var isFiltering = false;
+        var savedSeasons = [];
 
         function cancelPendingRequests() {
             pendingRequests.forEach(function(req) {
@@ -681,6 +682,7 @@
             };
             premium_cache = {};
             voice_list_current = [];
+            savedSeasons = [];
             component.loading(true);
             getEpisodes(success);
             component.saveChoice(choice);
@@ -910,6 +912,9 @@
                 if (!extract.season.length && defSeason) {
                     extract.season.push(defSeason);
                 }
+                // Сохраняем список сезонов
+                savedSeasons = extract.season.slice();
+                
                 var episodes = str.match(/(<div id="simple-episodes-tabs".*?<\/div>)/);
                 if (episodes) {
                     var _select2 = $(episodes[1]);
@@ -1124,9 +1129,12 @@
                 return is_prem ? '⭐ ' + v.name : v.name;
             });
 
+            // Используем сохраненный список сезонов, если он есть
+            var seasons = savedSeasons.length ? savedSeasons : extract.season;
+            
             filter_items = {
-                season: extract.season.map(function (s) { return s.name; }),
-                season_id: extract.season.map(function (s) { return s.id; }),
+                season: seasons.map(function (s) { return s.name; }),
+                season_id: seasons.map(function (s) { return s.id; }),
                 voice: voice_list
             };
             
@@ -1229,7 +1237,9 @@
             if (extract.is_series) {
                 var season_name = filter_items.season[choice.season];
                 var season_id;
-                extract.season.forEach(function (season) {
+                // Используем сохраненный список сезонов
+                var seasons = savedSeasons.length ? savedSeasons : extract.season;
+                seasons.forEach(function (season) {
                     if (season.name == season_name) season_id = season.id;
                 });
                 var voice = filter_items.voice[choice.voice];
