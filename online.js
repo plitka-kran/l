@@ -1,4 +1,4 @@
-// Online Mod (оптимизированная версия с сохранением корректной работы 63)
+// Online Mod (исправленная версия с корректной работой сезонов и премиум 64)
 (function () {
     'use strict';
 
@@ -194,6 +194,7 @@
         var render_generation = 0;
         var destroyed = false;
         var pendingRequests = [];
+        var isFiltering = false;
 
         function cancelPendingRequests() {
             pendingRequests.forEach(function(req) {
@@ -204,6 +205,15 @@
 
         function premiumCacheKey(voice_id, season_id) {
             return (extract.film_id || '') + '_' + voice_id + '_' + (season_id || '0');
+        }
+
+        function clearPremiumCacheForSeason(season_id) {
+            var keys = Object.keys(premium_cache);
+            keys.forEach(function(key) {
+                if (key.indexOf('_' + season_id) !== -1 || key.endsWith('_' + season_id)) {
+                    delete premium_cache[key];
+                }
+            });
         }
 
         function checkErrorForm(str) {
@@ -670,26 +680,37 @@
                 season_id: ''
             };
             premium_cache = {};
+            voice_list_current = [];
             component.loading(true);
             getEpisodes(success);
             component.saveChoice(choice);
         };
 
         this.filter = function (type, a, b) {
+            if (isFiltering) return;
+            isFiltering = true;
+            
             choice[a.stype] = b.index;
             if (a.stype == 'voice') {
                 var raw_name = filter_items.voice[b.index] || '';
                 choice.voice_name = raw_name.replace(/^⭐\s*/, '');
             }
-            if (a.stype == 'season') choice.season_id = filter_items.season_id[b.index];
+            if (a.stype == 'season') {
+                choice.season_id = filter_items.season_id[b.index];
+                // Очищаем кэш премиум для нового сезона
+                clearPremiumCacheForSeason(choice.season_id);
+                // Очищаем voice_list_current чтобы перезагрузить переводы для нового сезона
+                voice_list_current = [];
+            }
             
             component.reset();
             component.loading(true);
-            premium_cache = {};
             render_generation++;
 
             getEpisodes(function () {
-                checkPremiumAndRender(true);
+                checkPremiumAndRender(true, function() {
+                    isFiltering = false;
+                });
             });
 
             component.saveChoice(choice);
@@ -738,7 +759,10 @@
         }
 
         function checkPremiumAndRender(force, onDone) {
-            if (destroyed) return;
+            if (destroyed) {
+                if (onDone) onDone();
+                return;
+            }
             
             var my_gen = ++render_generation;
             var voices_source = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
@@ -748,6 +772,7 @@
                 component.loading(true);
                 var cancelCheck = checkAllPremium(voice_ids, currentSeasonId(), function (results) {
                     if (destroyed || my_gen !== render_generation) {
+                        if (onDone) onDone();
                         return;
                     }
                     
@@ -795,7 +820,7 @@
             var others = extract.season
                 .map(function (s) { return s.id; })
                 .filter(function (id) { return id != current; })
-                .slice(0, 12);
+                .slice(0, 8);
 
             var i = 0;
             function next() {
@@ -811,7 +836,7 @@
                 });
             }
 
-            setTimeout(next, 800);
+            setTimeout(next, 500);
         }
 
         function success() {
@@ -1001,6 +1026,21 @@
             var done = 0;
             
             if (!total) {
+                callback();
+                return;
+            }
+
+            // Проверяем, есть ли уже загруженные данные для этого сезона
+            var hasData = false;
+            voices.forEach(function(v) {
+                var key = v.id + '::' + (season_id || '');
+                if (extract.voice_data[key]) {
+                    hasData = true;
+                }
+            });
+
+            // Если данные уже есть - сразу вызываем callback
+            if (hasData) {
                 callback();
                 return;
             }
