@@ -1,4 +1,4 @@
-// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 31)
+// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 32)
 
 (function () {
     'use strict';
@@ -169,6 +169,9 @@
         };
         var error_message = '';
         var premium_cache = {}; // Кеш премиум-статуса (быстрый, живёт в рамках текущего экземпляра)
+        var render_generation = 0; // Счётчик "поколений" рендера — защита от гонки:
+        // если пользователь быстро переключает сезон/озвучку, старый (более
+        // ранний) сетевой ответ не должен перетереть уже отрисованный новый выбор.
 
         // Постоянный кэш премиум-статуса — переживает выход в меню и повторное
         // открытие карточки (когда этот объект пересоздаётся заново), поэтому
@@ -314,7 +317,7 @@
                     checked = total;
                     callback(results);
                 }
-            }, 6000);
+            }, 8000);
 
             var current_season_id = extract.is_series ? (choice.season_id || (extract.season && extract.season[choice.season] ? extract.season[choice.season].id : (extract.season && extract.season.length > 0 ? extract.season[0].id : 1))) : null;
 
@@ -698,12 +701,14 @@
         // «протухнуть», и переключение любого другого параметра фильтра
         // отдаст премиум-контент без активной подписки.
         function checkPremiumAndRender(force) {
+            var my_gen = ++render_generation;
             var voices_source = extract.is_series && voice_list_current.length ? voice_list_current : extract.voice;
             var voice_ids = voices_source.map(function (v) { return v.id; });
 
             if (voice_ids.length > 0) {
                 component.loading(true);
                 checkAllPremium(voice_ids, function (results) {
+                    if (my_gen !== render_generation) return; // отменено более новым выбором фильтра
                     component.loading(false);
                     var sorted = sortVoicesByPremium(voices_source, results);
                     if (extract.is_series && voice_list_current.length) voice_list_current = sorted;
