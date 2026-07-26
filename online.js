@@ -1,4 +1,4 @@
-// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 41)
+// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 42)
 
 (function () {
     'use strict';
@@ -296,10 +296,17 @@
             // при первом автоматическом открытии (пока соединение не "прогрето").
             var fallbackTimer = setTimeout(function() {
                 if (checked < total) {
+                    var unfinished = voice_ids.filter(function (id) {
+                        return results[id] === undefined;
+                    });
                     checked = total;
+                    // Помечаем, кто не успел ответить, чтобы можно было
+                    // тихо перепроверить именно их позже — не кэшируя
+                    // false как достоверный факт (см. finish() выше).
+                    results.__timedOut = unfinished;
                     callback(results);
                 }
-            }, 15000);
+            }, Math.max(15000, total * 3000));
 
             var current_season_id = season_id;
 
@@ -717,6 +724,29 @@
                     var items = filtred(results);
                     append(items);
                     if (onDone) onDone();
+
+                    // Часть переводов могла не успеть ответить за отведённое
+                    // время (см. fallbackTimer в checkAllPremium) — типично
+                    // при первом открытии ещё не посещённого сезона, когда
+                    // одновременно с проверкой премиума ещё и грузится список
+                    // серий. Такой результат не кэшируется как достоверный,
+                    // поэтому тихо перепроверяем именно их в фоне и, если
+                    // окажется премиум — обновляем уже отрисованные элементы
+                    // без необходимости вручную повторно щёлкать по сезону.
+                    if (results.__timedOut && results.__timedOut.length) {
+                        var retry_gen = my_gen;
+                        var retry_season = currentSeasonId();
+                        setTimeout(function () {
+                            if (retry_gen !== render_generation) return; // сезон/озвучка уже сменились
+                            checkAllPremium(results.__timedOut, retry_season, function (retry_results) {
+                                if (retry_gen !== render_generation) return;
+                                for (var vid in retry_results) {
+                                    if (vid === '__timedOut') continue;
+                                    if (retry_results[vid]) markPremiumDiscovered(items, vid);
+                                }
+                            }, true);
+                        }, 2500);
+                    }
                 }, force);
             } else {
                 component.loading(false);
@@ -833,38 +863,6 @@
                 if (!extract.season.length && defSeason) {
                     extract.season.push(defSeason);
                 }
-                
-                // --- ИСПРАВЛЕНИЕ: Определяем текущий сезон из URL ---
-                // Если есть сохраненный choice.season_id, используем его
-                // Иначе пытаемся определить из URL страницы
-                var current_season_from_url = null;
-                var season_match = str.match(/\/season-(\d+)/i);
-                if (season_match) {
-                    current_season_from_url = season_match[1];
-                }
-                
-                // Если в choice уже есть season_id, проверяем его корректность
-                if (choice.season_id) {
-                    var exists = extract.season.some(function(s) { return s.id == choice.season_id; });
-                    if (!exists) {
-                        choice.season_id = current_season_from_url || (extract.season.length ? extract.season[0].id : '');
-                    }
-                } else {
-                    choice.season_id = current_season_from_url || (extract.season.length ? extract.season[0].id : '');
-                }
-                
-                // Устанавливаем правильный индекс сезона
-                if (choice.season_id) {
-                    var idx = extract.season.findIndex(function(s) { return s.id == choice.season_id; });
-                    if (idx !== -1) {
-                        choice.season = idx;
-                    } else {
-                        choice.season = 0;
-                        choice.season_id = extract.season.length ? extract.season[0].id : '';
-                    }
-                }
-                // --- КОНЕЦ ИСПРАВЛЕНИЯ ---
-                
                 var episodes = str.match(/(<div id="simple-episodes-tabs".*?<\/div>)/);
                 if (episodes) {
                     var _select2 = $(episodes[1]);
