@@ -823,9 +823,9 @@
                 extract.episode.forEach(function (episode) {
                     if (episode.season_id == season_id) {
                         filtred.push({
-                            title: component.formatEpisodeTitle(episode.season_id, null, episode.name),
+                            title: component.formatEpisodeTitle(episode.season_id, null, episode.name) + (is_premium ? ' ⭐' : ''),
                             quality: '',
-                            info: ' / ' + voice_clean + (is_premium ? ' ⭐' : ''),
+                            info: ' / ' + voice_clean,
                             season: parseInt(episode.season_id),
                             episode: parseInt(episode.episode_id),
                             media: episode,
@@ -837,9 +837,9 @@
                 extract.voice.forEach(function (voice) {
                     var display_title = voice.clean_name || voice.name;
                     filtred.push({
-                        title: display_title || select_title,
+                        title: display_title + (voice.is_premium ? ' ⭐' : ''),
                         quality: '',
-                        info: voice.is_premium ? ' ⭐' : '',
+                        info: '',
                         media: voice,
                         is_premium: voice.is_premium || false
                     });
@@ -866,7 +866,6 @@
                 if (element.is_premium) {
                     item.addClass('premium');
                     item.find('.online__title').css('color', '#FFD700');
-                    item.find('.online__quality').append('<span style="color: #FFD700; margin-left: 5px;"> Premium</span>');
                 }
                 
                 var hash_file = Lampa.Utils.hash(element.season ? [element.season, element.season > 10 ? ':' : '', element.episode, object.movie.original_title, filter_items.voice[choice.voice]].join('') : object.movie.original_title + element.title);
@@ -1670,7 +1669,8 @@
 
     function resetTemplates() {
     Lampa.Template.add('online_mod', "<div class=\"online selector\">\n        <div class=\"online__body\" style=\"display: flex; align-items: center; min-height: 3.2em;\">\n            <div style=\"position: absolute;left: 0;top: 50%;transform: translateY(-50%);width: 2.4em;height: 2.4em;\">\n                <svg style=\"height: 2.4em; width:  2.4em;\" viewBox=\"0 0 128 128\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n                    <circle cx=\"64\" cy=\"64\" r=\"56\" stroke=\"white\" stroke-width=\"16\"/>\n                    <path d=\"M90.5 64.3827L50 87.7654L50 41L90.5 64.3827Z\" fill=\"white\"/>\n                </svg>\n            </div>\n            <div class=\"online__title\" style=\"padding-left: 2.8em; line-height: 1.4;\">{title}</div>\n        </div>\n    </div>");
-    Lampa.Template.add('online_mod_folder', "<div class=\"online selector\">\n        <div class=\"online__body\">\n            <div style=\"position: absolute;left: 0;top: -0.3em;width: 2.4em;height: 2.4em\">\n                <svg style=\"height: 2.4em; width:  2.4em;\" viewBox=\"0 0 128 112\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n                    <rect y=\"20\" width=\"128\" height=\"92\" rx=\"13\" fill=\"white\"/>\n                    <path d=\"M29.9963 8H98.0037C96.0446 3.3021 91.4079 0 86 0H42C36.5921 0 31.9555 3.3021 29.9963 8Z\" fill=\"white\" fill-opacity=\"0.23\"/>\n                    <rect x=\"11\" y=\"8\" width=\"106\" height=\"76\" rx=\"13\" fill=\"white\" fill-opacity=\"0.51\"/>\n                </svg>\n            </div>\n            <div class=\"online__title\" style=\"padding-left: 2.1em;\">{title}</div>\n            <div class=\"online__quality\" style=\"padding-left: 3.4em;\">{quality}{info}</div>\n        </div>\n    </div>");    }
+    Lampa.Template.add('online_mod_folder', "<div class=\"online selector\">\n        <div class=\"online__body\" style=\"display: flex; align-items: center; min-height: 3.2em;\">\n            <div style=\"position: absolute;left: 0;top: 50%;transform: translateY(-50%);width: 2.4em;height: 2.4em;\">\n                <svg style=\"height: 2.4em; width:  2.4em;\" viewBox=\"0 0 128 112\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n                    <rect y=\"20\" width=\"128\" height=\"92\" rx=\"13\" fill=\"white\"/>\n                    <path d=\"M29.9963 8H98.0037C96.0446 3.3021 91.4079 0 86 0H42C36.5921 0 31.9555 3.3021 29.9963 8Z\" fill=\"white\" fill-opacity=\"0.23\"/>\n                    <rect x=\"11\" y=\"8\" width=\"106\" height=\"76\" rx=\"13\" fill=\"white\" fill-opacity=\"0.51\"/>\n                </svg>\n            </div>\n            <div class=\"online__title\" style=\"padding-left: 2.8em; line-height: 1.4;\">{title}</div>\n            <div class=\"online__quality\" style=\"padding-left: 0.5em; opacity: 0.7;\">{quality}{info}</div>\n        </div>\n    </div>");
+    }
 
     function loadOnline(object) {
         if (online_loading) return;
