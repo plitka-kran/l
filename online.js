@@ -1,4 +1,4 @@
-// Online Mod (без прокси) с премиум-индикацией 85
+// Online Mod (без прокси) с премиум-индикацией 86
 
 (function () {
     'use strict';
@@ -856,7 +856,8 @@
                 if (element.is_premium) {
                     item.addClass('premium');
                     // Добавляем бейдж премиум
-                    item.find('.online__quality').append('<span class="premium-badge"> ⭐</span>');
+                    item.find('.online__title').css('color', '#FFD700');
+                    item.find('.online__quality').append('<span style="color: #FFD700; margin-left: 5px;"> Premium</span>');
                 }
                 
                 var hash_file = Lampa.Utils.hash(element.season ? [element.season, element.season > 10 ? ':' : '', element.episode, object.movie.original_title, filter_items.voice[choice.voice]].join('') : object.movie.original_title + element.title);
