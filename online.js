@@ -1,4 +1,4 @@
-// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 36)
+// Online Mod (без прокси, с автоматической индикацией премиум-озвучки 37)
 
 (function () {
     'use strict';
@@ -735,6 +735,7 @@
             extract.season = [];
             extract.episode = [];
             extract.voice_data = {};
+            extract.voice_season_list = {};
             extract.is_series = false;
             extract.film_id = '';
             extract.favs = '';
@@ -815,25 +816,31 @@
             if (blocked) extract.blocked = true;
         }
 
-        // Загружает (с кешированием) список сезонов/серий для ОДНОЙ озвучки.
-        function fetchVoiceData(translator_id, callback) {
-            if (extract.voice_data[translator_id]) {
-                callback(extract.voice_data[translator_id]);
+        // Загружает (с кешированием) список серий ОДНОЙ озвучки для КОНКРЕТНОГО
+        // сезона. Раньше кэш был только по id озвучки (без сезона) — из-за
+        // этого первый же загруженный сезон "прилипал" навсегда, и при
+        // переключении на другой сезон подставлялся тот же (неверный) список
+        // серий, отфильтрованный список получался пустым ("ничего нет").
+        function fetchVoiceData(translator_id, season_id, callback) {
+            var key = translator_id + '::' + (season_id || '');
+            if (extract.voice_data[key]) {
+                callback(extract.voice_data[key]);
                 return;
             }
             var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
             var postdata = 'id=' + encodeURIComponent(extract.film_id);
             postdata += '&translator_id=' + encodeURIComponent(translator_id);
             postdata += '&favs=' + encodeURIComponent(extract.favs);
+            if (season_id) postdata += '&season=' + encodeURIComponent(season_id);
             postdata += '&action=get_episodes';
 
             var req = new Lampa.Reguest();
             req.timeout(10000);
             req.silent(url, function (json) {
-                callback(parseVoiceEpisodes(json, translator_id));
+                callback(parseVoiceEpisodes(json, translator_id, key));
             }, function () {
                 var empty = { season: [], episode: [] };
-                extract.voice_data[translator_id] = empty;
+                extract.voice_data[key] = empty;
                 callback(empty);
             }, postdata, {
                 withCredentials: true,
@@ -841,7 +848,7 @@
             });
         }
 
-        function parseVoiceEpisodes(json, translator_id) {
+        function parseVoiceEpisodes(json, translator_id, key) {
             var data = { season: [], episode: [] };
             if (json && json.seasons) {
                 var select = $('<ul>' + json.seasons + '</ul>');
@@ -863,14 +870,20 @@
                     });
                 });
             }
-            extract.voice_data[translator_id] = data;
+            extract.voice_data[key] = data;
+            // Список доступных сезонов у переводчика не зависит от того, какой
+            // конкретно сезон мы запросили — сохраняем его отдельно, чтобы
+            // availableVoicesForSeason() мог проверить любую озвучку на
+            // покрытие сезона, даже если серии именно для него ещё не грузили.
+            if (data.season.length) extract.voice_season_list[translator_id] = data.season;
             return data;
         }
 
         // Догружает данные по сезонам/сериям для ВСЕХ озвучек (не только выбранной
-        // в данный момент), чтобы можно было понять, какие озвучки реально
-        // покрывают текущий сезон, и не показывать в фильтре те, что его не покрывают.
-        function ensureAllVoiceData(callback) {
+        // в данный момент) для КОНКРЕТНОГО сезона, чтобы можно было понять, какие
+        // озвучки реально покрывают текущий сезон, и не показывать в фильтре те,
+        // что его не покрывают.
+        function ensureAllVoiceData(season_id, callback) {
             var voices = extract.voice || [];
             var total = voices.length;
             var done = 0;
@@ -879,7 +892,7 @@
                 return;
             }
             voices.forEach(function (v) {
-                fetchVoiceData(v.id, function () {
+                fetchVoiceData(v.id, season_id, function () {
                     done++;
                     if (done === total) callback();
                 });
@@ -899,8 +912,8 @@
         function availableVoicesForSeason(season_id) {
             if (!season_id) return extract.voice;
             var list = extract.voice.filter(function (v) {
-                var data = extract.voice_data[v.id];
-                return data && data.season && data.season.some(function (s) { return s.id == season_id; });
+                var seasons = extract.voice_season_list[v.id];
+                return seasons && seasons.some(function (s) { return s.id == season_id; });
             });
             return list.length ? list : extract.voice;
         }
@@ -911,12 +924,15 @@
                 return;
             }
 
-            ensureAllVoiceData(function () {
-                voice_list_current = availableVoicesForSeason(currentSeasonId());
+            var season_id = currentSeasonId();
+
+            ensureAllVoiceData(season_id, function () {
+                voice_list_current = availableVoicesForSeason(season_id);
                 filterVoice();
 
                 var selected = voice_list_current[choice.voice];
-                var data = selected && extract.voice_data[selected.id];
+                var key = selected ? (selected.id + '::' + (season_id || '')) : null;
+                var data = key && extract.voice_data[key];
                 extract.episode = (data && data.episode) || [];
 
                 call();
