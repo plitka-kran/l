@@ -167,7 +167,6 @@
             season_id: ''
         };
         var error_message = '';
-        var isFiltering = false;
 
         function checkErrorForm(str) {
             var login_form = str.match(/<form id="check-form" class="check-form" method="post" action="\/ajax\/login\/">/);
@@ -490,18 +489,11 @@
             if (a.stype == 'season') {
                 choice.season = b.index;
                 choice.season_id = filter_items.season_id[b.index];
-                // При смене сезона сбрасываем голос на первый доступный
-                var available_voices = getAvailableVoicesForSeason(choice.season_id);
-                if (available_voices && available_voices.length) {
-                    choice.voice = 0;
-                    choice.voice_name = available_voices[0].name;
-                }
             }
             if (a.stype == 'voice') {
                 var current_voices = getAvailableVoicesForSeason(choice.season_id);
                 if (current_voices[b.index]) {
                     choice.voice_name = current_voices[b.index].name;
-                    choice.voice = b.index;
                 }
             }
             component.reset();
@@ -537,7 +529,6 @@
 
         function success() {
             component.loading(false);
-            // Принудительно обновляем фильтр после загрузки всех данных
             filter();
             append(filtred());
         }
@@ -701,11 +692,7 @@
                 function checkDone() {
                     pending++;
                     if (pending >= total) {
-                        // Данные загружены - переприменяем фильтр
-                        if (!isFiltering) {
-                            filter();
-                        }
-                        if (call) call();
+                        call();
                     }
                 }
 
@@ -724,8 +711,6 @@
                             extractEpisodes(json, translator_id);
                             checkDone();
                         }, function () {
-                            // При ошибке всё равно считаем, что данные загружены
-                            extract.voice_data[translator_id] = { season: [], episode: [] };
                             checkDone();
                         }, postdata, {
                             withCredentials: true,
@@ -735,99 +720,71 @@
                 });
                 return;
             }
-            if (call) call();
+            call();
         }
 
         function getAvailableVoicesForSeason(season_id) {
-            if (!season_id) return extract.voice.slice();
-            var available = [];
-            extract.voice.forEach(function (v) {
+            if (!season_id) return extract.voice;
+            return extract.voice.filter(function (v) {
                 var v_data = extract.voice_data[v.id];
-                // Если данные ещё не загружены - считаем перевод доступным (временно)
-                if (!v_data) {
-                    available.push(v);
-                    return;
-                }
-                if (!v_data.season || !v_data.season.length) {
-                    available.push(v);
-                    return;
-                }
-                if (v_data.season.some(function (s) { return s.id == season_id; })) {
-                    available.push(v);
-                }
+                // Данные по этому переводу ещё не подгружены (например, сетевой
+                // запрос в getEpisodes упал с ошибкой и voice_data не записался) —
+                // не прячем перевод совсем, чтобы не потерять его насовсем.
+                if (!v_data) return true;
+
+                // ВАЖНО: v_data.season (список вкладок сезонов из ответа сервера)
+                // оказался ненадёжным — на практике он отдаёт список сезонов
+                // ВСЕГО сериала целиком, а не те сезоны, которые реально озвучил
+                // именно этот переводчик. Поэтому по нему НЕЛЬЗЯ определять
+                // покрытие перевода — раньше это приводило к тому, что перевод,
+                // который есть только в 1 сезоне, показывался и во 2-м, и т.д.
+                //
+                // Единственный надёжный источник правды — фактический список
+                // серий этого переводчика (voice_data.episode), где у каждой
+                // серии есть свой season_id (см. также filtred(), которая
+                // использует тот же принцип для показа самих серий).
+                if (!v_data.episode || !v_data.episode.length) return true; // данных о сериях вообще нет — не прячем, похоже на сбой загрузки
+
+                return v_data.episode.some(function (ep) {
+                    return ep.season_id == season_id;
+                });
             });
-            return available.length ? available : extract.voice.slice();
         }
 
         function filter() {
-            // Проверяем, загружены ли данные для всех переводов
-            var allDataLoaded = true;
-            if (extract.is_series && extract.voice.length > 0) {
-                extract.voice.forEach(function (v) {
-                    if (!extract.voice_data[v.id]) {
-                        allDataLoaded = false;
-                    }
-                });
-            }
-            
-            // Если данные не загружены - откладываем фильтрацию
-            if (extract.is_series && !allDataLoaded) {
-                // Повторяем фильтрацию через небольшую задержку
-                setTimeout(function() {
-                    filter();
-                }, 200);
-                return;
-            }
-            
-            isFiltering = true;
-            
             if (!choice.season_id && extract.season[choice.season]) {
                 choice.season_id = extract.season[choice.season].id;
             }
-
+        
             var available_voices = getAvailableVoicesForSeason(choice.season_id);
             var voice_names = available_voices.map(function (v) { return v.name; });
-
+        
             filter_items = {
                 season: extract.season.map(function (s) { return s.name; }),
                 season_id: extract.season.map(function (s) { return s.id; }),
                 voice: voice_names
             };
-
-            if (!filter_items.season[choice.season]) {
-                choice.season = 0;
-                if (extract.season[0]) {
-                    choice.season_id = extract.season[0].id;
-                }
-            }
+        
+            if (!filter_items.season[choice.season]) choice.season = 0;
             
-            // Проверяем, доступен ли выбранный перевод для текущего сезона
             if (choice.voice_name) {
                 var inx = voice_names.indexOf(choice.voice_name);
-                if (inx !== -1) {
-                    choice.voice = inx;
-                } else {
-                    // Если перевод недоступен - сбрасываем на первый доступный
-                    choice.voice = 0;
-                    choice.voice_name = voice_names[0] || '';
-                }
+                if (inx !== -1) choice.voice = inx;
+                else choice.voice = 0;
             } else if (!filter_items.voice[choice.voice]) {
                 choice.voice = 0;
-                choice.voice_name = voice_names[0] || '';
             }
-
+        
             // Вкладка "Перевод" будет добавляться только для сериалов
             var filter_to_send = {
                 season: filter_items.season,
                 season_id: filter_items.season_id
             };
-            if (extract.is_series && filter_items.voice && filter_items.voice.length > 1) {
+            if (extract.is_series) {
                 filter_to_send.voice = filter_items.voice;
             }
-
+        
             component.filter(filter_to_send, choice);
-            
-            isFiltering = false;
         }
 
         function getStream(element, call, error) {
