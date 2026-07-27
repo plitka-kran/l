@@ -707,15 +707,20 @@
                         postdata += '&favs=' + encodeURIComponent(extract.favs);
                         postdata += '&action=get_episodes';
 
-                        network.silent(url, function (json) {
-                            extractEpisodes(json, translator_id);
-                            checkDone();
-                        }, function () {
-                            checkDone();
-                        }, postdata, {
-                            withCredentials: true,
-                            headers: headers
-                        });
+                        var fetchEpisodesForVoice = function (retry_left) {
+                            network.silent(url, function (json) {
+                                extractEpisodes(json, translator_id);
+                                checkDone();
+                            }, function () {
+                                if (retry_left > 0) fetchEpisodesForVoice(retry_left - 1);
+                                else checkDone();
+                            }, postdata, {
+                                withCredentials: true,
+                                headers: headers
+                            });
+                        };
+
+                        fetchEpisodesForVoice(1);
                     }
                 });
                 return;
