@@ -698,30 +698,26 @@
 
                 extract.voice.forEach(function (v) {
                     var translator_id = v.id;
-                    if (extract.voice_data[translator_id]) {
-                        checkDone();
-                    } else {
-                        var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
-                        var postdata = 'id=' + encodeURIComponent(extract.film_id);
-                        postdata += '&translator_id=' + encodeURIComponent(translator_id);
-                        postdata += '&favs=' + encodeURIComponent(extract.favs);
-                        postdata += '&action=get_episodes';
+                    var url = embed + 'ajax/get_cdn_series/?t=' + Date.now();
+                    var postdata = 'id=' + encodeURIComponent(extract.film_id);
+                    postdata += '&translator_id=' + encodeURIComponent(translator_id);
+                    postdata += '&favs=' + encodeURIComponent(extract.favs);
+                    postdata += '&action=get_episodes';
 
-                        var fetchEpisodesForVoice = function (retry_left) {
-                            network.silent(url, function (json) {
-                                extractEpisodes(json, translator_id);
-                                checkDone();
-                            }, function () {
-                                if (retry_left > 0) fetchEpisodesForVoice(retry_left - 1);
-                                else checkDone();
-                            }, postdata, {
-                                withCredentials: true,
-                                headers: headers
-                            });
-                        };
+                    var fetchEpisodesForVoice = function (retry_left) {
+                        network.silent(url, function (json) {
+                            extractEpisodes(json, translator_id);
+                            checkDone();
+                        }, function () {
+                            if (retry_left > 0) fetchEpisodesForVoice(retry_left - 1);
+                            else checkDone();
+                        }, postdata, {
+                            withCredentials: true,
+                            headers: headers
+                        });
+                    };
 
-                        fetchEpisodesForVoice(1);
-                    }
+                    fetchEpisodesForVoice(1);
                 });
                 return;
             }
