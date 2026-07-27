@@ -732,8 +732,11 @@
             if (!season_id) return extract.voice;
             return extract.voice.filter(function (v) {
                 var v_data = extract.voice_data[v.id];
-                if (!v_data || !v_data.season || !v_data.season.length) return true;
-                return v_data.season.some(function (s) { return s.id == season_id; });
+                // v_data.season - это общий список вкладок сезонов сериала (одинаковый у всех переводов),
+                // он не говорит, есть ли у ЭТОГО перевода серии в данном сезоне.
+                // Реальная доступность определяется по v_data.episode, где season_id проставлен для каждой серии этого перевода.
+                if (!v_data || !v_data.episode || !v_data.episode.length) return true;
+                return v_data.episode.some(function (e) { return e.season_id == season_id; });
             });
         }
 
@@ -755,8 +758,12 @@
             
             if (choice.voice_name) {
                 var inx = voice_names.indexOf(choice.voice_name);
-                if (inx !== -1) choice.voice = inx;
-                else choice.voice = 0;
+                if (inx !== -1) {
+                    choice.voice = inx;
+                } else {
+                    choice.voice = 0;
+                    choice.voice_name = ''; // невалидна для этого сезона - не тащим её дальше в другие сезоны
+                }
             } else if (!filter_items.voice[choice.voice]) {
                 choice.voice = 0;
             }
