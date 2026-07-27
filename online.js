@@ -727,8 +727,40 @@
             if (!season_id) return extract.voice;
             return extract.voice.filter(function (v) {
                 var v_data = extract.voice_data[v.id];
-                if (!v_data || !v_data.season || !v_data.season.length) return true;
-                return v_data.season.some(function (s) { return s.id == season_id; });
+                // Данные по этому переводу ещё не подгружены (например, сетевой
+                // запрос в getEpisodes упал с ошибкой и voice_data не записался) —
+                // не прячем перевод совсем, чтобы не потерять его насовсем.
+                if (!v_data) return true;
+
+                var has_season_tab = v_data.season && v_data.season.some(function (s) {
+                    return s.id == season_id;
+                });
+                if (has_season_tab) return true;
+
+                // Раньше пустой v_data.season трактовался как "доступен для
+                // любого сезона" — но пустой список вкладок сезонов у HDrezka
+                // типично означает, что у ЭТОГО переводчика только ОДИН сезон
+                // (поэтому вкладки не нужны), а вовсе не "переводчик покрывает
+                // всё". Из-за этого на других сезонах показывались переводы,
+                // которых там на самом деле нет. Проверяем по факту наличия
+                // серий этого переводчика с нужным season_id (voice_data.episode
+                // содержит серии по всем сезонам разом, см. filtred()) —
+                // это и есть реальная правда о покрытии, в отличие от списка
+                // вкладок сезонов.
+                var has_episode = v_data.episode && v_data.episode.some(function (ep) {
+                    return ep.season_id == season_id;
+                });
+                if (has_episode) return true;
+
+                // Ни вкладки, ни серии для этого сезона не найдены, но и
+                // список сезонов у переводчика пуст (не самая надёжная
+                // ситуация) — если серий у переводчика вообще нет никаких
+                // (пустой episode[] тоже), лучше не прятать его совсем,
+                // это похоже на ещё не догруженные/битые данные, а не на
+                // точно подтверждённое отсутствие перевода для сезона.
+                if (!v_data.episode || !v_data.episode.length) return true;
+
+                return false;
             });
         }
 
