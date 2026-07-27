@@ -167,6 +167,8 @@
             season_id: ''
         };
         var error_message = '';
+        var isFiltering = false;
+        var dataLoaded = false;
 
         function checkErrorForm(str) {
             var login_form = str.match(/<form id="check-form" class="check-form" method="post" action="\/ajax\/login\/">/);
@@ -480,6 +482,7 @@
                 voice_name: '',
                 season_id: ''
             };
+            dataLoaded = false;
             component.loading(true);
             getEpisodes(success);
             component.saveChoice(choice);
@@ -489,11 +492,21 @@
             if (a.stype == 'season') {
                 choice.season = b.index;
                 choice.season_id = filter_items.season_id[b.index];
+                // При смене сезона сбрасываем голос на первый доступный
+                var available_voices = getAvailableVoicesForSeason(choice.season_id);
+                if (available_voices && available_voices.length) {
+                    choice.voice = 0;
+                    choice.voice_name = available_voices[0].name;
+                } else {
+                    choice.voice = 0;
+                    choice.voice_name = '';
+                }
             }
             if (a.stype == 'voice') {
                 var current_voices = getAvailableVoicesForSeason(choice.season_id);
                 if (current_voices[b.index]) {
                     choice.voice_name = current_voices[b.index].name;
+                    choice.voice = b.index;
                 }
             }
             component.reset();
@@ -529,6 +542,8 @@
 
         function success() {
             component.loading(false);
+            dataLoaded = true;
+            // Принудительно обновляем фильтр после загрузки всех данных
             filter();
             append(filtred());
         }
@@ -589,10 +604,13 @@
                         display_name += ' ⭐';
                     }
                     
+                    var translator_id = $this.attr('data-translator_id');
+                    if (!translator_id) translator_id = '0';
+                    
                     extract.voice.push({
                         name: display_name,
                         clean_name: title,
-                        id: $this.attr('data-translator_id'),
+                        id: translator_id,
                         is_camrip: $this.attr('data-camrip'),
                         is_ads: $this.attr('data-ads'),
                         is_director: $this.attr('data-director'),
@@ -609,7 +627,7 @@
                 extract.voice.push({
                     name: def_display,
                     clean_name: defVoice.name,
-                    id: defVoice.id,
+                    id: defVoice.id || '0',
                     is_premium: defVoice.is_premium || false
                 });
             }
@@ -619,25 +637,39 @@
                 if (seasons) {
                     var _select = $(seasons[1]);
                     $('.b-simple_season__item', _select).each(function () {
-                        extract.season.push({
-                            name: $(this).text(),
-                            id: $(this).attr('data-tab_id')
-                        });
+                        var season_id = $(this).attr('data-tab_id');
+                        if (!season_id) season_id = $(this).attr('data-season_id');
+                        if (!season_id) season_id = $(this).text().match(/\d+/);
+                        if (season_id) {
+                            extract.season.push({
+                                name: $(this).text().trim(),
+                                id: season_id.toString()
+                            });
+                        }
                     });
                 }
                 if (!extract.season.length && defSeason) {
                     extract.season.push(defSeason);
                 }
                 
+                // Сортируем сезоны по номеру
+                extract.season.sort(function(a, b) { 
+                    return parseInt(a.id) - parseInt(b.id); 
+                });
+                
                 var episodes = str.match(/(<div id="simple-episodes-tabs".*?<\/div>)/);
                 if (episodes) {
                     var _select2 = $(episodes[1]);
                     $('.b-simple_episode__item', _select2).each(function () {
-                        extract.episode.push({
-                            name: $(this).text(),
-                            season_id: $(this).attr('data-season_id'),
-                            episode_id: $(this).attr('data-episode_id')
-                        });
+                        var season_id = $(this).attr('data-season_id');
+                        var episode_id = $(this).attr('data-episode_id');
+                        if (season_id && episode_id) {
+                            extract.episode.push({
+                                name: $(this).text().trim(),
+                                season_id: season_id,
+                                episode_id: episode_id
+                            });
+                        }
                     });
                 }
                 if (!extract.episode.length && defEpisode) {
@@ -655,31 +687,56 @@
         function extractEpisodes(json, translator_id) {
             var data = { season: [], episode: [] };
             if (json && json.seasons) {
-                var select = $('<ul>' + json.seasons + '</ul>');
-                $('.b-simple_season__item', select).each(function () {
-                    var s_item = {
-                        name: $(this).text(),
-                        id: $(this).attr('data-tab_id')
-                    };
-                    data.season.push(s_item);
+                try {
+                    var select = $('<ul>' + json.seasons + '</ul>');
+                    $('.b-simple_season__item', select).each(function () {
+                        var season_id = $(this).attr('data-tab_id');
+                        if (!season_id) season_id = $(this).attr('data-season_id');
+                        if (!season_id) {
+                            var text = $(this).text().trim();
+                            var match = text.match(/\d+/);
+                            if (match) season_id = match[0];
+                        }
+                        if (season_id) {
+                            var s_item = {
+                                name: $(this).text().trim(),
+                                id: season_id.toString()
+                            };
+                            data.season.push(s_item);
 
-                    var exists = extract.season.some(function(s) { return s.id == s_item.id; });
-                    if (!exists) {
-                        extract.season.push(s_item);
-                    }
-                });
-                extract.season.sort(function(a, b) { return parseInt(a.id) - parseInt(b.id); });
+                            var exists = extract.season.some(function(s) { 
+                                return s.id == s_item.id; 
+                            });
+                            if (!exists) {
+                                extract.season.push(s_item);
+                            }
+                        }
+                    });
+                    extract.season.sort(function(a, b) { 
+                        return parseInt(a.id) - parseInt(b.id); 
+                    });
+                } catch(e) {
+                    // Ошибка парсинга сезонов
+                }
             }
             if (json && json.episodes) {
-                var _select3 = $('<div>' + json.episodes + '</div>');
-                $('.b-simple_episode__item', _select3).each(function () {
-                    data.episode.push({
-                        name: $(this).text(),
-                        translator_id: translator_id,
-                        season_id: $(this).attr('data-season_id'),
-                        episode_id: $(this).attr('data-episode_id')
+                try {
+                    var _select3 = $('<div>' + json.episodes + '</div>');
+                    $('.b-simple_episode__item', _select3).each(function () {
+                        var season_id = $(this).attr('data-season_id');
+                        var episode_id = $(this).attr('data-episode_id');
+                        if (season_id && episode_id) {
+                            data.episode.push({
+                                name: $(this).text().trim(),
+                                translator_id: translator_id,
+                                season_id: season_id,
+                                episode_id: episode_id
+                            });
+                        }
                     });
-                });
+                } catch(e) {
+                    // Ошибка парсинга эпизодов
+                }
             }
             extract.voice_data[translator_id] = data;
         }
@@ -692,7 +749,11 @@
                 function checkDone() {
                     pending++;
                     if (pending >= total) {
-                        call();
+                        // Данные загружены - переприменяем фильтр
+                        if (!isFiltering) {
+                            filter();
+                        }
+                        if (call) call();
                     }
                 }
 
@@ -711,6 +772,8 @@
                             extractEpisodes(json, translator_id);
                             checkDone();
                         }, function () {
+                            // При ошибке всё равно считаем, что данные загружены
+                            extract.voice_data[translator_id] = { season: [], episode: [] };
                             checkDone();
                         }, postdata, {
                             withCredentials: true,
@@ -720,71 +783,120 @@
                 });
                 return;
             }
-            call();
+            dataLoaded = true;
+            if (call) call();
         }
 
         function getAvailableVoicesForSeason(season_id) {
-            if (!season_id) return extract.voice;
-            return extract.voice.filter(function (v) {
+            if (!season_id) return extract.voice.slice();
+            var available = [];
+            var season_id_str = season_id.toString();
+            
+            extract.voice.forEach(function (v) {
                 var v_data = extract.voice_data[v.id];
-                // Данные по этому переводу ещё не подгружены (например, сетевой
-                // запрос в getEpisodes упал с ошибкой и voice_data не записался) —
-                // не прячем перевод совсем, чтобы не потерять его насовсем.
-                if (!v_data) return true;
-
-                // ВАЖНО: v_data.season (список вкладок сезонов из ответа сервера)
-                // оказался ненадёжным — на практике он отдаёт список сезонов
-                // ВСЕГО сериала целиком, а не те сезоны, которые реально озвучил
-                // именно этот переводчик. Поэтому по нему НЕЛЬЗЯ определять
-                // покрытие перевода — раньше это приводило к тому, что перевод,
-                // который есть только в 1 сезоне, показывался и во 2-м, и т.д.
-                //
-                // Единственный надёжный источник правды — фактический список
-                // серий этого переводчика (voice_data.episode), где у каждой
-                // серии есть свой season_id (см. также filtred(), которая
-                // использует тот же принцип для показа самих серий).
-                if (!v_data.episode || !v_data.episode.length) return true; // данных о сериях вообще нет — не прячем, похоже на сбой загрузки
-
-                return v_data.episode.some(function (ep) {
-                    return ep.season_id == season_id;
+                // Если данные ещё не загружены - считаем перевод доступным (временно)
+                if (!v_data) {
+                    available.push(v);
+                    return;
+                }
+                // Если нет данных о сезонах - считаем доступным
+                if (!v_data.season || !v_data.season.length) {
+                    available.push(v);
+                    return;
+                }
+                // Проверяем, есть ли сезон в данных перевода
+                var hasSeason = v_data.season.some(function (s) { 
+                    return s.id == season_id_str || s.id == season_id;
                 });
+                if (hasSeason) {
+                    available.push(v);
+                }
             });
+            
+            return available.length ? available : extract.voice.slice();
         }
 
         function filter() {
-            if (!choice.season_id && extract.season[choice.season]) {
-                choice.season_id = extract.season[choice.season].id;
+            // Проверяем, загружены ли данные для всех переводов
+            var allDataLoaded = true;
+            if (extract.is_series && extract.voice.length > 0) {
+                extract.voice.forEach(function (v) {
+                    if (!extract.voice_data[v.id]) {
+                        allDataLoaded = false;
+                    }
+                });
             }
-        
+            
+            // Если данные не загружены - откладываем фильтрацию
+            if (extract.is_series && !allDataLoaded) {
+                setTimeout(function() {
+                    filter();
+                }, 300);
+                return;
+            }
+            
+            isFiltering = true;
+            
+            // Убедимся что season_id установлен
+            if (!choice.season_id && extract.season.length > 0) {
+                var season_idx = choice.season || 0;
+                if (season_idx < extract.season.length) {
+                    choice.season_id = extract.season[season_idx].id;
+                } else {
+                    choice.season_id = extract.season[0].id;
+                    choice.season = 0;
+                }
+            }
+            
+            // Если выбранный сезон не существует - сбрасываем
+            if (choice.season >= extract.season.length) {
+                choice.season = 0;
+                if (extract.season.length > 0) {
+                    choice.season_id = extract.season[0].id;
+                }
+            }
+
             var available_voices = getAvailableVoicesForSeason(choice.season_id);
             var voice_names = available_voices.map(function (v) { return v.name; });
-        
+
             filter_items = {
                 season: extract.season.map(function (s) { return s.name; }),
                 season_id: extract.season.map(function (s) { return s.id; }),
                 voice: voice_names
             };
-        
-            if (!filter_items.season[choice.season]) choice.season = 0;
-            
+
+            // Проверяем, доступен ли выбранный перевод для текущего сезона
             if (choice.voice_name) {
                 var inx = voice_names.indexOf(choice.voice_name);
-                if (inx !== -1) choice.voice = inx;
-                else choice.voice = 0;
-            } else if (!filter_items.voice[choice.voice]) {
+                if (inx !== -1) {
+                    choice.voice = inx;
+                } else {
+                    // Если перевод недоступен - сбрасываем на первый доступный
+                    choice.voice = 0;
+                    choice.voice_name = voice_names[0] || '';
+                }
+            } else if (voice_names.length > 0) {
+                if (choice.voice >= voice_names.length) {
+                    choice.voice = 0;
+                }
+                choice.voice_name = voice_names[choice.voice] || voice_names[0] || '';
+            } else {
                 choice.voice = 0;
+                choice.voice_name = '';
             }
-        
+
             // Вкладка "Перевод" будет добавляться только для сериалов
             var filter_to_send = {
                 season: filter_items.season,
                 season_id: filter_items.season_id
             };
-            if (extract.is_series) {
+            if (extract.is_series && filter_items.voice && filter_items.voice.length > 1) {
                 filter_to_send.voice = filter_items.voice;
             }
-        
+
             component.filter(filter_to_send, choice);
+            
+            isFiltering = false;
         }
 
         function getStream(element, call, error) {
@@ -850,13 +962,24 @@
             var filtred = [];
             if (extract.is_series) {
                 var season_id = choice.season_id || (extract.season[choice.season] ? extract.season[choice.season].id : null);
+                if (!season_id && extract.season.length > 0) {
+                    season_id = extract.season[0].id;
+                    choice.season_id = season_id;
+                }
+                
                 var available_voices = getAvailableVoicesForSeason(season_id);
                 var voice_data = available_voices[choice.voice] || available_voices[0] || {};
                 var translator_id = voice_data.id;
                 var is_premium = voice_data.is_premium || false;
                 var voice_clean = voice_data.clean_name || voice_data.name || '';
                 
-                var ep_list = (extract.voice_data[translator_id] && extract.voice_data[translator_id].episode) ? extract.voice_data[translator_id].episode : extract.episode;
+                // Получаем список эпизодов для выбранного перевода и сезона
+                var ep_list = [];
+                if (extract.voice_data[translator_id] && extract.voice_data[translator_id].episode) {
+                    ep_list = extract.voice_data[translator_id].episode;
+                } else {
+                    ep_list = extract.episode;
+                }
 
                 ep_list.forEach(function (episode) {
                     if (episode.season_id == season_id) {
@@ -893,7 +1016,7 @@
             items.forEach(function (element) {
                 if (element.season) {
                     element.translate_episode_end = last_episode;
-                    element.translate_voice = filter_items.voice[choice.voice];
+                    element.translate_voice = filter_items.voice && filter_items.voice[choice.voice] ? filter_items.voice[choice.voice] : '';
                 }
                 var hash = Lampa.Utils.hash(element.season ? [element.season, element.season > 10 ? ':' : '', element.episode, object.movie.original_title].join('') : object.movie.original_title);
                 var view = Lampa.Timeline.view(hash);
@@ -906,7 +1029,8 @@
                     item.find('.online__quality').css('color', '#FFD700');
                 }
                 
-                var hash_file = Lampa.Utils.hash(element.season ? [element.season, element.season > 10 ? ':' : '', element.episode, object.movie.original_title, filter_items.voice[choice.voice]].join('') : object.movie.original_title + element.title);
+                var voice_part = filter_items.voice && filter_items.voice[choice.voice] ? filter_items.voice[choice.voice] : '';
+                var hash_file = Lampa.Utils.hash(element.season ? [element.season, element.season > 10 ? ':' : '', element.episode, object.movie.original_title, voice_part].join('') : object.movie.original_title + element.title);
                 element.timeline = view;
                 item.append(Lampa.Timeline.render(view));
                 if (Lampa.Timeline.details) {
