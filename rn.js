@@ -17,7 +17,7 @@
     // Список скриптов и их индивидуальные версии
     var config = {
         'online.js': '1.0.133',
-		'onlinek.js': '1.0.2',
+		'onlinek.js': '1.0.3',
         'pubtorr.js': '1.0',
         'ss.js': '1.0.3',
         'playlist.js': '1.0.33',
