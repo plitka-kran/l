@@ -7,7 +7,7 @@
   var CONFIG = {
     pluginId: 'torrent_styles_neon',
     name: 'Torrent Neon Styles',
-    version: '2.1'
+    version: '2.2'
   };
 
   // Профессиональная UI/UX палитра (Apple Dark Mode Spectrum)
@@ -127,19 +127,6 @@
       .ts-size.mid-size { color: ${COLOR.yellow} !important; border-color: rgba(255, 214, 10, 0.6) !important; box-shadow: 0 0 6px rgba(255, 214, 10, 0.25) !important; }
       .ts-size.high-size { color: ${COLOR.orange} !important; border-color: rgba(255, 159, 10, 0.6) !important; box-shadow: 0 0 6px rgba(255, 159, 10, 0.25) !important; }
       .ts-size.top-size { color: ${COLOR.red} !important; border-color: rgba(255, 69, 58, 0.6) !important; box-shadow: 0 0 8px rgba(255, 69, 58, 0.3) !important; }
-
-      /* Чистый фокус карточки без неоновых рамок */
-      .torrent-item {
-        transition: transform 0.2s cubic-bezier(0.25, 1, 0.5, 1), background-color 0.2s ease !important;
-      }
-      .torrent-item.selector.focus {
-        outline: none !important;
-        transform: scale(1.02) !important;
-        z-index: 2 !important;
-      }
-      .torrent-item.focus::after {
-        display: none !important; /* Полностью убираем обводку карточки */
-      }
     `;
 
     var style = document.createElement('style');
