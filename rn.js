@@ -18,7 +18,7 @@
     var config = {
         'online.js': '1.0.133',
         'pubtorr.js': '1.0.4',
-        'torrent_style.js': '1.0.2',
+        'torrent_style.js': '1.0.3',
         'ss.js': '1.0.3',
         'playlist.js': '1.0.33',
         'audio.js': '1.0.11'
