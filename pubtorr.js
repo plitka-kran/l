@@ -130,6 +130,14 @@
         parser_torrent_type: 'jackett'
       }
     }, {
+      id: 'JaCred_xyz',
+      name: 'Jacred.xyz',
+      settings: {
+        url: 'jacred.xyz',
+        key: '',
+        parser_torrent_type: 'jackett'
+      }
+    }, {
       id: 'JaCred_su',
       name: 'JacRed.su',
       settings: {
