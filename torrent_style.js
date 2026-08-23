@@ -7,17 +7,17 @@
   var CONFIG = {
     pluginId: 'torrent_styles_neon',
     name: 'Torrent Neon Styles',
-    version: '2.0'
+    version: '2.1'
   };
 
-  // Неоновая палитра (Apple / Cyberpunk Glow)
-  var NEON = {
-    red: '#FF3B30',
-    orange: '#FF9500',
-    yellow: '#FFCC00',
+  // Профессиональная UI/UX палитра (Apple Dark Mode Spectrum)
+  var COLOR = {
+    red: '#FF453A',
+    orange: '#FF9F0A',
+    yellow: '#FFD60A',
     green: '#30D158',
     blue: '#0A84FF',
-    cyan: '#5E5CE6'
+    cyan: '#64D2FF'
   };
 
   // Пороги значений
@@ -69,12 +69,12 @@
     blockParser();
   }
 
-  // --- Neon CSS Injection ---
+  // --- UI/UX CSS Injection ---
   function injectStyles() {
     if (document.querySelector('[data-' + CONFIG.pluginId + '-styles]')) return;
 
     var css = `
-      /* Общие стили неон-бейджей */
+      /* Идеальная вертикальная и горизонтальная центровка бейджей */
       .torrent-item__seeds > span,
       .torrent-item__bitrate > span,
       .torrent-item__grabs > span,
@@ -83,15 +83,17 @@
         align-items: center !important;
         justify-content: center !important;
         box-sizing: border-box !important;
-        min-height: 1.6em !important;
-        padding: 0.15em 0.5em !important;
-        border-radius: 0.4em !important;
-        font-weight: 800 !important;
+        height: 1.8em !important;
+        padding: 0 0.55em !important;
+        border-radius: 0.45em !important;
+        font-weight: 700 !important;
         font-size: 0.85em !important;
         line-height: 1 !important;
+        text-align: center !important;
         white-space: nowrap !important;
         font-variant-numeric: tabular-nums !important;
-        background: rgba(0, 0, 0, 0.4) !important;
+        background: rgba(15, 15, 20, 0.65) !important;
+        backdrop-filter: blur(4px) !important;
         transition: all 0.2s ease !important;
       }
 
@@ -99,34 +101,36 @@
       .torrent-item__grabs, 
       .torrent-item__seeds {
         margin-right: 0.5em !important;
+        display: inline-flex !important;
+        align-items: center !important;
       }
 
-      /* Функция генерации неона: цвет, граница, подсвечивание текста и фоновая тень */
+      /* Мягкий неон на значениях (Soft Glow UI) */
       /* SEEDS */
-      .ts-seeds { color: ${NEON.orange} !important; border: 1px solid ${NEON.orange} !important; box-shadow: 0 0 8px ${NEON.orange}, inset 0 0 4px ${NEON.orange} !important; text-shadow: 0 0 4px ${NEON.orange} !important; }
-      .ts-seeds.low-seeds { color: ${NEON.red} !important; border-color: ${NEON.red} !important; box-shadow: 0 0 8px ${NEON.red}, inset 0 0 4px ${NEON.red} !important; text-shadow: 0 0 4px ${NEON.red} !important; }
-      .ts-seeds.good-seeds { color: ${NEON.yellow} !important; border-color: ${NEON.yellow} !important; box-shadow: 0 0 8px ${NEON.yellow}, inset 0 0 4px ${NEON.yellow} !important; text-shadow: 0 0 4px ${NEON.yellow} !important; }
-      .ts-seeds.high-seeds { color: ${NEON.green} !important; border-color: ${NEON.green} !important; box-shadow: 0 0 10px ${NEON.green}, inset 0 0 5px ${NEON.green} !important; text-shadow: 0 0 5px ${NEON.green} !important; }
+      .ts-seeds { color: ${COLOR.orange} !important; border: 1px solid rgba(255, 159, 10, 0.6) !important; box-shadow: 0 0 6px rgba(255, 159, 10, 0.25) !important; }
+      .ts-seeds.low-seeds { color: ${COLOR.red} !important; border-color: rgba(255, 69, 58, 0.6) !important; box-shadow: 0 0 6px rgba(255, 69, 58, 0.25) !important; }
+      .ts-seeds.good-seeds { color: ${COLOR.yellow} !important; border-color: rgba(255, 214, 10, 0.6) !important; box-shadow: 0 0 6px rgba(255, 214, 10, 0.25) !important; }
+      .ts-seeds.high-seeds { color: ${COLOR.green} !important; border-color: rgba(48, 209, 88, 0.6) !important; box-shadow: 0 0 8px rgba(48, 209, 88, 0.3) !important; }
 
       /* PEERS / GRABS */
-      .ts-grabs { color: ${NEON.blue} !important; border: 1px solid ${NEON.blue} !important; box-shadow: 0 0 6px ${NEON.blue} !important; }
-      .ts-grabs.high-grabs { color: ${NEON.cyan} !important; border-color: ${NEON.cyan} !important; box-shadow: 0 0 10px ${NEON.cyan}, inset 0 0 4px ${NEON.cyan} !important; text-shadow: 0 0 4px ${NEON.cyan} !important; }
+      .ts-grabs { color: ${COLOR.blue} !important; border: 1px solid rgba(10, 132, 255, 0.5) !important; box-shadow: 0 0 5px rgba(10, 132, 255, 0.2) !important; }
+      .ts-grabs.high-grabs { color: ${COLOR.cyan} !important; border-color: rgba(100, 210, 255, 0.6) !important; box-shadow: 0 0 8px rgba(100, 210, 255, 0.3) !important; }
 
       /* BITRATE */
-      .ts-bitrate { color: ${NEON.green} !important; border: 1px solid ${NEON.green} !important; box-shadow: 0 0 6px ${NEON.green} !important; }
-      .ts-bitrate.high-bitrate { color: ${NEON.yellow} !important; border-color: ${NEON.yellow} !important; box-shadow: 0 0 8px ${NEON.yellow} !important; }
-      .ts-bitrate.mid-bitrate { color: ${NEON.orange} !important; border-color: ${NEON.orange} !important; box-shadow: 0 0 8px ${NEON.orange} !important; }
-      .ts-bitrate.very-high-bitrate { color: ${NEON.red} !important; border-color: ${NEON.red} !important; box-shadow: 0 0 10px ${NEON.red}, inset 0 0 4px ${NEON.red} !important; }
+      .ts-bitrate { color: ${COLOR.green} !important; border: 1px solid rgba(48, 209, 88, 0.5) !important; box-shadow: 0 0 5px rgba(48, 209, 88, 0.2) !important; }
+      .ts-bitrate.high-bitrate { color: ${COLOR.yellow} !important; border-color: rgba(255, 214, 10, 0.6) !important; box-shadow: 0 0 6px rgba(255, 214, 10, 0.25) !important; }
+      .ts-bitrate.mid-bitrate { color: ${COLOR.orange} !important; border-color: rgba(255, 159, 10, 0.6) !important; box-shadow: 0 0 6px rgba(255, 159, 10, 0.25) !important; }
+      .ts-bitrate.very-high-bitrate { color: ${COLOR.red} !important; border-color: rgba(255, 69, 58, 0.6) !important; box-shadow: 0 0 8px rgba(255, 69, 58, 0.3) !important; }
 
       /* SIZE */
-      .ts-size { color: ${NEON.green} !important; border: 1px solid ${NEON.green} !important; box-shadow: 0 0 6px ${NEON.green} !important; }
-      .ts-size.mid-size { color: ${NEON.yellow} !important; border-color: ${NEON.yellow} !important; box-shadow: 0 0 8px ${NEON.yellow} !important; }
-      .ts-size.high-size { color: ${NEON.orange} !important; border-color: ${NEON.orange} !important; box-shadow: 0 0 8px ${NEON.orange} !important; }
-      .ts-size.top-size { color: ${NEON.red} !important; border-color: ${NEON.red} !important; box-shadow: 0 0 10px ${NEON.red}, inset 0 0 4px ${NEON.red} !important; }
+      .ts-size { color: ${COLOR.green} !important; border: 1px solid rgba(48, 209, 88, 0.5) !important; box-shadow: 0 0 5px rgba(48, 209, 88, 0.2) !important; }
+      .ts-size.mid-size { color: ${COLOR.yellow} !important; border-color: rgba(255, 214, 10, 0.6) !important; box-shadow: 0 0 6px rgba(255, 214, 10, 0.25) !important; }
+      .ts-size.high-size { color: ${COLOR.orange} !important; border-color: rgba(255, 159, 10, 0.6) !important; box-shadow: 0 0 6px rgba(255, 159, 10, 0.25) !important; }
+      .ts-size.top-size { color: ${COLOR.red} !important; border-color: rgba(255, 69, 58, 0.6) !important; box-shadow: 0 0 8px rgba(255, 69, 58, 0.3) !important; }
 
-      /* Неоновый фокус карточки */
+      /* Чистый фокус карточки без неоновых рамок */
       .torrent-item {
-        transition: transform 0.25s ease, filter 0.25s ease !important;
+        transition: transform 0.2s cubic-bezier(0.25, 1, 0.5, 1), background-color 0.2s ease !important;
       }
       .torrent-item.selector.focus {
         outline: none !important;
@@ -134,13 +138,7 @@
         z-index: 2 !important;
       }
       .torrent-item.focus::after {
-        content: '' !important;
-        position: absolute !important;
-        inset: -2px !important;
-        border-radius: 0.8em !important;
-        border: 2px solid ${NEON.cyan} !important;
-        box-shadow: 0 0 12px ${NEON.cyan}, inset 0 0 6px ${NEON.cyan} !important;
-        pointer-events: none !important;
+        display: none !important; /* Полностью убираем обводку карточки */
       }
     `;
 
@@ -231,7 +229,7 @@
         type: 'other',
         name: CONFIG.name,
         version: CONFIG.version,
-        description: 'Неоновые стили для карточек торрентов.'
+        description: 'Оптимизированные стили бейджей для торрентов.'
       };
     }
   }
