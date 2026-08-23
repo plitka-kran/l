@@ -114,30 +114,6 @@
         parser_torrent_type: 'jackett'
       }
     }, {
-      id: 'jacred_viewbox_dev',
-      name: 'Viewbox',
-      settings: {
-        url: 'jacred.viewbox.dev',
-        key: 'viewbox',
-        parser_torrent_type: 'jackett'
-      }
-    }, {
-      id: 'unknown',
-      name: 'Unknown',
-      settings: {
-        url: '188.119.113.252:9117',
-        key: '1',
-        parser_torrent_type: 'jackett'
-      }
-    }, {
-      id: 'trs_my_to',
-      name: 'Trs.my.to',
-      settings: {
-        url: 'trs.my.to:9118',
-        key: '',
-        parser_torrent_type: 'jackett'
-      }
-    }, {
       id: 'jac_black',
       name: 'jac.black',
       settings: {
