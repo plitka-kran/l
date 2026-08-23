@@ -7,7 +7,7 @@
   var CONFIG = {
     pluginId: 'torrent_styles_neon',
     name: 'Torrent Neon Styles',
-    version: '2.2'
+    version: '2.3'
   };
 
   // Профессиональная UI/UX палитра (Apple Dark Mode Spectrum)
@@ -74,7 +74,7 @@
     if (document.querySelector('[data-' + CONFIG.pluginId + '-styles]')) return;
 
     var css = `
-      /* Идеальная вертикальная и горизонтальная центровка бейджей */
+      /* Прозрачные бейджи с точной центровкой */
       .torrent-item__seeds > span,
       .torrent-item__bitrate > span,
       .torrent-item__grabs > span,
@@ -92,8 +92,7 @@
         text-align: center !important;
         white-space: nowrap !important;
         font-variant-numeric: tabular-nums !important;
-        background: rgba(15, 15, 20, 0.65) !important;
-        backdrop-filter: blur(4px) !important;
+        background: transparent !important;
         transition: all 0.2s ease !important;
       }
 
@@ -105,28 +104,28 @@
         align-items: center !important;
       }
 
-      /* Мягкий неон на значениях (Soft Glow UI) */
+      /* Прозрачный неон (Transparent Soft Glow) */
       /* SEEDS */
-      .ts-seeds { color: ${COLOR.orange} !important; border: 1px solid rgba(255, 159, 10, 0.6) !important; box-shadow: 0 0 6px rgba(255, 159, 10, 0.25) !important; }
-      .ts-seeds.low-seeds { color: ${COLOR.red} !important; border-color: rgba(255, 69, 58, 0.6) !important; box-shadow: 0 0 6px rgba(255, 69, 58, 0.25) !important; }
-      .ts-seeds.good-seeds { color: ${COLOR.yellow} !important; border-color: rgba(255, 214, 10, 0.6) !important; box-shadow: 0 0 6px rgba(255, 214, 10, 0.25) !important; }
-      .ts-seeds.high-seeds { color: ${COLOR.green} !important; border-color: rgba(48, 209, 88, 0.6) !important; box-shadow: 0 0 8px rgba(48, 209, 88, 0.3) !important; }
+      .ts-seeds { color: ${COLOR.orange} !important; border: 1px solid rgba(255, 159, 10, 0.7) !important; box-shadow: 0 0 6px rgba(255, 159, 10, 0.25) !important; }
+      .ts-seeds.low-seeds { color: ${COLOR.red} !important; border-color: rgba(255, 69, 58, 0.7) !important; box-shadow: 0 0 6px rgba(255, 69, 58, 0.25) !important; }
+      .ts-seeds.good-seeds { color: ${COLOR.yellow} !important; border-color: rgba(255, 214, 10, 0.7) !important; box-shadow: 0 0 6px rgba(255, 214, 10, 0.25) !important; }
+      .ts-seeds.high-seeds { color: ${COLOR.green} !important; border-color: rgba(48, 209, 88, 0.7) !important; box-shadow: 0 0 8px rgba(48, 209, 88, 0.3) !important; }
 
       /* PEERS / GRABS */
-      .ts-grabs { color: ${COLOR.blue} !important; border: 1px solid rgba(10, 132, 255, 0.5) !important; box-shadow: 0 0 5px rgba(10, 132, 255, 0.2) !important; }
-      .ts-grabs.high-grabs { color: ${COLOR.cyan} !important; border-color: rgba(100, 210, 255, 0.6) !important; box-shadow: 0 0 8px rgba(100, 210, 255, 0.3) !important; }
+      .ts-grabs { color: ${COLOR.blue} !important; border: 1px solid rgba(10, 132, 255, 0.6) !important; box-shadow: 0 0 5px rgba(10, 132, 255, 0.2) !important; }
+      .ts-grabs.high-grabs { color: ${COLOR.cyan} !important; border-color: rgba(100, 210, 255, 0.7) !important; box-shadow: 0 0 8px rgba(100, 210, 255, 0.3) !important; }
 
       /* BITRATE */
-      .ts-bitrate { color: ${COLOR.green} !important; border: 1px solid rgba(48, 209, 88, 0.5) !important; box-shadow: 0 0 5px rgba(48, 209, 88, 0.2) !important; }
-      .ts-bitrate.high-bitrate { color: ${COLOR.yellow} !important; border-color: rgba(255, 214, 10, 0.6) !important; box-shadow: 0 0 6px rgba(255, 214, 10, 0.25) !important; }
-      .ts-bitrate.mid-bitrate { color: ${COLOR.orange} !important; border-color: rgba(255, 159, 10, 0.6) !important; box-shadow: 0 0 6px rgba(255, 159, 10, 0.25) !important; }
-      .ts-bitrate.very-high-bitrate { color: ${COLOR.red} !important; border-color: rgba(255, 69, 58, 0.6) !important; box-shadow: 0 0 8px rgba(255, 69, 58, 0.3) !important; }
+      .ts-bitrate { color: ${COLOR.green} !important; border: 1px solid rgba(48, 209, 88, 0.6) !important; box-shadow: 0 0 5px rgba(48, 209, 88, 0.2) !important; }
+      .ts-bitrate.high-bitrate { color: ${COLOR.yellow} !important; border-color: rgba(255, 214, 10, 0.7) !important; box-shadow: 0 0 6px rgba(255, 214, 10, 0.25) !important; }
+      .ts-bitrate.mid-bitrate { color: ${COLOR.orange} !important; border-color: rgba(255, 159, 10, 0.7) !important; box-shadow: 0 0 6px rgba(255, 159, 10, 0.25) !important; }
+      .ts-bitrate.very-high-bitrate { color: ${COLOR.red} !important; border-color: rgba(255, 69, 58, 0.7) !important; box-shadow: 0 0 8px rgba(255, 69, 58, 0.3) !important; }
 
       /* SIZE */
-      .ts-size { color: ${COLOR.green} !important; border: 1px solid rgba(48, 209, 88, 0.5) !important; box-shadow: 0 0 5px rgba(48, 209, 88, 0.2) !important; }
-      .ts-size.mid-size { color: ${COLOR.yellow} !important; border-color: rgba(255, 214, 10, 0.6) !important; box-shadow: 0 0 6px rgba(255, 214, 10, 0.25) !important; }
-      .ts-size.high-size { color: ${COLOR.orange} !important; border-color: rgba(255, 159, 10, 0.6) !important; box-shadow: 0 0 6px rgba(255, 159, 10, 0.25) !important; }
-      .ts-size.top-size { color: ${COLOR.red} !important; border-color: rgba(255, 69, 58, 0.6) !important; box-shadow: 0 0 8px rgba(255, 69, 58, 0.3) !important; }
+      .ts-size { color: ${COLOR.green} !important; border: 1px solid rgba(48, 209, 88, 0.6) !important; box-shadow: 0 0 5px rgba(48, 209, 88, 0.2) !important; }
+      .ts-size.mid-size { color: ${COLOR.yellow} !important; border-color: rgba(255, 214, 10, 0.7) !important; box-shadow: 0 0 6px rgba(255, 214, 10, 0.25) !important; }
+      .ts-size.high-size { color: ${COLOR.orange} !important; border-color: rgba(255, 159, 10, 0.7) !important; box-shadow: 0 0 6px rgba(255, 159, 10, 0.25) !important; }
+      .ts-size.top-size { color: ${COLOR.red} !important; border-color: rgba(255, 69, 58, 0.7) !important; box-shadow: 0 0 8px rgba(255, 69, 58, 0.3) !important; }
     `;
 
     var style = document.createElement('style');
