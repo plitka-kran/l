@@ -258,11 +258,11 @@
         var protocol = hasProtocol ? '' : getProtocol();
         var apiKey = settings.key || '';
         var basePath = parserType === 'prowlarr' ? '/api/v1/health' : '/api/v2.0/indexers/status:healthy/results';
-        return "".concat(protocol).concat(settings.url).concat(basePath, "?apikey=").concat(apiKey);
+        return protocol + settings.url + basePath + '?apikey=' + apiKey;
     }
 
     function cacheKey(parserId, url) {
-        return "".concat(parserId, "::").concat(url);
+        return parserId + '::' + url;
     }
 
     function statusFromXhr(xhr) {
@@ -380,7 +380,7 @@
         var mainLabel = mainCurrent ? mainCurrent.name : Lampa.Lang.translate('lme_parser_none');
         var extraLabel = extraCurrent ? extraCurrent.name : Lampa.Lang.translate('lme_parser_none');
         
-        var text = "".concat(Lampa.Lang.translate('lme_parser_selected'), ": \u041E\u0441\u043D\u043E\u0432\u043D\u043E\u0439 - ").concat(mainLabel, ", \u0414\u043E\u043F - ").concat(extraLabel);
+        var text = Lampa.Lang.translate('lme_parser_selected') + ': Основной - ' + mainLabel + ', Доп - ' + extraLabel;
         $('.pubtorr-parser-selected').text(text);
     }
 
@@ -412,12 +412,17 @@
     function applySelection(list, selectedId) {
         list.find('.pubtorr-parser-modal__item').removeClass('is-selected');
         if (selectedId !== NO_PARSER_ID) {
-            list.find("[data-parser-id=\"".concat(selectedId, "\"]")).addClass('is-selected');
+            list.find('[data-parser-id="' + selectedId + '"]').addClass('is-selected');
         }
     }
 
     function buildItem(parser) {
-        var item = $("<div class=\"pubtorr-parser-modal__item selector status-unknown\" data-parser-id=\"".concat(parser.id, "\">\n            <div class=\"pubtorr-parser-modal__info\">\n                <div class=\"pubtorr-parser-modal__name\">").concat(parser.name, "</div>\n            </div>\n            <div class=\"pubtorr-parser-modal__status\"></div>\n        </div>"));
+        var item = $('<div class="pubtorr-parser-modal__item selector status-unknown" data-parser-id="' + parser.id + '">' +
+            '<div class="pubtorr-parser-modal__info">' +
+                '<div class="pubtorr-parser-modal__name">' + parser.name + '</div>' +
+            '</div>' +
+            '<div class="pubtorr-parser-modal__status"></div>' +
+        '</div>');
         applyStatus(item, STATUS.unknown);
         return item;
     }
@@ -433,7 +438,7 @@
         var mainLabel = mainCurrent ? mainCurrent.name : Lampa.Lang.translate('lme_parser_none');
         var extraLabel = extraCurrent ? extraCurrent.name : Lampa.Lang.translate('lme_parser_none');
         
-        wrapper.find('.pubtorr-parser-modal__current-value').text("\u041E\u0441\u043D: ".concat(mainLabel, " | \u0414\u043E\u043F: ").concat(extraLabel));
+        wrapper.find('.pubtorr-parser-modal__current-value').text('Осн: ' + mainLabel + ' | Доп: ' + extraLabel);
     }
 
     function openParserModal() {
@@ -444,9 +449,30 @@
         
         var mainId = getSelectedParserId('main');
         var extraId = getSelectedParserId('extra');
-        var selectedType = 'main'; // По умолчанию выбираем основной
+        var selectedType = 'main';
         
-        var modal = $("<div class=\"pubtorr-parser-modal\">\n            <div class=\"pubtorr-parser-modal__head\">\n                <div class=\"pubtorr-parser-modal__current\">\n                    <div class=\"pubtorr-parser-modal__current-label\">".concat(Lampa.Lang.translate('lme_parser_current'), "</div>\n                    <div class=\"pubtorr-parser-modal__current-value\"></div>\n                </div>\n                <div class=\"pubtorr-parser-modal__type-selector\">\n                    <div class=\"pubtorr-parser-modal__type-btn selector ".concat(selectedType === 'main' ? 'active' : '', "\" data-type=\"main\">\u041E\u0441\u043D\u043E\u0432\u043D\u043E\u0439</div>\n                    <div class=\"pubtorr-parser-modal__type-btn selector ".concat(selectedType === 'extra' ? 'active' : '', "\" data-type=\"extra\">\u0414\u043E\u043F\u043E\u043B\u043D\u0438\u0442\u0435\u043B\u044C\u043D\u044B\u0439</div>\n                </div>\n                <div class=\"pubtorr-parser-modal__actions\">\n                    <div class=\"pubtorr-parser-modal__action selector\">").concat(Lampa.Lang.translate('lme_parser_refresh'), "</div>\n                </div>\n            </div>\n            <div class=\"pubtorr-parser-modal__list\"></div>\n            <div class=\"pubtorr-parser-modal__legend\">\n                <div class=\"pubtorr-parser-modal__legend-item status-ok\">").concat(Lampa.Lang.translate('lme_parser_status_ok'), "</div>\n                <div class=\"pubtorr-parser-modal__legend-item status-auth-error\">").concat(Lampa.Lang.translate('lme_parser_status_auth'), "</div>\n                <div class=\"pubtorr-parser-modal__legend-item status-network-error\">").concat(Lampa.Lang.translate('lme_parser_status_network'), "</div>\n                <div class=\"pubtorr-parser-modal__legend-item status-unknown\">").concat(Lampa.Lang.translate('lme_parser_status_unknown'), "</div>\n            </div>\n        </div>"));
+        var modal = $('<div class="pubtorr-parser-modal">' +
+            '<div class="pubtorr-parser-modal__head">' +
+                '<div class="pubtorr-parser-modal__current">' +
+                    '<div class="pubtorr-parser-modal__current-label">' + Lampa.Lang.translate('lme_parser_current') + '</div>' +
+                    '<div class="pubtorr-parser-modal__current-value"></div>' +
+                '</div>' +
+                '<div class="pubtorr-parser-modal__type-selector">' +
+                    '<div class="pubtorr-parser-modal__type-btn selector active" data-type="main">Основной</div>' +
+                    '<div class="pubtorr-parser-modal__type-btn selector" data-type="extra">Дополнительный</div>' +
+                '</div>' +
+                '<div class="pubtorr-parser-modal__actions">' +
+                    '<div class="pubtorr-parser-modal__action selector">' + Lampa.Lang.translate('lme_parser_refresh') + '</div>' +
+                '</div>' +
+            '</div>' +
+            '<div class="pubtorr-parser-modal__list"></div>' +
+            '<div class="pubtorr-parser-modal__legend">' +
+                '<div class="pubtorr-parser-modal__legend-item status-ok">' + Lampa.Lang.translate('lme_parser_status_ok') + '</div>' +
+                '<div class="pubtorr-parser-modal__legend-item status-auth-error">' + Lampa.Lang.translate('lme_parser_status_auth') + '</div>' +
+                '<div class="pubtorr-parser-modal__legend-item status-network-error">' + Lampa.Lang.translate('lme_parser_status_network') + '</div>' +
+                '<div class="pubtorr-parser-modal__legend-item status-unknown">' + Lampa.Lang.translate('lme_parser_status_unknown') + '</div>' +
+            '</div>' +
+        '</div>');
         
         var list = modal.find('.pubtorr-parser-modal__list');
         var refreshAction = modal.find('.pubtorr-parser-modal__action');
@@ -483,7 +509,6 @@
             });
         }
 
-        // Обработчики переключения типа
         typeBtns.on('hover:enter', function() {
             var type = $(this).data('type');
             selectedType = type;
@@ -492,7 +517,6 @@
             renderList(type);
         });
 
-        // Изначальный рендер
         renderList('main');
         updateCurrentLabel(modal, mainId, extraId, parsers);
 
@@ -517,7 +541,7 @@
             return;
         }
 
-        var parserItems = list.find('.pubtorr-parser-modal__item').not("[data-parser-id=\"".concat(NO_PARSER_ID, "\"]"));
+        var parserItems = list.find('.pubtorr-parser-modal__item').not('[data-parser-id="' + NO_PARSER_ID + '"]');
         
         parserItems.each(function() {
             applyStatus($(this), STATUS.checking);
@@ -553,7 +577,7 @@
             },
             field: {
                 name: Lampa.Lang.translate('lme_parser'),
-                description: "".concat(Lampa.Lang.translate('lme_parser_description'), " ").concat(parsersInfo.length, "<div class=\"pubtorr-parser-selected\"></div>")
+                description: Lampa.Lang.translate('lme_parser_description') + ' ' + parsersInfo.length + '<div class="pubtorr-parser-selected"></div>'
             },
             onChange: function() {
                 openParserModal();
@@ -592,9 +616,37 @@
 
     Lampa.Platform.tv();
 
-    // Добавляем стили для кнопок переключения
     function addStyles() {
-        var customStyles = "\n            .pubtorr-parser-modal__type-selector {\n                display: flex;\n                gap: 0.5em;\n            }\n            .pubtorr-parser-modal__type-btn {\n                padding: 0.4em 0.8em;\n                border-radius: 0.5em;\n                background: rgba(255,255,255,0.05);\n                border: 1px solid rgba(255,255,255,0.1);\n                cursor: pointer;\n                font-size: 0.9em;\n            }\n            .pubtorr-parser-modal__type-btn.active {\n                background: rgba(255,255,255,0.15);\n                border-color: var(--pubtorr-selected-border);\n            }\n            .pubtorr-parser-modal__type-btn.focus {\n                border-color: var(--pubtorr-selected-border);\n            }\n            @media(max-width:600px) {\n                .pubtorr-parser-modal__head {\n                    flex-wrap: wrap;\n                }\n                .pubtorr-parser-modal__type-selector {\n                    order: 3;\n                    width: 100%;\n                    justify-content: center;\n                }\n            }\n        ";
+        var customStyles = '' +
+            '.pubtorr-parser-modal__type-selector {' +
+                'display: flex;' +
+                'gap: 0.5em;' +
+            '}' +
+            '.pubtorr-parser-modal__type-btn {' +
+                'padding: 0.4em 0.8em;' +
+                'border-radius: 0.5em;' +
+                'background: rgba(255,255,255,0.05);' +
+                'border: 1px solid rgba(255,255,255,0.1);' +
+                'cursor: pointer;' +
+                'font-size: 0.9em;' +
+            '}' +
+            '.pubtorr-parser-modal__type-btn.active {' +
+                'background: rgba(255,255,255,0.15);' +
+                'border-color: var(--pubtorr-selected-border);' +
+            '}' +
+            '.pubtorr-parser-modal__type-btn.focus {' +
+                'border-color: var(--pubtorr-selected-border);' +
+            '}' +
+            '@media(max-width:600px) {' +
+                '.pubtorr-parser-modal__head {' +
+                    'flex-wrap: wrap;' +
+                '}' +
+                '.pubtorr-parser-modal__type-selector {' +
+                    'order: 3;' +
+                    'width: 100%;' +
+                    'justify-content: center;' +
+                '}' +
+            '}';
         
         var existingStyle = Lampa.Template.get('pubtorr_style', {}, true);
         Lampa.Template.add('pubtorr_style', existingStyle + customStyles);
@@ -603,7 +655,11 @@
     function add() {
         translate();
         
-        Lampa.Template.add('pubtorr_style', "\n            <style>\n                .pubtorr-parser-modal{--pubtorr-status-ok:#19c37d;--pubtorr-status-auth:#ff4d4f;--pubtorr-status-network:#ff4d4f;--pubtorr-status-unknown:#8c8c8c;--pubtorr-status-checking:#f5a623;--pubtorr-selected-border:#fff;display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-box-orient:vertical;-webkit-box-direction:normal;-webkit-flex-direction:column;-ms-flex-direction:column;flex-direction:column;gap:1em}.pubtorr-parser-modal__head{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-ms-flex-align:center;align-items:center;-webkit-box-pack:justify;-webkit-justify-content:space-between;-ms-flex-pack:justify;justify-content:space-between;gap:1em}.pubtorr-parser-modal__current-label{font-size:.9em;opacity:.7}.pubtorr-parser-modal__current-value{font-size:1.1em}.pubtorr-parser-modal__action{padding:.5em .9em;-webkit-border-radius:.6em;border-radius:.6em;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2)}.pubtorr-parser-modal__action.focus{border-color:var(--pubtorr-selected-border)}.pubtorr-parser-modal__list{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-box-orient:vertical;-webkit-box-direction:normal;-webkit-flex-direction:column;-ms-flex-direction:column;flex-direction:column;gap:.6em}.pubtorr-parser-modal__item{position:relative;display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-ms-flex-align:center;align-items:center;-webkit-box-pack:justify;-webkit-justify-content:space-between;-ms-flex-pack:justify;justify-content:space-between;gap:1em;padding:.8em 1em .8em 1.8em;-webkit-border-radius:.7em;border-radius:.7em;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08)}.pubtorr-parser-modal__item::before{content:'';position:absolute;left:.8em;top:50%;width:.55em;height:.55em;-webkit-border-radius:50%;border-radius:50%;background:var(--pubtorr-status-color,var(--pubtorr-status-unknown));-webkit-transform:translateY(-50%);-ms-transform:translateY(-50%);transform:translateY(-50%);-webkit-box-shadow:0 0 .6em rgba(0,0,0,0.3);box-shadow:0 0 .6em rgba(0,0,0,0.3)}.pubtorr-parser-modal__item.is-selected,.pubtorr-parser-modal__item.focus{border-color:var(--pubtorr-selected-border)}.pubtorr-parser-modal__info{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-box-orient:vertical;-webkit-box-direction:normal;-webkit-flex-direction:column;-ms-flex-direction:column;flex-direction:column;gap:.25em;min-width:0}.pubtorr-parser-modal__name{font-size:1em}.pubtorr-parser-modal__status{font-size:.8em;opacity:.7;text-align:right;-webkit-align-self:center;-ms-flex-item-align:center;align-self:center}.pubtorr-parser-modal__legend{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-flex-wrap:wrap;-ms-flex-wrap:wrap;flex-wrap:wrap;gap:.8em 1.2em;font-size:.85em;opacity:.7}.pubtorr-parser-modal__legend-item{position:relative;padding-left:1.2em}.pubtorr-parser-modal__legend-item::before{content:'';position:absolute;left:0;top:.55em;width:.5em;height:.5em;-webkit-border-radius:50%;border-radius:50%;background:var(--pubtorr-status-color,var(--pubtorr-status-unknown))}.pubtorr-parser-modal__item.status-ok,.pubtorr-parser-modal__legend-item.status-ok{--pubtorr-status-color:var(--pubtorr-status-ok)}.pubtorr-parser-modal__item.status-auth-error,.pubtorr-parser-modal__legend-item.status-auth-error{--pubtorr-status-color:var(--pubtorr-status-auth)}.pubtorr-parser-modal__item.status-network-error,.pubtorr-parser-modal__legend-item.status-network-error{--pubtorr-status-color:var(--pubtorr-status-network)}.pubtorr-parser-modal__item.status-unknown,.pubtorr-parser-modal__legend-item.status-unknown{--pubtorr-status-color:var(--pubtorr-status-unknown)}.pubtorr-parser-modal__item.status-checking{--pubtorr-status-color:var(--pubtorr-status-checking)}@media(max-width:600px){.pubtorr-parser-modal__head{-webkit-box-orient:vertical;-webkit-box-direction:normal;-webkit-flex-direction:column;-ms-flex-direction:column;flex-direction:column;-webkit-box-align:start;-webkit-align-items:flex-start;-ms-flex-align:start;align-items:flex-start}.pubtorr-parser-modal__item{-webkit-box-orient:vertical;-webkit-box-direction:normal;-webkit-flex-direction:column;-ms-flex-direction:column;flex-direction:column;-webkit-box-align:start;-webkit-align-items:flex-start;-ms-flex-align:start;align-items:flex-start}.pubtorr-parser-modal__status{text-align:left}}\n            </style>\n        ");
+        Lampa.Template.add('pubtorr_style', '' +
+            '<style>' +
+                '.pubtorr-parser-modal{--pubtorr-status-ok:#19c37d;--pubtorr-status-auth:#ff4d4f;--pubtorr-status-network:#ff4d4f;--pubtorr-status-unknown:#8c8c8c;--pubtorr-status-checking:#f5a623;--pubtorr-selected-border:#fff;display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-box-orient:vertical;-webkit-box-direction:normal;-webkit-flex-direction:column;-ms-flex-direction:column;flex-direction:column;gap:1em}.pubtorr-parser-modal__head{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-ms-flex-align:center;align-items:center;-webkit-box-pack:justify;-webkit-justify-content:space-between;-ms-flex-pack:justify;justify-content:space-between;gap:1em}.pubtorr-parser-modal__current-label{font-size:.9em;opacity:.7}.pubtorr-parser-modal__current-value{font-size:1.1em}.pubtorr-parser-modal__action{padding:.5em .9em;-webkit-border-radius:.6em;border-radius:.6em;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2)}.pubtorr-parser-modal__action.focus{border-color:var(--pubtorr-selected-border)}.pubtorr-parser-modal__list{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-box-orient:vertical;-webkit-box-direction:normal;-webkit-flex-direction:column;-ms-flex-direction:column;flex-direction:column;gap:.6em}.pubtorr-parser-modal__item{position:relative;display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-ms-flex-align:center;align-items:center;-webkit-box-pack:justify;-webkit-justify-content:space-between;-ms-flex-pack:justify;justify-content:space-between;gap:1em;padding:.8em 1em .8em 1.8em;-webkit-border-radius:.7em;border-radius:.7em;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08)}.pubtorr-parser-modal__item::before{content:\'\';position:absolute;left:.8em;top:50%;width:.55em;height:.55em;-webkit-border-radius:50%;border-radius:50%;background:var(--pubtorr-status-color,var(--pubtorr-status-unknown));-webkit-transform:translateY(-50%);-ms-transform:translateY(-50%);transform:translateY(-50%);-webkit-box-shadow:0 0 .6em rgba(0,0,0,0.3);box-shadow:0 0 .6em rgba(0,0,0,0.3)}.pubtorr-parser-modal__item.is-selected,.pubtorr-parser-modal__item.focus{border-color:var(--pubtorr-selected-border)}.pubtorr-parser-modal__info{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-box-orient:vertical;-webkit-box-direction:normal;-webkit-flex-direction:column;-ms-flex-direction:column;flex-direction:column;gap:.25em;min-width:0}.pubtorr-parser-modal__name{font-size:1em}.pubtorr-parser-modal__status{font-size:.8em;opacity:.7;text-align:right;-webkit-align-self:center;-ms-flex-item-align:center;align-self:center}.pubtorr-parser-modal__legend{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-flex-wrap:wrap;-ms-flex-wrap:wrap;flex-wrap:wrap;gap:.8em 1.2em;font-size:.85em;opacity:.7}.pubtorr-parser-modal__legend-item{position:relative;padding-left:1.2em}.pubtorr-parser-modal__legend-item::before{content:\'\';position:absolute;left:0;top:.55em;width:.5em;height:.5em;-webkit-border-radius:50%;border-radius:50%;background:var(--pubtorr-status-color,var(--pubtorr-status-unknown))}.pubtorr-parser-modal__item.status-ok,.pubtorr-parser-modal__legend-item.status-ok{--pubtorr-status-color:var(--pubtorr-status-ok)}.pubtorr-parser-modal__item.status-auth-error,.pubtorr-parser-modal__legend-item.status-auth-error{--pubtorr-status-color:var(--pubtorr-status-auth)}.pubtorr-parser-modal__item.status-network-error,.pubtorr-parser-modal__legend-item.status-network-error{--pubtorr-status-color:var(--pubtorr-status-network)}.pubtorr-parser-modal__item.status-unknown,.pubtorr-parser-modal__legend-item.status-unknown{--pubtorr-status-color:var(--pubtorr-status-unknown)}.pubtorr-parser-modal__item.status-checking{--pubtorr-status-color:var(--pubtorr-status-checking)}@media(max-width:600px){.pubtorr-parser-modal__head{-webkit-box-orient:vertical;-webkit-box-direction:normal;-webkit-flex-direction:column;-ms-flex-direction:column;flex-direction:column;-webkit-box-align:start;-webkit-align-items:flex-start;-ms-flex-align:start;align-items:flex-start}.pubtorr-parser-modal__item{-webkit-box-orient:vertical;-webkit-box-direction:normal;-webkit-flex-direction:column;-ms-flex-direction:column;flex-direction:column;-webkit-box-align:start;-webkit-align-items:flex-start;-ms-flex-align:start;align-items:flex-start}.pubtorr-parser-modal__status{text-align:left}}' +
+            '</style>'
+        );
         
         addStyles();
         $('body').append(Lampa.Template.get('pubtorr_style', {}, true));
