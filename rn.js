@@ -17,6 +17,7 @@
     // Список скриптов и их индивидуальные версии
     var config = {
         'online.js': '1.0.133',
+        'pubtorr.js': '1.0.12',
         'torrent_style.js': '1.0.6',
         'no-autostart.js': '1.0.1',
         'ss.js': '1.0.3',
