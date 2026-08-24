@@ -1,27 +1,47 @@
-// Простое отображение названия с номером серии
+// Простое добавление номера серии в панель плеера
 (function() {
     'use strict';
     
-    if (Lampa && Lampa.Player && Lampa.Player.listener) {
-        Lampa.Player.listener.follow('create', function(e) {
-            var data = e && e.data;
-            if (data && data.title) {
-                // Проверяем, есть ли номер серии
-                var hasEpisode = /\((\d+)\s*серия\)/i.test(data.title);
-                if (!hasEpisode) {
-                    // Ищем номер в других форматах
-                    var match = data.title.match(/(\d+)\s*серия/i) || 
-                               data.title.match(/S\d+E(\d+)/i) ||
-                               data.title.match(/(\d+)x\d+/);
-                    
-                    if (match && match[1]) {
-                        data.title = data.title + ' (' + match[1] + ' серия)';
-                        console.log('📺 Добавлен номер: ' + data.title);
-                    }
-                }
+    function addEpisodeToPanel() {
+        // Ищем все элементы с названием в плеере
+        var titles = document.querySelectorAll('.player-panel .title, .video-info .name, .player-video-info .title, .info .title');
+        
+        titles.forEach(function(el) {
+            var text = el.textContent || '';
+            // Если уже есть номер - пропускаем
+            if (/\(\d+\s*серия\)/i.test(text)) return;
+            
+            // Ищем номер серии
+            var match = text.match(/(\d+)\s*серия/i) || 
+                       text.match(/S\d+E(\d+)/i) ||
+                       text.match(/(\d+)x\d+/) ||
+                       text.match(/\((\d+)\)/);
+            
+            if (match && match[1]) {
+                // Убираем лишние пробелы и добавляем номер
+                var cleanTitle = text.replace(/\(\d+\)/g, '').replace(/\s+/g, ' ').trim();
+                el.textContent = cleanTitle + ' (' + match[1] + ' серия)';
+                console.log('📺 Добавлен номер в панель:', el.textContent);
             }
         });
     }
     
-    console.log('✅ Готово!');
+    // Запускаем при открытии плеера
+    if (Lampa && Lampa.Player && Lampa.Player.listener) {
+        Lampa.Player.listener.follow('create', function() {
+            setTimeout(addEpisodeToPanel, 200);
+            setTimeout(addEpisodeToPanel, 500);
+            setTimeout(addEpisodeToPanel, 1000);
+        });
+    }
+    
+    // Также запускаем по таймеру для надежности
+    setInterval(function() {
+        // Проверяем, открыт ли плеер
+        if (document.querySelector('.player-panel, .video-info')) {
+            addEpisodeToPanel();
+        }
+    }, 3000);
+    
+    console.log('✅ Скрипт для панели загружен!');
 })();
