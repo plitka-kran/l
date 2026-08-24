@@ -20,7 +20,7 @@
         'pubtorr.js': '1.0.17',
         'torrent_style.js': '1.0.6',
         'no-autostart.js': '1.0.1',
-        'nameseria.js': '1.0.1',
+        'nameseria.js': '1.0.2',
         'ss.js': '1.0.3',
         'playlist.js': '1.0.33',
         'audio.js': '1.0.11'
