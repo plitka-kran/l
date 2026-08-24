@@ -409,17 +409,19 @@
         item.find('.pubtorr-parser-modal__status').text(statusLabel(status));
     }
 
-    function applySelection(list, selectedId) {
-        list.find('.pubtorr-parser-modal__item').removeClass('is-selected');
-        if (selectedId !== NO_PARSER_ID) {
-            list.find('[data-parser-id="' + selectedId + '"]').addClass('is-selected');
-        }
-    }
-
     function buildItem(parser) {
+        var mainId = getSelectedParserId('main');
+        var extraId = getSelectedParserId('extra');
+        var isMain = parser.id === mainId;
+        var isExtra = parser.id === extraId;
+        
         var item = $('<div class="pubtorr-parser-modal__item selector status-unknown" data-parser-id="' + parser.id + '">' +
             '<div class="pubtorr-parser-modal__info">' +
                 '<div class="pubtorr-parser-modal__name">' + parser.name + '</div>' +
+                '<div class="pubtorr-parser-modal__actions">' +
+                    '<div class="pubtorr-parser-modal__btn selector ' + (isMain ? 'active-main' : '') + '" data-type="main">Основной</div>' +
+                    '<div class="pubtorr-parser-modal__btn selector ' + (isExtra ? 'active-extra' : '') + '" data-type="extra">Дополнительный</div>' +
+                '</div>' +
             '</div>' +
             '<div class="pubtorr-parser-modal__status"></div>' +
         '</div>');
@@ -449,17 +451,12 @@
         
         var mainId = getSelectedParserId('main');
         var extraId = getSelectedParserId('extra');
-        var selectedType = 'main';
         
         var modal = $('<div class="pubtorr-parser-modal">' +
             '<div class="pubtorr-parser-modal__head">' +
                 '<div class="pubtorr-parser-modal__current">' +
                     '<div class="pubtorr-parser-modal__current-label">' + Lampa.Lang.translate('lme_parser_current') + '</div>' +
                     '<div class="pubtorr-parser-modal__current-value"></div>' +
-                '</div>' +
-                '<div class="pubtorr-parser-modal__type-selector">' +
-                    '<div class="pubtorr-parser-modal__type-btn selector active" data-type="main">Основной</div>' +
-                    '<div class="pubtorr-parser-modal__type-btn selector" data-type="extra">Дополнительный</div>' +
                 '</div>' +
                 '<div class="pubtorr-parser-modal__actions">' +
                     '<div class="pubtorr-parser-modal__action selector">' + Lampa.Lang.translate('lme_parser_refresh') + '</div>' +
@@ -476,48 +473,41 @@
         
         var list = modal.find('.pubtorr-parser-modal__list');
         var refreshAction = modal.find('.pubtorr-parser-modal__action');
-        var typeBtns = modal.find('.pubtorr-parser-modal__type-btn');
         var healthEnabled = Lampa.Storage.get(HEALTH_KEY, true);
 
-        function renderList(type) {
+        function renderList() {
             list.empty();
-            var currentId = type === 'extra' ? extraId : mainId;
             
             parsers.forEach(function(parser) {
                 var item = buildItem(parser);
-                var isSelected = parser.id === currentId;
-                if (isSelected) {
-                    item.addClass('is-selected');
-                }
                 
-                item.on('hover:enter', function() {
-                    var storageKey = type === 'extra' ? STORAGE_KEY_EXTRA : STORAGE_KEY_MAIN;
-                    Lampa.Storage.set(storageKey, parser.id);
-                    applySelectedParser(parser.id, type);
-                    
-                    if (type === 'extra') {
-                        extraId = parser.id;
-                    } else {
-                        mainId = parser.id;
-                    }
-                    
-                    renderList(type);
+                // Обработчик для кнопки "Основной"
+                item.find('[data-type="main"]').on('hover:enter', function(e) {
+                    e.stopPropagation();
+                    Lampa.Storage.set(STORAGE_KEY_MAIN, parser.id);
+                    applySelectedParser(parser.id, 'main');
+                    mainId = parser.id;
+                    renderList();
                     updateCurrentLabel(modal, mainId, extraId, parsers);
                     updateSelectedLabel();
                 });
+                
+                // Обработчик для кнопки "Дополнительный"
+                item.find('[data-type="extra"]').on('hover:enter', function(e) {
+                    e.stopPropagation();
+                    Lampa.Storage.set(STORAGE_KEY_EXTRA, parser.id);
+                    applySelectedParser(parser.id, 'extra');
+                    extraId = parser.id;
+                    renderList();
+                    updateCurrentLabel(modal, mainId, extraId, parsers);
+                    updateSelectedLabel();
+                });
+                
                 list.append(item);
             });
         }
 
-        typeBtns.on('hover:enter', function() {
-            var type = $(this).data('type');
-            selectedType = type;
-            typeBtns.removeClass('active');
-            $(this).addClass('active');
-            renderList(type);
-        });
-
-        renderList('main');
+        renderList();
         updateCurrentLabel(modal, mainId, extraId, parsers);
 
         var actionableItems = list.find('.pubtorr-parser-modal__item').first();
@@ -618,34 +608,35 @@
 
     function addStyles() {
         var customStyles = '' +
-            '.pubtorr-parser-modal__type-selector {' +
+            '.pubtorr-parser-modal__actions {' +
                 'display: flex;' +
                 'gap: 0.5em;' +
             '}' +
-            '.pubtorr-parser-modal__type-btn {' +
-                'padding: 0.4em 0.8em;' +
-                'border-radius: 0.5em;' +
+            '.pubtorr-parser-modal__btn {' +
+                'padding: 0.2em 0.6em;' +
+                'border-radius: 0.3em;' +
                 'background: rgba(255,255,255,0.05);' +
                 'border: 1px solid rgba(255,255,255,0.1);' +
                 'cursor: pointer;' +
-                'font-size: 0.9em;' +
+                'font-size: 0.8em;' +
+                'display: inline-block;' +
             '}' +
-            '.pubtorr-parser-modal__type-btn.active {' +
-                'background: rgba(255,255,255,0.15);' +
+            '.pubtorr-parser-modal__btn.active-main {' +
+                'background: rgba(25, 195, 125, 0.3);' +
+                'border-color: #19c37d;' +
+            '}' +
+            '.pubtorr-parser-modal__btn.active-extra {' +
+                'background: rgba(245, 166, 35, 0.3);' +
+                'border-color: #f5a623;' +
+            '}' +
+            '.pubtorr-parser-modal__btn.focus {' +
                 'border-color: var(--pubtorr-selected-border);' +
             '}' +
-            '.pubtorr-parser-modal__type-btn.focus {' +
-                'border-color: var(--pubtorr-selected-border);' +
-            '}' +
-            '@media(max-width:600px) {' +
-                '.pubtorr-parser-modal__head {' +
-                    'flex-wrap: wrap;' +
-                '}' +
-                '.pubtorr-parser-modal__type-selector {' +
-                    'order: 3;' +
-                    'width: 100%;' +
-                    'justify-content: center;' +
-                '}' +
+            '.pubtorr-parser-modal__info {' +
+                'display: flex;' +
+                'flex-direction: column;' +
+                'gap: 0.3em;' +
+                'flex: 1;' +
             '}';
         
         var existingStyle = Lampa.Template.get('pubtorr_style', {}, true);
