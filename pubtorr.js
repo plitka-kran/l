@@ -81,6 +81,18 @@
                 uk: 'Перевірка...',
                 zh: '检查中...'
             },
+            lme_parser_custom_url: {
+                ru: 'Свой URL парсера',
+                en: 'Custom parser URL',
+                uk: 'Свій URL парсера',
+                zh: '自定义解析器URL'
+            },
+            lme_parser_custom_key: {
+                ru: 'Свой ключ парсера',
+                en: 'Custom parser key',
+                uk: 'Свій ключ парсера',
+                zh: '自定义解析器密钥'
+            },
             lme_pubtorr: {
                 ru: 'Каталог TorrServer',
                 en: 'TorrServer catalog',
@@ -317,6 +329,9 @@
 
     var STORAGE_KEY = 'lme_url_two';
     var NO_PARSER_ID = 'no_parser';
+    var CUSTOM_URL_KEY = 'lme_custom_url';
+    var CUSTOM_KEY_KEY = 'lme_custom_key';
+    var USE_CUSTOM_KEY = 'lme_use_custom';
 
     function getSelectedParserId() {
         return Lampa.Storage.get(STORAGE_KEY, NO_PARSER_ID);
@@ -328,8 +343,26 @@
         });
     }
 
+    function getCustomSettings() {
+        return {
+            url: Lampa.Storage.get(CUSTOM_URL_KEY, ''),
+            key: Lampa.Storage.get(CUSTOM_KEY_KEY, ''),
+            enabled: Lampa.Storage.get(USE_CUSTOM_KEY, false)
+        };
+    }
+
     function applySelectedParser(parserId) {
         parserId = parserId || getSelectedParserId();
+        var custom = getCustomSettings();
+        
+        // Если включен кастомный URL, используем его
+        if (custom.enabled && custom.url) {
+            Lampa.Storage.set('jackett_url', custom.url);
+            Lampa.Storage.set('jackett_key', custom.key || '');
+            Lampa.Storage.set('parser_torrent_type', 'jackett');
+            return true;
+        }
+        
         var selectedParser = getParserById(parserId);
         if (!selectedParser || !selectedParser.settings) {
             if (parserId !== NO_PARSER_ID) {
@@ -337,6 +370,7 @@
             }
             return false;
         }
+        
         var settings = selectedParser.settings;
         var parserType = settings.parser_torrent_type || 'jackett';
         Lampa.Storage.set(parserType === 'prowlarr' ? 'prowlarr_url' : 'jackett_url', settings.url);
@@ -347,6 +381,13 @@
 
     function applyStoredParserOnStart() {
         var storedId = getSelectedParserId();
+        var custom = getCustomSettings();
+        
+        if (custom.enabled && custom.url) {
+            applySelectedParser();
+            return;
+        }
+        
         if (storedId !== NO_PARSER_ID) {
             applySelectedParser(storedId);
         }
@@ -354,12 +395,19 @@
 
     function updateSelectedLabel() {
         var selectedId = getSelectedParserId();
+        var custom = getCustomSettings();
+        
+        if (custom.enabled && custom.url) {
+            var label = "Custom: ".concat(custom.url);
+            $('.pubtorr-parser-selected').text("".concat(Lampa.Lang.translate('lme_parser_selected'), ": ").concat(label));
+            return;
+        }
+        
         var current = parsersInfo.find(function(parser) {
             return parser.id === selectedId;
         });
         var label = current ? current.name : Lampa.Lang.translate('lme_parser_none');
-        var text = "".concat(Lampa.Lang.translate('lme_parser_selected'), ": ").concat(label);
-        $('.pubtorr-parser-selected').text(text);
+        $('.pubtorr-parser-selected').text("".concat(Lampa.Lang.translate('lme_parser_selected'), ": ").concat(label));
     }
 
     var HEALTH_KEY = 'lme_parser_health';
@@ -399,6 +447,13 @@
     }
 
     function updateCurrentLabel(wrapper, selectedId, parsers) {
+        var custom = getCustomSettings();
+        
+        if (custom.enabled && custom.url) {
+            wrapper.find('.pubtorr-parser-modal__current-value').text("Custom: ".concat(custom.url));
+            return;
+        }
+        
         var current = parsers.find(function(parser) {
             return parser.id === selectedId;
         });
@@ -413,29 +468,110 @@
         }].concat(_toConsumableArray(parsersInfo));
         
         var selectedId = getSelectedParserId();
-        var modal = $("<div class=\"pubtorr-parser-modal\">\n            <div class=\"pubtorr-parser-modal__head\">\n                <div class=\"pubtorr-parser-modal__current\">\n                    <div class=\"pubtorr-parser-modal__current-label\">".concat(Lampa.Lang.translate('lme_parser_current'), "</div>\n                    <div class=\"pubtorr-parser-modal__current-value\"></div>\n                </div>\n                <div class=\"pubtorr-parser-modal__actions\">\n                    <div class=\"pubtorr-parser-modal__action selector\">").concat(Lampa.Lang.translate('lme_parser_refresh'), "</div>\n                </div>\n            </div>\n            <div class=\"pubtorr-parser-modal__list\"></div>\n            <div class=\"pubtorr-parser-modal__legend\">\n                <div class=\"pubtorr-parser-modal__legend-item status-ok\">").concat(Lampa.Lang.translate('lme_parser_status_ok'), "</div>\n                <div class=\"pubtorr-parser-modal__legend-item status-auth-error\">").concat(Lampa.Lang.translate('lme_parser_status_auth'), "</div>\n                <div class=\"pubtorr-parser-modal__legend-item status-network-error\">").concat(Lampa.Lang.translate('lme_parser_status_network'), "</div>\n                <div class=\"pubtorr-parser-modal__legend-item status-unknown\">").concat(Lampa.Lang.translate('lme_parser_status_unknown'), "</div>\n            </div>\n        </div>"));
+        var custom = getCustomSettings();
+        
+        var modal = $("<div class=\"pubtorr-parser-modal\">\n            <div class=\"pubtorr-parser-modal__head\">\n                <div class=\"pubtorr-parser-modal__current\">\n                    <div class=\"pubtorr-parser-modal__current-label\">".concat(Lampa.Lang.translate('lme_parser_current'), "</div>\n                    <div class=\"pubtorr-parser-modal__current-value\"></div>\n                </div>\n                <div class=\"pubtorr-parser-modal__actions\">\n                    <div class=\"pubtorr-parser-modal__action selector\">").concat(Lampa.Lang.translate('lme_parser_refresh'), "</div>\n                </div>\n            </div>\n            <div class=\"pubtorr-parser-modal__list\"></div>\n            <div class=\"pubtorr-parser-modal__custom\">\n                <div class=\"pubtorr-parser-modal__custom-toggle selector\">\n                    <span class=\"pubtorr-parser-modal__custom-checkbox\">").concat(custom.enabled ? '✅' : '⬜', "</span>\n                    <span>").concat(Lampa.Lang.translate('lme_parser_custom_url'), "</span>\n                </div>\n                <div class=\"pubtorr-parser-modal__custom-fields\" style=\"").concat(custom.enabled ? '' : 'display:none;', "\">\n                    <input class=\"pubtorr-parser-modal__custom-url\" type=\"text\" placeholder=\"parser.domain.com\" value=\"").concat(custom.url, "\">\n                    <input class=\"pubtorr-parser-modal__custom-key\" type=\"text\" placeholder=\"").concat(Lampa.Lang.translate('lme_parser_custom_key'), "\" value=\"").concat(custom.key, "\">\n                    <div class=\"pubtorr-parser-modal__custom-apply selector\">Apply</div>\n                </div>\n            </div>\n            <div class=\"pubtorr-parser-modal__legend\">\n                <div class=\"pubtorr-parser-modal__legend-item status-ok\">").concat(Lampa.Lang.translate('lme_parser_status_ok'), "</div>\n                <div class=\"pubtorr-parser-modal__legend-item status-auth-error\">").concat(Lampa.Lang.translate('lme_parser_status_auth'), "</div>\n                <div class=\"pubtorr-parser-modal__legend-item status-network-error\">").concat(Lampa.Lang.translate('lme_parser_status_network'), "</div>\n                <div class=\"pubtorr-parser-modal__legend-item status-unknown\">").concat(Lampa.Lang.translate('lme_parser_status_unknown'), "</div>\n            </div>\n        </div>"));
         
         var list = modal.find('.pubtorr-parser-modal__list');
         var refreshAction = modal.find('.pubtorr-parser-modal__action');
         var healthEnabled = Lampa.Storage.get(HEALTH_KEY, true);
+        
+        var customToggle = modal.find('.pubtorr-parser-modal__custom-toggle');
+        var customFields = modal.find('.pubtorr-parser-modal__custom-fields');
+        var customUrl = modal.find('.pubtorr-parser-modal__custom-url');
+        var customKey = modal.find('.pubtorr-parser-modal__custom-key');
+        var customApply = modal.find('.pubtorr-parser-modal__custom-apply');
 
+        // Добавляем парсеры в список
         parsers.forEach(function(parser) {
             var item = buildItem(parser);
             item.on('hover:enter', function() {
+                // Отключаем кастомный режим если он включен
+                if (Lampa.Storage.get(USE_CUSTOM_KEY, false)) {
+                    Lampa.Storage.set(USE_CUSTOM_KEY, false);
+                    customToggle.find('.pubtorr-parser-modal__custom-checkbox').text('⬜');
+                    customFields.hide();
+                }
+                
                 Lampa.Storage.set(STORAGE_KEY, parser.id);
                 applySelection(list, parser.id);
                 updateCurrentLabel(modal, parser.id, parsers);
                 applySelectedParser(parser.id);
-                updateSelectedLabel(); // Обновляем надпись в настройках
+                updateSelectedLabel();
             });
             list.append(item);
         });
 
+        // Обработка кастомного режима
+        customToggle.on('hover:enter', function() {
+            var enabled = !Lampa.Storage.get(USE_CUSTOM_KEY, false);
+            Lampa.Storage.set(USE_CUSTOM_KEY, enabled);
+            $(this).find('.pubtorr-parser-modal__custom-checkbox').text(enabled ? '✅' : '⬜');
+            customFields.toggle(enabled);
+            
+            if (enabled) {
+                // Снимаем выделение с парсеров
+                applySelection(list, null);
+                var customUrlValue = Lampa.Storage.get(CUSTOM_URL_KEY, '');
+                var customKeyValue = Lampa.Storage.get(CUSTOM_KEY_KEY, '');
+                if (customUrlValue) {
+                    applyCustomParser(customUrlValue, customKeyValue);
+                    updateCurrentLabel(modal, null, parsers);
+                    updateSelectedLabel();
+                }
+            } else {
+                // Возвращаемся к выбранному парсеру
+                var storedId = getSelectedParserId();
+                if (storedId !== NO_PARSER_ID) {
+                    applySelection(list, storedId);
+                    applySelectedParser(storedId);
+                    updateCurrentLabel(modal, storedId, parsers);
+                    updateSelectedLabel();
+                }
+            }
+        });
+
+        customApply.on('hover:enter', function() {
+            var url = customUrl.val().trim();
+            var key = customKey.val().trim();
+            
+            if (url) {
+                Lampa.Storage.set(CUSTOM_URL_KEY, url);
+                Lampa.Storage.set(CUSTOM_KEY_KEY, key);
+                Lampa.Storage.set(USE_CUSTOM_KEY, true);
+                applyCustomParser(url, key);
+                updateCurrentLabel(modal, null, parsers);
+                updateSelectedLabel();
+                
+                // Снимаем выделение с парсеров
+                applySelection(list, null);
+                customToggle.find('.pubtorr-parser-modal__custom-checkbox').text('✅');
+                customFields.show();
+            }
+        });
+
+        function applyCustomParser(url, key) {
+            Lampa.Storage.set('jackett_url', url);
+            Lampa.Storage.set('jackett_key', key || '');
+            Lampa.Storage.set('parser_torrent_type', 'jackett');
+        }
+
+        // Выбор начального элемента
+        var actionableItems;
+        if (custom.enabled && custom.url) {
+            actionableItems = customToggle;
+            customToggle.addClass('focus');
+        } else {
+            actionableItems = list.find('.pubtorr-parser-modal__item').first();
+            if (selectedId !== NO_PARSER_ID) {
+                var selectedItem = list.find("[data-parser-id=\"".concat(selectedId, "\"]"));
+                if (selectedItem.length) actionableItems = selectedItem;
+            }
+        }
+        
         applySelection(list, selectedId);
         updateCurrentLabel(modal, selectedId, parsers);
 
-        var actionableItems = list.find('.pubtorr-parser-modal__item').first();
-        
         Lampa.Modal.open({
             title: Lampa.Lang.translate('lme_parser'),
             html: modal,
@@ -445,7 +581,7 @@
             onBack: function() {
                 Lampa.Modal.close();
                 Lampa.Controller.toggle('settings_component');
-                updateSelectedLabel(); // Обновляем при закрытии
+                updateSelectedLabel();
             }
         });
 
@@ -530,10 +666,21 @@
 
     Lampa.Platform.tv();
 
+    // Добавляем стили для кастомных полей
+    function addStyles() {
+        var customStyles = "\n            .pubtorr-parser-modal__custom {\n                margin-top: 1em;\n                padding-top: 1em;\n                border-top: 1px solid rgba(255,255,255,0.1);\n            }\n            .pubtorr-parser-modal__custom-toggle {\n                display: flex;\n                align-items: center;\n                gap: 0.5em;\n                padding: 0.5em;\n                cursor: pointer;\n                border-radius: 0.5em;\n                background: rgba(255,255,255,0.05);\n            }\n            .pubtorr-parser-modal__custom-toggle.focus {\n                border-color: var(--pubtorr-selected-border);\n                background: rgba(255,255,255,0.1);\n            }\n            .pubtorr-parser-modal__custom-fields {\n                display: flex;\n                flex-direction: column;\n                gap: 0.5em;\n                margin-top: 0.5em;\n                padding: 0.5em;\n                background: rgba(255,255,255,0.03);\n                border-radius: 0.5em;\n            }\n            .pubtorr-parser-modal__custom-fields input {\n                padding: 0.5em;\n                background: rgba(255,255,255,0.05);\n                border: 1px solid rgba(255,255,255,0.1);\n                border-radius: 0.3em;\n                color: #fff;\n                font-size: 0.9em;\n            }\n            .pubtorr-parser-modal__custom-fields input:focus {\n                outline: none;\n                border-color: var(--pubtorr-selected-border);\n            }\n            .pubtorr-parser-modal__custom-apply {\n                align-self: flex-end;\n                padding: 0.4em 1em;\n                background: rgba(255,255,255,0.1);\n                border-radius: 0.4em;\n                cursor: pointer;\n                font-size: 0.9em;\n            }\n            .pubtorr-parser-modal__custom-apply.focus {\n                border-color: var(--pubtorr-selected-border);\n                background: rgba(255,255,255,0.2);\n            }\n        ";
+        
+        // Добавляем к уже существующему стилю
+        var existingStyle = Lampa.Template.get('pubtorr_style', {}, true);
+        Lampa.Template.add('pubtorr_style', existingStyle + customStyles);
+    }
+
     function add() {
         translate();
         
         Lampa.Template.add('pubtorr_style', "\n            <style>\n                .pubtorr-parser-modal{--pubtorr-status-ok:#19c37d;--pubtorr-status-auth:#ff4d4f;--pubtorr-status-network:#ff4d4f;--pubtorr-status-unknown:#8c8c8c;--pubtorr-status-checking:#f5a623;--pubtorr-selected-border:#fff;display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-box-orient:vertical;-webkit-box-direction:normal;-webkit-flex-direction:column;-ms-flex-direction:column;flex-direction:column;gap:1em}.pubtorr-parser-modal__head{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-ms-flex-align:center;align-items:center;-webkit-box-pack:justify;-webkit-justify-content:space-between;-ms-flex-pack:justify;justify-content:space-between;gap:1em}.pubtorr-parser-modal__current-label{font-size:.9em;opacity:.7}.pubtorr-parser-modal__current-value{font-size:1.1em}.pubtorr-parser-modal__action{padding:.5em .9em;-webkit-border-radius:.6em;border-radius:.6em;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2)}.pubtorr-parser-modal__action.focus{border-color:var(--pubtorr-selected-border)}.pubtorr-parser-modal__list{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-box-orient:vertical;-webkit-box-direction:normal;-webkit-flex-direction:column;-ms-flex-direction:column;flex-direction:column;gap:.6em}.pubtorr-parser-modal__item{position:relative;display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-ms-flex-align:center;align-items:center;-webkit-box-pack:justify;-webkit-justify-content:space-between;-ms-flex-pack:justify;justify-content:space-between;gap:1em;padding:.8em 1em .8em 1.8em;-webkit-border-radius:.7em;border-radius:.7em;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08)}.pubtorr-parser-modal__item::before{content:'';position:absolute;left:.8em;top:50%;width:.55em;height:.55em;-webkit-border-radius:50%;border-radius:50%;background:var(--pubtorr-status-color,var(--pubtorr-status-unknown));-webkit-transform:translateY(-50%);-ms-transform:translateY(-50%);transform:translateY(-50%);-webkit-box-shadow:0 0 .6em rgba(0,0,0,0.3);box-shadow:0 0 .6em rgba(0,0,0,0.3)}.pubtorr-parser-modal__item.is-selected,.pubtorr-parser-modal__item.focus{border-color:var(--pubtorr-selected-border)}.pubtorr-parser-modal__info{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-box-orient:vertical;-webkit-box-direction:normal;-webkit-flex-direction:column;-ms-flex-direction:column;flex-direction:column;gap:.25em;min-width:0}.pubtorr-parser-modal__name{font-size:1em}.pubtorr-parser-modal__status{font-size:.8em;opacity:.7;text-align:right;-webkit-align-self:center;-ms-flex-item-align:center;align-self:center}.pubtorr-parser-modal__legend{display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-flex-wrap:wrap;-ms-flex-wrap:wrap;flex-wrap:wrap;gap:.8em 1.2em;font-size:.85em;opacity:.7}.pubtorr-parser-modal__legend-item{position:relative;padding-left:1.2em}.pubtorr-parser-modal__legend-item::before{content:'';position:absolute;left:0;top:.55em;width:.5em;height:.5em;-webkit-border-radius:50%;border-radius:50%;background:var(--pubtorr-status-color,var(--pubtorr-status-unknown))}.pubtorr-parser-modal__item.status-ok,.pubtorr-parser-modal__legend-item.status-ok{--pubtorr-status-color:var(--pubtorr-status-ok)}.pubtorr-parser-modal__item.status-auth-error,.pubtorr-parser-modal__legend-item.status-auth-error{--pubtorr-status-color:var(--pubtorr-status-auth)}.pubtorr-parser-modal__item.status-network-error,.pubtorr-parser-modal__legend-item.status-network-error{--pubtorr-status-color:var(--pubtorr-status-network)}.pubtorr-parser-modal__item.status-unknown,.pubtorr-parser-modal__legend-item.status-unknown{--pubtorr-status-color:var(--pubtorr-status-unknown)}.pubtorr-parser-modal__item.status-checking{--pubtorr-status-color:var(--pubtorr-status-checking)}@media(max-width:600px){.pubtorr-parser-modal__head{-webkit-box-orient:vertical;-webkit-box-direction:normal;-webkit-flex-direction:column;-ms-flex-direction:column;flex-direction:column;-webkit-box-align:start;-webkit-align-items:flex-start;-ms-flex-align:start;align-items:flex-start}.pubtorr-parser-modal__item{-webkit-box-orient:vertical;-webkit-box-direction:normal;-webkit-flex-direction:column;-ms-flex-direction:column;flex-direction:column;-webkit-box-align:start;-webkit-align-items:flex-start;-ms-flex-align:start;align-items:flex-start}.pubtorr-parser-modal__status{text-align:left}}\n            </style>\n        ");
+        
+        addStyles(); // Добавляем стили для кастомных полей
         $('body').append(Lampa.Template.get('pubtorr_style', {}, true));
         
         parserSetting();
