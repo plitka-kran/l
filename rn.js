@@ -22,9 +22,9 @@
         'no-autostart.js': '1.0.1',
         'ss.js': '1.0.3',
         'playlist.js': '1.0.33',
-		'reload.js': '1.0',
-		'sisi.js': '1.0',
-		'cub_off.js': '1.0',
+        'reload.js': '1.0',
+        'sisi.js': '1.1',
+        'cub_off.js': '1.0',
         'audio.js': '1.0.11'
 	};
 
