@@ -1,23 +1,97 @@
 (function () {
     'use strict';
 
-    Lampa.Platform.tv();
+    // ============================================================
+    // 1. БЛОКИРОВКА РЕКЛАМЫ НА УРОВНЕ СЕТИ
+    //    Lampa 3.x запрашивает рекламу через /api/ad/get/...
+    //    Подменяем ответ на пустой {"ad":[]}.
+    //    Ставим хуки сразу, не дожидаясь appready.
+    // ============================================================
+    var AD_URL_RE = /\/api\/ad\/get/i;
+    var EMPTY_AD = '{"ad":[]}';
 
-    // ------------------------------------------------------------
-    // 1. Настройки Lampa
-    // ------------------------------------------------------------
+    function isAdUrl(url) {
+        try { return AD_URL_RE.test(String(url)); } catch (e) { return false; }
+    }
+
+    // --- XMLHttpRequest ---
+    try {
+        var xhrOpen = XMLHttpRequest.prototype.open;
+        var xhrSend = XMLHttpRequest.prototype.send;
+
+        XMLHttpRequest.prototype.open = function (method, url) {
+            this.__noads = isAdUrl(url);
+            return xhrOpen.apply(this, arguments);
+        };
+
+        XMLHttpRequest.prototype.send = function () {
+            if (!this.__noads) return xhrSend.apply(this, arguments);
+
+            var xhr = this;
+
+            function define(name, value) {
+                try {
+                    Object.defineProperty(xhr, name, { value: value, configurable: true });
+                } catch (e) {}
+            }
+
+            function fire(type) {
+                var ev;
+                try {
+                    ev = new Event(type);
+                } catch (e) {
+                    ev = document.createEvent('Event');
+                    ev.initEvent(type, false, false);
+                }
+                try { xhr.dispatchEvent(ev); } catch (e) {}
+            }
+
+            setTimeout(function () {
+                define('readyState', 4);
+                define('status', 200);
+                define('statusText', 'OK');
+                define('responseText', EMPTY_AD);
+                define('response', xhr.responseType === 'json' ? { ad: [] } : EMPTY_AD);
+                define('responseURL', '');
+
+                fire('readystatechange');
+                fire('load');
+                fire('loadend');
+            }, 0);
+        };
+    } catch (e) {}
+
+    // --- fetch ---
+    try {
+        if (window.fetch) {
+            var origFetch = window.fetch;
+
+            window.fetch = function (input) {
+                var url = typeof input === 'string' ? input : (input && input.url);
+
+                if (isAdUrl(url) && window.Response) {
+                    return Promise.resolve(new Response(EMPTY_AD, {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json' }
+                    }));
+                }
+
+                return origFetch.apply(this, arguments);
+            };
+        }
+    } catch (e) {}
+
+    // ============================================================
+    // 2. НАСТРОЙКИ LAMPA
+    // ============================================================
     window.lampa_settings = window.lampa_settings || {};
 
     var s = window.lampa_settings;
-    s.socket_use     = false;
-    s.socket_url     = undefined;
-    s.socket_methods = false;
     s.account_use    = true;
     s.account_sync   = true;
     s.plugins_use    = true;
     s.plugins_store  = true;
     s.torrents_use   = true;
-    s.white_use      = false;
     s.lang_use       = true;
     s.read_only      = false;
     s.dcma           = false;
@@ -28,77 +102,90 @@
     s.mirrors        = true;
 
     s.disable_features = s.disable_features || {};
-    var f = s.disable_features;
-    f.dmca          = true;
-    f.reactions     = true;
-    f.discuss       = true;
-    f.ai            = true;
-    f.subscribe     = true;
-    f.blacklist     = true;
-    f.persons       = true;
-    f.ads           = true;
-    f.trailers      = false;
-    f.install_proxy = true;
+    s.disable_features.dmca      = true;
+    s.disable_features.reactions = true;
+    s.disable_features.discuss   = true;
+    s.disable_features.ai        = true;
+    s.disable_features.subscribe = true;
+    s.disable_features.blacklist = true;
+    s.disable_features.persons   = true;
+    s.disable_features.ads       = true;
 
     s.developer = s.developer || {};
-    s.developer.ads       = false;
-    s.developer.enabled   = false;
-    s.developer.fps       = false;
-    s.developer.nodemo    = false;
-    s.developer.nopremium = false;
+    s.developer.ads = false;
 
-    // ------------------------------------------------------------
-    // 2. Удаление рекламы на карточке и в онлайн-плагине
-    // ------------------------------------------------------------
-    function removeAdsOnSelect() {
+    // ============================================================
+    // 3. ЧИСТКА VAST-ПОЛЕЙ ПЕРЕД ЗАПУСКОМ ПЛЕЕРА
+    //    Реклама перед видео может прийти в данных запуска
+    //    (vast_url / vast_banner), а не из /api/ad/get.
+    // ============================================================
+    function sanitizePlayData(data) {
+        if (data && typeof data === 'object') {
+            delete data.vast_url;
+            delete data.vast_banner;
+            delete data.vast;
+        }
+        return data;
+    }
+
+    function patchPlayer() {
+        try {
+            if (!window.Lampa || !Lampa.Player || Lampa.Player.__noads) return;
+
+            ['play', 'playlist'].forEach(function (method) {
+                var original = Lampa.Player[method];
+                if (typeof original !== 'function') return;
+
+                Lampa.Player[method] = function (data) {
+                    if (method === 'playlist' && Array.isArray(data)) {
+                        data.forEach(sanitizePlayData);
+                    } else {
+                        sanitizePlayData(data);
+                    }
+                    return original.apply(this, arguments);
+                };
+            });
+
+            Lampa.Player.__noads = true;
+        } catch (e) {}
+    }
+
+    // ============================================================
+    // 4. ЧИСТКА ИНТЕРФЕЙСА
+    // ============================================================
+    function removeAdElements() {
+        $('.ad-server').remove();
+    }
+
+    function cleanInterface() {
+        var style = document.createElement('style');
+        style.innerHTML =
+            '.button--subscribe, .black-friday__button, .icon--blink,' +
+            '.womens_day__button, .christmas__button, .notice--icon,' +
+            '.ad-server { display: none !important; }';
+        document.body.appendChild(style);
+
+        // Следим за DOM: если рекламный блок всё же появился - удаляем
+        try {
+            var observer = new MutationObserver(function () {
+                if (document.querySelector('.ad-server')) removeAdElements();
+            });
+            observer.observe(document.body, { childList: true, subtree: true });
+        } catch (e) {}
+
         Lampa.Controller.listener.follow('toggle', function (e) {
             if (e.name !== 'select') return;
 
             setTimeout(function () {
                 var component = Lampa.Activity.active().component;
 
-                if (component === 'full' && document.querySelector('.ad-server') !== null) {
-                    $('.ad-server').remove();
-                }
-
-                if (component === 'modss_online') {
-                    $('.selectbox-item--icon').remove();
-                }
+                if (component === 'full') removeAdElements();
+                if (component === 'modss_online') $('.selectbox-item--icon').remove();
             }, 20);
         });
-    }
 
-    // ------------------------------------------------------------
-    // 3. Скрытие кнопок и пунктов интерфейса
-    // ------------------------------------------------------------
-    function cleanInterface() {
-        // Только для официальной сборки
-        if (Lampa.Manifest.origin !== 'bylampa') {
-            Lampa.Noty.show('Ошибка доступа');
-            return;
-        }
-
-        // CSS: прячем акционные кнопки, подписку, уведомления, мигающую иконку
-        var style = document.createElement('style');
-        style.innerHTML =
-            '.button--subscribe { display: none; }' +
-            '.black-friday__button { display: none; }' +
-            '.icon--blink { display: none; }' +
-            '.womens_day__button { display: none; }' +
-            '.christmas__button { display: none; }' +
-            '.notice--icon { display: none; }';
-        document.body.appendChild(style);
-
-        // Кнопка трансляции
-        setTimeout(function () {
-            if ($('.open--broadcast').length > 0) $('.open--broadcast').remove();
-        }, 1000);
-
-        // Настройки: при открытии разделов убираем лишнее
         Lampa.Settings.listener.follow('open', function (e) {
-            if (e.name === 'server') {
-                if (document.querySelector('.ad-server') !== null) $('.ad-server').remove();
-            }
+            if (e.name === 'server') removeAdElements();
 
             if (e.name === 'more') {
                 e.body.find('[data-name="card_quality"]').remove();
@@ -112,44 +199,40 @@
             }
         });
 
-        // Карточка фильма: убираем кнопку «Опции»
         Lampa.Listener.follow('full', function (e) {
             if (e.type === 'complite') {
-                $('.button--book').on('hover:enter', function () {});
-
                 setTimeout(function () {
                     $('.button--options').remove();
+                    removeAdElements();
                 }, 0);
             }
         });
-    }
 
-    // ------------------------------------------------------------
-    // 4. Запуск
-    // ------------------------------------------------------------
-    function removeMenuItems() {
-        // Календарь/расписание
+        // Меню: расписание и «Спорт»
         $('[data-action=timetable]').eq(0).remove();
-
-        // Пункт «Спорт» в главном меню
         setTimeout(function () {
-            $('#app > div.wrap.layer--height.layer--width > div.wrap__left.layer--height > div > div > div > div > div:nth-child(1) > ul > li:contains("Спорт")').remove();
+            $('li:contains("Спорт")').filter(function () {
+                return $(this).text().trim() === 'Спорт';
+            }).remove();
+            $('.open--broadcast').remove();
         }, 1000);
     }
 
+    // ============================================================
+    // 5. ЗАПУСК
+    // ============================================================
+    patchPlayer();
+
     function start() {
+        patchPlayer();
         cleanInterface();
-        removeAdsOnSelect();
     }
 
     if (window.appready) {
         start();
     } else {
         Lampa.Listener.follow('app', function (e) {
-            if (e.type === 'ready') {
-                start();
-                removeMenuItems();
-            }
+            if (e.type === 'ready') start();
         });
     }
 })();
