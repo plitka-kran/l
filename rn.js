@@ -23,7 +23,7 @@
         'ss.js': '1.0.3',
         'playlist.js': '1.0.33',
         'reload.js': '1.0',
-        'cub_off.js': '1.2',
+        'cub_off.js': '1.3',
         'audio.js': '1.0.11'
 	};
 
