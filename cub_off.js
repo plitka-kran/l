@@ -119,13 +119,43 @@
     //    Реклама перед видео может прийти в данных запуска
     //    (vast_url / vast_banner), а не из /api/ad/get.
     // ============================================================
-    function sanitizePlayData(data) {
+    // Жёсткий режим. В коде Lampa (app 3.4.x) Preroll.show() пропускает рекламу,
+    // если у данных запуска есть iptv. Ставим iptv=true до запуска, а
+    // исходное значение возвращаем, как только плеер стартует (событие
+    // Player.listener 'start' / 'external'), чтобы не ломать прогресс
+    // просмотра и панель плеера. Если что-то работает странно -
+    // поставьте HARD_MODE = false.
+    var HARD_MODE = true;
+
+    function sanitizePlayData(data, hard) {
         if (data && typeof data === 'object') {
             delete data.vast_url;
             delete data.vast_banner;
             delete data.vast;
+
+            if (hard && HARD_MODE && !data.iptv) {
+                data.iptv = true;
+                data.__noads_tmp_iptv = true;
+
+                // страховка, если событие не придёт
+                setTimeout(function () { restoreIptv(data); }, 60000);
+            }
         }
         return data;
+    }
+
+    function restoreIptv(data) {
+        if (data && data.__noads_tmp_iptv) {
+            delete data.iptv;
+            delete data.__noads_tmp_iptv;
+        }
+    }
+
+    function hookPlayerEvents() {
+        try {
+            Lampa.Player.listener.follow('start', restoreIptv);
+            Lampa.Player.listener.follow('external', restoreIptv);
+        } catch (e) {}
     }
 
     function patchPlayer() {
@@ -140,12 +170,13 @@
                     if (method === 'playlist' && Array.isArray(data)) {
                         data.forEach(sanitizePlayData);
                     } else {
-                        sanitizePlayData(data);
+                        sanitizePlayData(data, method === 'play');
                     }
                     return original.apply(this, arguments);
                 };
             });
 
+            hookPlayerEvents();
             Lampa.Player.__noads = true;
         } catch (e) {}
     }
@@ -162,7 +193,7 @@
         style.innerHTML =
             '.button--subscribe, .black-friday__button, .icon--blink,' +
             '.womens_day__button, .christmas__button, .notice--icon,' +
-            '.ad-server { display: none !important; }';
+            '.ad-server, [class*="preroll"], [class*="vast"] { display: none !important; }';
         document.body.appendChild(style);
 
         // Следим за DOM: если рекламный блок всё же появился - удаляем
