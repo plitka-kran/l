@@ -4,9 +4,10 @@
     // Убирает только рекламу перед видео. Интерфейс не трогает.
     //
     // Lampa пропускает преролл, если у данных запуска стоит iptv.
-    // Ставим iptv=true перед запуском плеера и возвращаем исходное
-    // состояние, как только плеер стартует (чтобы работали прогресс
-    // просмотра и панель плеера).
+    // Событие Player 'create' срабатывает в самом начале ЛЮБОГО запуска
+    // (ручного, автоследующей серии, выбора серии из плейлиста),
+    // поэтому ставим iptv=true там, а исходное состояние возвращаем,
+    // как только плеер стартует.
     //
     // Если что-то работает странно, поставьте HARD_MODE = false.
     var HARD_MODE = true;
@@ -18,7 +19,8 @@
         }
     }
 
-    function prepare(data) {
+    function prepare(e) {
+        var data = e && e.data;
         if (!data || typeof data !== 'object') return;
 
         // реклама, которую передают плагины-источники
@@ -37,19 +39,12 @@
         try {
             if (!window.Lampa || !Lampa.Player || Lampa.Player.__noads) return;
 
-            var play = Lampa.Player.play;
-            if (typeof play !== 'function') return;
-
-            Lampa.Player.play = function (data) {
-                prepare(data);
-                return play.apply(this, arguments);
-            };
-
+            Lampa.Player.listener.follow('create', prepare);
             Lampa.Player.listener.follow('start', restore);
             Lampa.Player.listener.follow('external', restore);
 
             Lampa.Player.__noads = true;
-        } catch (e) {}
+        } catch (err) {}
     }
 
     if (window.appready) {
