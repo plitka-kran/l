@@ -18,7 +18,6 @@
         'playlist.js': '1.0.33',
         'reload.js': '1.0',
         'cub_off.js': '1.4',
-        'trailers-itunes.js': '1.0',		
         'audio.js': '1.0.11'
 	};
 
